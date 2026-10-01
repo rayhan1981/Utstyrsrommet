@@ -1,0 +1,130 @@
+{
+  "project_name": "UTSTYRSROMMET",
+  "app_type": "hybrid_fullstack",
+  "archetype": "THE PERFORMANCE PRO (Nordic Sports Athletic Precision)",
+  "language": "Norwegian (Bokmål) with authentic sports & inventory terminology",
+  "theme": {
+    "default_mode": "light",
+    "theme_toggle": true,
+    "primary_color": "#064E3B",
+    "primary_hover": "#043E2F",
+    "accent_color": "#059669",
+    "surface_background": "#F8FAFC",
+    "card_background": "#FFFFFF",
+    "border_color": "#E2E8F0",
+    "text_primary": "#0F172A",
+    "text_secondary": "#475569",
+    "status_colors": {
+      "in_stock": "#10B981",
+      "low_stock": "#F59E0B",
+      "out_of_stock": "#EF4444",
+      "borrowed": "#2563EB",
+      "due_amount": "#DC2626"
+    }
+  },
+  "typography": {
+    "headings": {
+      "font_family": "Outfit, system-ui, sans-serif",
+      "weight": "font-extrabold",
+      "letter_spacing": "tracking-tight",
+      "scale": {
+        "h1": "text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight",
+        "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+        "h3": "text-lg sm:text-xl font-semibold",
+        "h4": "text-base font-semibold"
+      }
+    },
+    "body": {
+      "font_family": "Plus Jakarta Sans, Inter, sans-serif",
+      "weight": "font-normal",
+      "scale": {
+        "large": "text-lg leading-relaxed",
+        "base": "text-base leading-normal",
+        "small": "text-sm text-slate-600",
+        "tiny": "text-xs text-slate-500 font-medium"
+      }
+    },
+    "forbidden_fonts": ["Inter for main page titles", "Space Grotesk"]
+  },
+  "layout_and_spacing": {
+    "container_padding": "p-4 sm:p-6 lg:p-8",
+    "grid_gap": "gap-4 sm:gap-6",
+    "sidebar_width": "w-64",
+    "mobile_responsive": "Mobile-first responsive drawer + bottom bar, 100% elastic layout",
+    "bento_strategy": "MODE B: High Density Grid (Dashboard / Inventory Data)",
+    "card_style": "Flat surface with crisp 1px border (#E2E8F0), subtle hover shadow, 8px border-radius"
+  },
+  "key_modules_and_data_models": {
+    "dashboard": {
+      "title": "Oversikt & Dashboard",
+      "widgets": ["Total Beholdning & Verdi", "Aktive Utlån & Skyldig Beløp", "Lav Beholdning Advarsel", "Siste Aktivitet", "Hurtigutlån & Retur"]
+    },
+    "club_and_teams": {
+      "title": "Klubb & Lag",
+      "fields": ["Lagsnavn", "Aldersklasse", "Epost", "Treningstider", "Kontaktperson", "Nøkkelansvarlig", "Serienummer"],
+      "roles": ["Hovedtrener", "Lagleder", "Trener 1-5 (Navn, Epost, Telefon, År engasjert)"]
+    },
+    "person_register": {
+      "title": "Personregister",
+      "fields": ["Navn", "Telefon", "Epost", "Tilknyttet lag", "Rolle"]
+    },
+    "inventory": {
+      "title": "Utstyrsbeholdning",
+      "fields": ["Varenavn", "Kategori", "Hovedgruppe", "Undergrupper", "Pris (NOK)", "Beholdning", "Lokasjon", "Størrelser", "Draktnummer"],
+      "features": ["Søk, filtrering & sortering", "Slett/Endre modal", "Nytt utstyr registrering"]
+    },
+    "loans_and_returns": {
+      "title": "Utlån & Historikk",
+      "fields": ["Utstyr-ID / Navn", "Lag-ID / Lagsnavn", "Person-ID / Låntaker", "Dato utlånt", "Forventet retur", "Status (Utlånt / Returnert / Forsinket)"],
+      "calculated_logic": "Automatisk beregning av skyldig beløp (Pris x Antall utlånt). Ved registrert retur nullstilles skyldig beløp og beholdningen økes automatisk."
+    },
+    "stock_audit": {
+      "title": "Varetelling (Stock Audit)",
+      "features": ["Start ny varetelling", "Registrer over/under-skudd", "Juster systembeholdning", "Eksporter telleliste"]
+    },
+    "export_excel": {
+      "title": "Eksport til Excel / CSV",
+      "supported_exports": ["Beholdningsliste", "Aktive utlån & skyldig beløp", "Varetellingsrapport", "Lags- & personoversikt"]
+    },
+    "user_admin": {
+      "title": "Brukeradministrasjon & Rettigheter",
+      "roles": ["Klubbadmin", "Lagleder", "Materialforvalter", "Lesetilgang"],
+      "features": ["Send e-postinvitasjon", "Rettighetsmatrise", "Logg over endringer"]
+    },
+    "club_settings": {
+      "title": "Klubbinnstillinger & Logo",
+      "features": ["Opplasting av klubblogo", "Klubbnavn & organisasjonsnummer", "Faktura- & e-postoppsett"]
+    },
+    "auth_and_onboarding": {
+      "pages": ["Innlogging", "Invitasjon & passordoppsett", "Glemt passord"]
+    }
+  },
+  "image_urls": {
+    "soccer_equipment": "https://images.unsplash.com/photo-1516567727245-ad8c68f3ec93?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwzfHxzb2NjZXIlMjBiYWxsJTIwZXF1aXBtZW50JTIwamVyc2V5fGVufDB8fHx8MTc5MDMwODI2MXww&ixlib=rb-4.1.0&q=85",
+    "soccer_action": "https://images.pexels.com/photos/38454766/pexels-photo-38454766.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "jersey_player": "https://images.pexels.com/photos/9590733/pexels-photo-9590733.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "training_ball": "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxzb2NjZXIlMjBiYWxsJTIwZXF1aXBtZW50JTIwamVyc2V5fGVufDB8fHx8MTc5MDMwODI2MXww&ixlib=rb-4.1.0&q=85"
+  },
+  "component_guidelines": {
+    "data_tables": "Use Shadcn Table components with sticky headers, pagination, search input, status badges, and action menus (Drop-down / Edit / Delete / Return)",
+    "forms": "Use Shadcn Input, Select, Checkbox, Dialog, Form components with proper validation states and clear Norwegian labels",
+    "dialogs": "Modal overlays for Utlån, Retur, Nytt utstyr, Varetelling, and Logo-opplasting with solid or high-opacity crisp backdrop blur",
+    "toasts": "Use Sonner for quick notifications (e.g., 'Utlån registrert', 'Retur fullført - skyldig beløp slettet', 'Eksport til Excel fullført')",
+    "charts": "Recharts or Shadcn chart components for inventory value distribution and monthly equipment loan activity"
+  },
+  "instructions_to_main_agent": [
+    "Build the complete UI in React for UTSTYRSROMMET covering all requested pages and modules in seamless single-page application router or view tabs.",
+    "Implement real working client-side calculated logic: automatic skyldig beløp calculation on loan checkouts, immediate clearing of debt upon return, live stock balance updates, and search/filter across all tables.",
+    "Ensure realistic mock data for Norwegian sports clubs (e.g. 'Stabæk Fotball Junior U15', 'Koll IL Håndball', 'Draktsett Hjemme', 'Kjeglesett', 'Ballnett Adidas', 'Medisinveske').",
+    "Include Excel/CSV export functionality using client-side download utility (e.g., blob/xlsx or clean CSV generator).",
+    "Provide full data-testid attributes on all interactive elements (e.g., data-testid='add-equipment-btn', data-testid='return-loan-btn', data-testid='team-select').",
+    "Ensure dark/light mode toggle support and high legibility across mobile screens and desktop monitors."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "data_testid_requirement": "All interactive buttons, input fields, selects, tables, and modal triggers MUST have clear data-testid attributes in kebab-case.",
+    "responsive_rule": "Mobile-first responsive design; sidebar collapses to drawer or top bar on small screens.",
+    "contrast_rule": "Ensure minimum 4.5:1 text contrast on light and dark surfaces. Set explicit hover text colors.",
+    "no_transparent_overlays": "Never use completely transparent backgrounds for dropdowns, popovers, or sticky headers."
+  }
+},
+overwrite:true,path:
