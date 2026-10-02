@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import DataTable from "@/components/DataTable";
 
 const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [] };
 
