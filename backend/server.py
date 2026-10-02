@@ -224,6 +224,7 @@ class SizeStock(BaseModel):
     size: str
     jersey_number: str = "X"
     quantity: int = 0
+    location: str = ""
 
 
 class ItemIn(BaseModel):
@@ -590,7 +591,7 @@ async def delete_item(item_id: str, user=Depends(require_perm("inventory", "admi
 
 
 # ---------------- Items: Excel Import ----------------
-IMPORT_COLUMNS = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Klær (ja/nei)", "Størrelse", "Draktnr", "Antall"]
+IMPORT_COLUMNS = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Klær (ja/nei)", "Størrelse", "Draktnr", "Antall", "Lokasjon pr str"]
 
 
 @api.get("/items/import/template")
@@ -600,10 +601,10 @@ async def items_import_template(user=Depends(require_perm("inventory", "write"))
     ws.title = "Varer"
     ws.append(IMPORT_COLUMNS)
     # Examples
-    ws.append(["Ball Adidas", "Baller", "Trening", "Fotball", 299, "Hylle A1", "nei", "", "", 20])
-    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "S", "X", 5])
-    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "M", "10", 8])
-    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "L", "X", 6])
+    ws.append(["Ball Adidas", "Baller", "Trening", "Fotball", 299, "Hylle A1", "nei", "", "", 20, ""])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "S", "X", 5, "Skap B2 - øverst"])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "M", "10", 8, "Skap B2 - midten"])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "L", "X", 6, "Skap B2 - nederst"])
     info = wb.create_sheet("Instruksjoner")
     info.append(["UTSTYRSROMMET - Import-mal for varer"])
     info.append([])
@@ -616,6 +617,7 @@ async def items_import_template(user=Depends(require_perm("inventory", "write"))
     info.append(["- For klær: legg til én rad per størrelse. Samme Varenavn grupperes automatisk."])
     info.append(["- For ikke-klær: fyll 'Antall' med total beholdning. La Størrelse/Draktnr stå tomme."])
     info.append(["- Draktnr: bruk 'X' hvis draktnummer mangler."])
+    info.append(["- 'Lokasjon pr str' er valgfri - overstyrer varens lokasjon kun for denne størrelsen."])
     info.append(["- Pris i NOK (tall, uten valuta)."])
     return _xlsx_response(wb, "utstyrsrommet_import_mal.xlsx")
 
@@ -655,6 +657,7 @@ async def items_import(file: UploadFile = File(...), user=Depends(require_perm("
             size = (str(row[7]) if row[7] is not None else "").strip()
             jersey = (str(row[8]) if row[8] is not None else "").strip() or "X"
             qty = int(row[9]) if row[9] not in (None, "") else 0
+            size_loc = (str(row[10]) if len(row) > 10 and row[10] is not None else "").strip()
 
             key = f"{name}||{category}||{main_group}||{sub_group}"
             if key not in grouped:
@@ -667,7 +670,7 @@ async def items_import(file: UploadFile = File(...), user=Depends(require_perm("
             doc = grouped[key]
             if is_clothing:
                 doc["is_clothing"] = True
-                doc["sizes"].append({"size": size, "jersey_number": jersey, "quantity": qty})
+                doc["sizes"].append({"size": size, "jersey_number": jersey, "quantity": qty, "location": size_loc})
             else:
                 doc["total_stock"] = (doc.get("total_stock") or 0) + qty
         except Exception as e:
@@ -910,15 +913,15 @@ async def export_inventory(user=Depends(require_perm("inventory", "read"))):
     wb = Workbook()
     ws = wb.active
     ws.title = "Beholdning"
-    ws.append(["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Beholdning", "Lokasjon", "Størrelse", "Draktnr", "Antall pr str"])
+    ws.append(["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Beholdning", "Lokasjon", "Størrelse", "Draktnr", "Antall pr str", "Lokasjon pr str"])
     for it in items:
         if it.get("is_clothing") and it.get("sizes"):
             for s in it["sizes"]:
                 ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
-                           it.get("price"), it.get("total_stock"), it.get("location"), s.get("size"), s.get("jersey_number"), s.get("quantity")])
+                           it.get("price"), it.get("total_stock"), it.get("location"), s.get("size"), s.get("jersey_number"), s.get("quantity"), s.get("location", "")])
         else:
             ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
-                       it.get("price"), it.get("total_stock"), it.get("location"), "", "", ""])
+                       it.get("price"), it.get("total_stock"), it.get("location"), "", "", "", ""])
     return _xlsx_response(wb, "beholdning.xlsx")
 
 

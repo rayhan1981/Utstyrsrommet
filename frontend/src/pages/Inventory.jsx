@@ -44,7 +44,7 @@ export default function Inventory() {
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
-  const addSize = () => setForm({ ...form, sizes: [...form.sizes, { size: "", jersey_number: "X", quantity: 0 }] });
+  const addSize = () => setForm({ ...form, sizes: [...form.sizes, { size: "", jersey_number: "X", quantity: 0, location: "" }] });
   const removeSize = (idx) => setForm({ ...form, sizes: form.sizes.filter((_, i) => i !== idx) });
   const updSize = (idx, key, val) => {
     const arr = [...form.sizes]; arr[idx] = { ...arr[idx], [key]: val }; setForm({ ...form, sizes: arr });
@@ -133,7 +133,16 @@ export default function Inventory() {
               <TableRow key={i.id} data-testid={`item-row-${i.id}`}>
                 <TableCell className="font-semibold">
                   {i.name}
-                  {i.is_clothing && <div className="text-xs text-slate-500 mt-0.5">{i.sizes?.map(s => `${s.size}:${s.quantity}`).join(" • ")}</div>}
+                  {i.is_clothing && (
+                    <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
+                      {i.sizes?.map((s) => (
+                        <div key={s.size}>
+                          <span className="font-mono">{s.size}: {s.quantity}</span>
+                          {s.location && <span className="ml-2 text-emerald-700">@ {s.location}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>{i.category || "-"}</TableCell>
                 <TableCell className="text-sm">{i.main_group}{i.sub_group ? ` / ${i.sub_group}` : ""}</TableCell>
@@ -184,9 +193,10 @@ export default function Inventory() {
                 <div className="space-y-2">
                   {form.sizes.map((s, idx) => (
                     <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                      <Input className="col-span-3" placeholder="Str (S, M, L...)" value={s.size} onChange={(e) => updSize(idx, "size", e.target.value)} />
-                      <Input className="col-span-4" placeholder="Draktnr (X hvis mangler)" value={s.jersey_number} onChange={(e) => updSize(idx, "jersey_number", e.target.value || "X")} />
-                      <Input className="col-span-4" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
+                      <Input className="col-span-2" placeholder="Str" value={s.size} onChange={(e) => updSize(idx, "size", e.target.value)} />
+                      <Input className="col-span-3" placeholder="Draktnr (X)" value={s.jersey_number} onChange={(e) => updSize(idx, "jersey_number", e.target.value || "X")} />
+                      <Input className="col-span-2" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
+                      <Input className="col-span-4" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
                       <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)}><X className="h-4 w-4 text-red-600" /></Button>
                     </div>
                   ))}
