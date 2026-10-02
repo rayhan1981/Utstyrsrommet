@@ -188,3 +188,22 @@ class TestUsersAndLoginHistory:
         # If backend requires other fields it may return 400 - skip gracefully
         if r.status_code != 200:
             pytest.skip(f"Could not create viewer user: {r.status_code} {r.text}")
+
+
+# -------- Regression: close stale login_history on new login --------
+class TestCloseStaleOnLogin:
+    def test_new_login_closes_previous_open_history(self, tenant):
+        """Two consecutive logins should result in at most ONE open 'Fortsatt aktiv' row for the user."""
+        email = tenant["email"]
+        password = tenant["password"]
+        # Perform 2 extra logins
+        for _ in range(2):
+            r = requests.post(f"{API}/auth/login", json={"email": email, "password": password})
+            assert r.status_code == 200
+            time.sleep(0.2)
+        # Admin fetches history
+        r = tenant["s"].get(f"{API}/users/{tenant['user_id']}/login-history")
+        assert r.status_code == 200
+        hist = r.json()
+        open_rows = [h for h in hist if h.get("logged_out_at") in (None, "")]
+        assert len(open_rows) <= 1, f"Expected <=1 open session, got {len(open_rows)}: {open_rows}"
