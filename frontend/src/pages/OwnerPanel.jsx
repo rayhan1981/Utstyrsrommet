@@ -37,8 +37,6 @@ export default function OwnerPanel() {
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
-  const openEdit = (c) => { setEditing(c); setEditPlan(c.plan); };
-
   const savePlan = async () => {
     try { await api.put(`/owner/customers/${editing.id}`, { plan: editPlan }); toast.success("Pakke oppdatert"); setEditing(null); const r = await api.get("/owner/customers"); setCustomers(r.data); }
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }

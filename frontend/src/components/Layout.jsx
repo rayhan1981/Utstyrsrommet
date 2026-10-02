@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Users as UsersIcon, UserCircle, Package, ArrowLeftRight,
-  ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye,
+  ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ export default function Layout() {
   const [open, setOpen] = useState(false);
 
   const handleLogout = async () => { await logout(); nav("/innlogging"); };
-  const stop = async () => { await stopImpersonate(); nav("/eier"); };
+  const stop = async () => { await stopImpersonate(); nav("/app"); };
 
   const visible = BASE_NAV.filter((n) => {
     if (n.adminOnly && !(user?.role === "admin" || user?.role === "platform_owner")) return false;
@@ -47,17 +47,20 @@ export default function Layout() {
           <Link to="/app" className="font-display text-white text-xl font-extrabold tracking-tight">UTSTYRS<span className="text-emerald-200">ROMMET</span></Link>
         </div>
         {customer && (
-          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
-            <div className="text-xs text-slate-500">Kunde</div>
+          <div className={`px-4 py-3 border-b border-slate-200 ${isOwner && !impersonating ? "bg-amber-50" : "bg-slate-50"}`}>
+            <div className="text-xs text-slate-500 flex items-center gap-1">
+              {isOwner && !impersonating && <Crown className="h-3 w-3 text-amber-700" />}
+              {isOwner && !impersonating ? "Plattformeier - din klubb" : "Kunde"}
+            </div>
             <div className="font-semibold text-sm truncate">{customer.club_name}</div>
             <div className="text-xs text-slate-500 mt-0.5">Kundenr: <span className="font-mono font-semibold">{customer.customer_number}</span></div>
             {plan && <div className="mt-1 inline-block text-xs font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">{plan.name}</div>}
           </div>
         )}
         <nav className="p-3 space-y-1 overflow-y-auto" onClick={() => setOpen(false)}>
-          {isOwner && (
-            <NavLink to="/eier" data-testid="nav-owner" className="sidebar-link bg-amber-50 text-amber-900">
-              <Crown className="h-4 w-4" />Eier-panel
+          {isOwner && !impersonating && (
+            <NavLink to="/app/kunder" data-testid="nav-customers" className={({ isActive }) => `sidebar-link bg-amber-50 text-amber-900 ${isActive ? "ring-2 ring-amber-500" : ""}`}>
+              <Building2 className="h-4 w-4" />Kunder & imitasjon
             </NavLink>
           )}
           {visible.map((n) => (
@@ -81,7 +84,7 @@ export default function Layout() {
         {impersonating && (
           <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between text-sm">
             <div className="flex items-center gap-2"><Eye className="h-4 w-4" /><span><strong>Imitasjonsmodus:</strong> Du jobber som <strong>{customer?.club_name}</strong> ({customer?.customer_number})</span></div>
-            <Button size="sm" variant="secondary" onClick={stop} data-testid="stop-impersonate-btn">Avslutt</Button>
+            <Button size="sm" variant="secondary" onClick={stop} data-testid="stop-impersonate-btn">Tilbake til mitt dashboard</Button>
           </div>
         )}
         <div className="p-4 sm:p-6 lg:p-8 pt-16 lg:pt-8 max-w-7xl mx-auto">

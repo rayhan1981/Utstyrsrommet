@@ -154,7 +154,8 @@ async def resolve_tenant_id(request: Request, user: dict) -> Optional[str]:
             cust = await db.customers.find_one({"id": imp})
             if cust:
                 return cust["id"]
-        return None
+        # Fall back to owner's own workspace tenant
+        return user.get("tenant_id")
     return user.get("tenant_id")
 
 
@@ -389,6 +390,29 @@ async def startup():
         await db[col].create_index("tenant_id")
 
     existing = await db.users.find_one({"email": ADMIN_EMAIL})
+    # Ensure an "owner workspace" tenant exists for the platform owner so they
+    # have their own private dashboard with full feature access.
+    owner_cust = await db.customers.find_one({"customer_number": "000001"})
+    if not owner_cust:
+        owner_tenant_id = new_id()
+        await db.customers.insert_one({
+            "id": owner_tenant_id,
+            "customer_number": "000001",
+            "club_name": "Plattformeier - Egen klubb",
+            "owner_name": ADMIN_NAME,
+            "owner_email": ADMIN_EMAIL,
+            "owner_phone": "",
+            "plan": "deluxe",
+            "status": "active",
+            "trial_ends_at": None,
+            "stripe_customer_id": None,
+            "stripe_subscription_id": None,
+            "is_owner_workspace": True,
+            "created_at": now_iso(),
+        })
+    else:
+        owner_tenant_id = owner_cust["id"]
+
     if not existing:
         await db.users.insert_one({
             "id": new_id(),
@@ -399,14 +423,15 @@ async def startup():
             "role": "platform_owner",
             "permissions": admin_perms(),
             "active": True,
-            "tenant_id": None,
+            "tenant_id": owner_tenant_id,
             "is_super_admin": True,
             "password_hash": hash_password(ADMIN_PASSWORD),
             "created_at": now_iso(),
         })
         logger.info(f"Seedet plattformeier: {ADMIN_EMAIL}")
     else:
-        update = {"role": "platform_owner", "is_super_admin": True, "active": True, "tenant_id": None, "permissions": admin_perms()}
+        update = {"role": "platform_owner", "is_super_admin": True, "active": True,
+                  "tenant_id": owner_tenant_id, "permissions": admin_perms()}
         if not verify_password(ADMIN_PASSWORD, existing.get("password_hash", "")):
             update["password_hash"] = hash_password(ADMIN_PASSWORD)
         await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": update})
@@ -449,12 +474,19 @@ async def me(request: Request, user=Depends(get_current_user)):
     if tid:
         customer = await db.customers.find_one({"id": tid}, {"_id": 0})
         plan = PLANS.get(customer.get("plan", "basic")) if customer else None
+    imp_cookie = request.cookies.get("imp_cid")
+    impersonating = bool(
+        user.get("role") == "platform_owner"
+        and imp_cookie
+        and customer
+        and not customer.get("is_owner_workspace")
+    )
     return {
         "user": user,
         "tenant_id": tid,
         "customer": customer,
         "plan": plan,
-        "impersonating": bool(user.get("role") == "platform_owner" and tid),
+        "impersonating": impersonating,
     }
 
 
@@ -636,13 +668,16 @@ async def owner_search(q: str = "", user=Depends(require_platform_owner)):
     if not q:
         return []
     rx = {"$regex": re.escape(q), "$options": "i"}
-    customers = await db.customers.find({"$or": [
-        {"customer_number": rx},
-        {"club_name": rx},
-        {"owner_name": rx},
-        {"owner_email": rx},
-        {"owner_phone": rx},
-    ]}, {"_id": 0}).to_list(50)
+    customers = await db.customers.find({
+        "is_owner_workspace": {"$ne": True},
+        "$or": [
+            {"customer_number": rx},
+            {"club_name": rx},
+            {"owner_name": rx},
+            {"owner_email": rx},
+            {"owner_phone": rx},
+        ]
+    }, {"_id": 0}).to_list(50)
     return customers
 
 
@@ -663,7 +698,7 @@ async def owner_stop(response: Response, user=Depends(require_platform_owner)):
 
 @api.get("/owner/customers")
 async def owner_list_customers(user=Depends(require_platform_owner)):
-    return await db.customers.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return await db.customers.find({"is_owner_workspace": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
 
 @api.put("/owner/customers/{customer_id}")
