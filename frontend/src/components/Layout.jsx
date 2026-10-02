@@ -58,10 +58,24 @@ export default function Layout() {
           </div>
         )}
         <nav className="p-3 space-y-1 overflow-y-auto" onClick={() => setOpen(false)}>
-          {isOwner && !impersonating && (
-            <NavLink to="/app/kunder" data-testid="nav-customers" className={({ isActive }) => `sidebar-link bg-amber-50 text-amber-900 ${isActive ? "ring-2 ring-amber-500" : ""}`}>
-              <Building2 className="h-4 w-4" />Kunder & imitasjon
-            </NavLink>
+          {isOwner && (
+            <div className="mb-2 pb-2 border-b border-slate-200 space-y-1">
+              <button
+                type="button"
+                data-testid="nav-my-dashboard"
+                onClick={async () => { if (impersonating) { await stopImpersonate(); } nav("/app"); }}
+                className={`sidebar-link w-full ${!impersonating ? "bg-amber-50 text-amber-900 ring-2 ring-amber-400" : "bg-amber-50 text-amber-900 hover:ring-2 hover:ring-amber-300"}`}
+              >
+                <Crown className="h-4 w-4" />Mitt dashboard
+              </button>
+              <NavLink
+                to="/app/kunder"
+                data-testid="nav-customers"
+                className={({ isActive }) => `sidebar-link bg-amber-50 text-amber-900 ${isActive ? "ring-2 ring-amber-500" : "hover:ring-2 hover:ring-amber-300"}`}
+              >
+                <Building2 className="h-4 w-4" />Kunder & imitasjon
+              </NavLink>
+            </div>
           )}
           {visible.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === "/app"} data-testid={`nav-${n.module || "sub"}`} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
