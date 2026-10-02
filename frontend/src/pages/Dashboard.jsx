@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { Card } from "@/components/ui/card";
 import { Package, ArrowLeftRight, Users as UsersIcon, UserCircle, TrendingUp, AlertTriangle } from "lucide-react";
 
@@ -20,6 +21,7 @@ function Stat({ icon: Icon, label, value, color = "emerald", testid }) {
 }
 
 export default function Dashboard() {
+  const { customer, plan } = useAuth();
   const [stats, setStats] = useState(null);
 
   useEffect(() => { api.get("/dashboard/stats").then((r) => setStats(r.data)).catch(() => {}); }, []);
@@ -31,7 +33,10 @@ export default function Dashboard() {
     <div className="space-y-6" data-testid="dashboard-page">
       <div>
         <h1 className="font-display text-3xl font-extrabold text-slate-900">Dashboard</h1>
-        <p className="text-slate-600 text-sm mt-1">Oversikt over klubbens lager og utlån</p>
+        <p className="text-slate-600 text-sm mt-1">
+          {customer?.club_name && <>Velkommen, <strong>{customer.club_name}</strong>. </>}Pakke: <strong>{plan?.name || "-"}</strong>
+          {customer?.status === "trial" && <span className="ml-2 inline-block text-xs font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-800">Prøveperiode</span>}
+        </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

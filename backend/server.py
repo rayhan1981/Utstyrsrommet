@@ -16,6 +16,7 @@ from typing import List, Optional, Dict, Any
 import bcrypt
 import jwt
 import httpx
+import stripe
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
@@ -36,6 +37,9 @@ EMAIL_KEY = os.environ.get('EMERGENT_EMAIL_KEY', '')
 EMAIL_FROM_NAME = os.environ.get('EMAIL_FROM_NAME', 'Utstyrsrommet')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
@@ -45,7 +49,31 @@ api = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("utstyrsrommet")
 
-# ---------------- Permissions ----------------
+# ---------------- Plans ----------------
+PLANS: Dict[str, Dict[str, Any]] = {
+    "basic": {
+        "key": "basic", "name": "Klubb Basic", "price": 399, "lookup_key": "utr_basic_monthly",
+        "max_teams": 3, "max_users": 0,  # no extra users beyond admin
+        "stock_audit": False, "excel_export": False, "excel_import": False,
+        "logo_upload": False, "settings": False,
+        "features": ["Dashboard", "Inntil 3 lag", "Personer", "Utstyr", "Utlån & Retur", "1 admin-bruker", "14 dagers gratis prøve"],
+    },
+    "pro": {
+        "key": "pro", "name": "Klubb Pro", "price": 599, "lookup_key": "utr_pro_monthly",
+        "max_teams": 10, "max_users": 3,
+        "stock_audit": True, "excel_export": True, "excel_import": False,
+        "logo_upload": False, "settings": False,
+        "features": ["Alt i Basic", "Inntil 10 lag", "3 ekstra brukere", "Varetelling", "Excel-eksport (beholdning + lag)", "Invitasjons-epost"],
+    },
+    "deluxe": {
+        "key": "deluxe", "name": "Klubb Deluxe", "price": 999, "lookup_key": "utr_deluxe_monthly",
+        "max_teams": None, "max_users": None,
+        "stock_audit": True, "excel_export": True, "excel_import": True,
+        "logo_upload": True, "settings": True,
+        "features": ["Alt i Pro", "Ubegrenset lag", "Ubegrensede ekstra brukere", "Excel-import m/mal", "Klubbinnstillinger + logo", "Prioritert support"],
+    },
+}
+
 MODULES = ["dashboard", "teams", "people", "inventory", "loans", "stock_audit", "users", "settings"]
 ACCESS_LEVELS = ["none", "read", "write", "admin"]
 
@@ -58,7 +86,15 @@ def admin_perms() -> Dict[str, str]:
     return {m: "admin" for m in MODULES}
 
 
-# ---------------- Password / JWT ----------------
+# ---------------- Helpers ----------------
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def new_id() -> str:
+    return str(uuid.uuid4())
+
+
 def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
@@ -75,6 +111,19 @@ def create_access_token(user_id: str, email: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def _clean(doc: dict) -> dict:
+    if not doc:
+        return doc
+    doc.pop("_id", None)
+    doc.pop("password_hash", None)
+    return doc
+
+
+def _cookie(resp: Response, key: str, value: str, max_age: int = 12 * 3600):
+    resp.set_cookie(key=key, value=value, httponly=True, secure=True, samesite="none", max_age=max_age, path="/")
+
+
+# ---------------- Auth ----------------
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
@@ -97,15 +146,50 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Ugyldig token")
 
 
+async def resolve_tenant_id(request: Request, user: dict) -> Optional[str]:
+    """Return current tenant_id based on user and impersonation cookie."""
+    if user.get("role") == "platform_owner":
+        imp = request.cookies.get("imp_cid")
+        if imp:
+            cust = await db.customers.find_one({"id": imp})
+            if cust:
+                return cust["id"]
+        return None
+    return user.get("tenant_id")
+
+
+async def require_tenant(request: Request, user=Depends(get_current_user)) -> str:
+    tid = await resolve_tenant_id(request, user)
+    if not tid:
+        raise HTTPException(status_code=400, detail="Ingen kunde valgt. Velg en kunde å jobbe i.")
+    return tid
+
+
+async def get_tenant_plan(tenant_id: str) -> Dict[str, Any]:
+    cust = await db.customers.find_one({"id": tenant_id})
+    if not cust:
+        raise HTTPException(status_code=404, detail="Kunde ikke funnet")
+    return PLANS.get(cust.get("plan", "basic"), PLANS["basic"])
+
+
+async def require_feature(request: Request, user: dict, feature: str) -> str:
+    tid = await require_tenant(request, user)
+    if user.get("role") == "platform_owner":
+        return tid  # owner bypass
+    plan = await get_tenant_plan(tid)
+    if not plan.get(feature):
+        raise HTTPException(status_code=403, detail=f"Pakken støtter ikke {feature}. Oppgrader for å få tilgang.")
+    return tid
+
+
 def require_perm(module: str, level: str = "read"):
     order = {"none": 0, "read": 1, "write": 2, "admin": 3}
 
-    async def dep(user=Depends(get_current_user)):
-        if user.get("role") == "admin":
+    async def dep(request: Request, user=Depends(get_current_user)) -> dict:
+        if user.get("role") in ("admin", "platform_owner"):
             return user
         perms = user.get("permissions", {})
-        user_level = perms.get(module, "none")
-        if order.get(user_level, 0) < order.get(level, 1):
+        if order.get(perms.get(module, "none"), 0) < order.get(level, 1):
             raise HTTPException(status_code=403, detail=f"Mangler rettighet: {module}:{level}")
         return user
 
@@ -113,35 +197,36 @@ def require_perm(module: str, level: str = "read"):
 
 
 def require_admin(user=Depends(get_current_user)):
-    if user.get("role") != "admin":
+    if user.get("role") not in ("admin", "platform_owner"):
         raise HTTPException(status_code=403, detail="Kun admin")
     return user
 
 
-# ---------------- Email (Resend) ----------------
+def require_platform_owner(user=Depends(get_current_user)):
+    if user.get("role") != "platform_owner":
+        raise HTTPException(status_code=403, detail="Kun plattformeier")
+    return user
+
+
+# ---------------- Email ----------------
 async def send_invitation_email(to: str, name: str, token: str):
     if not EMAIL_KEY:
-        logger.warning("EMERGENT_EMAIL_KEY mangler - hopper over e-post")
         return None
     link = f"{FRONTEND_URL}/sett-passord?token={token}"
-    subject = f"Velkommen til {EMAIL_FROM_NAME}"
     html = (
-        f'<table role="presentation" width="100%" style="background:#f8fafc;padding:24px;font-family:Arial,sans-serif">'
-        f'<tr><td align="center"><table role="presentation" width="560" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:32px">'
-        f'<tr><td>'
-        f'<h1 style="color:#064E3B;margin:0 0 16px 0;font-size:24px">Velkommen, {name}!</h1>'
-        f'<p style="color:#0f172a;font-size:15px;line-height:1.6">Du har fått tilgang til <strong>{EMAIL_FROM_NAME}</strong> - lagerstyringssystemet for klubben.</p>'
-        f'<p style="color:#0f172a;font-size:15px;line-height:1.6">Klikk på knappen nedenfor for å opprette ditt passord og aktivere kontoen.</p>'
+        f'<table width="100%" style="background:#f8fafc;padding:24px;font-family:Arial,sans-serif">'
+        f'<tr><td align="center"><table width="560" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:32px">'
+        f'<tr><td><h1 style="color:#064E3B;margin:0 0 16px 0">Velkommen, {name}!</h1>'
+        f'<p>Du har fått tilgang til <strong>{EMAIL_FROM_NAME}</strong>.</p>'
         f'<p style="text-align:center;margin:28px 0"><a href="{link}" style="background:#064E3B;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:600">Opprett passord</a></p>'
-        f'<p style="color:#475569;font-size:13px;line-height:1.6">Lenken er gyldig i 7 dager. Hvis du ikke forventet denne eposten, kan du trygt ignorere den.</p>'
-        f'<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">'
-        f'<p style="color:#94a3b8;font-size:12px">Sendt av {EMAIL_FROM_NAME}. Vi vil aldri be deg om passordet ditt via epost.</p>'
+        f'<p style="color:#475569;font-size:13px">Lenken er gyldig i 7 dager.</p>'
         f'</td></tr></table></td></tr></table>'
     )
-    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
     try:
         async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send", headers={"X-Email-Key": EMAIL_KEY}, json=payload)
+            r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                             headers={"X-Email-Key": EMAIL_KEY},
+                             json={"to": [to], "subject": f"Velkommen til {EMAIL_FROM_NAME}", "html": html, "from_name": EMAIL_FROM_NAME})
         r.raise_for_status()
         return r.json().get("id")
     except Exception as e:
@@ -150,14 +235,6 @@ async def send_invitation_email(to: str, name: str, token: str):
 
 
 # ---------------- Models ----------------
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def new_id() -> str:
-    return str(uuid.uuid4())
-
-
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
@@ -168,14 +245,23 @@ class SetPasswordIn(BaseModel):
     password: str
 
 
+class SignupIn(BaseModel):
+    club_name: str
+    owner_name: str
+    owner_email: EmailStr
+    owner_phone: str = ""
+    password: str
+    plan: str = "basic"
+
+
 class UserCreateIn(BaseModel):
     name: str
     email: EmailStr
     phone: Optional[str] = ""
     address: Optional[str] = ""
-    role: str = "user"  # admin | user
+    role: str = "user"
     permissions: Optional[Dict[str, str]] = None
-    password: Optional[str] = None  # if provided, set directly; else send invitation
+    password: Optional[str] = None
 
 
 class UserUpdateIn(BaseModel):
@@ -197,8 +283,8 @@ class TrainerIn(BaseModel):
 
 class TeamIn(BaseModel):
     club_id: Optional[str] = None
-    team_name: str  # e.g. "Jenter 13"
-    age_class: str = ""  # e.g. "2019"
+    team_name: str
+    age_class: str = ""
     email: str = ""
     training_times: List[str] = Field(default_factory=list)
     contact_person: str = ""
@@ -244,9 +330,9 @@ class LoanIn(BaseModel):
     item_id: str
     quantity: int = 1
     team_id: Optional[str] = None
-    person_id: Optional[str] = None  # who picked up
-    mode: str = "loan"  # loan | handout
-    charge_price: bool = True  # for handout: include price?
+    person_id: Optional[str] = None
+    mode: str = "loan"
+    charge_price: bool = True
     size: Optional[str] = None
     jersey_number: Optional[str] = None
     notes: str = ""
@@ -273,19 +359,35 @@ class StockCountLineIn(BaseModel):
     counted_quantity: int
 
 
+class CheckoutIn(BaseModel):
+    plan: str
+    origin_url: str
+
+
+class UpdatePlanIn(BaseModel):
+    plan: str
+
+
 # ---------------- Startup ----------------
+async def _generate_customer_number() -> str:
+    for _ in range(10):
+        cnr = str(pysecrets.randbelow(900000) + 100000)
+        if not await db.customers.find_one({"customer_number": cnr}):
+            return cnr
+    raise HTTPException(500, "Kunne ikke generere kundenummer")
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.users.create_index("id", unique=True)
+    await db.customers.create_index("customer_number", unique=True)
+    await db.customers.create_index("id", unique=True)
     await db.invitations.create_index("token", unique=True)
-    await db.teams.create_index("id", unique=True)
-    await db.people.create_index("id", unique=True)
-    await db.items.create_index("id", unique=True)
-    await db.loans.create_index("id", unique=True)
-    await db.clubs.create_index("id", unique=True)
+    for col in ["teams", "people", "items", "loans", "clubs", "stock_counts"]:
+        await db[col].create_index("id", unique=True)
+        await db[col].create_index("tenant_id")
 
-    # seed admin
     existing = await db.users.find_one({"email": ADMIN_EMAIL})
     if not existing:
         await db.users.insert_one({
@@ -294,42 +396,29 @@ async def startup():
             "name": ADMIN_NAME,
             "phone": "",
             "address": "",
-            "role": "admin",
+            "role": "platform_owner",
             "permissions": admin_perms(),
             "active": True,
+            "tenant_id": None,
             "is_super_admin": True,
             "password_hash": hash_password(ADMIN_PASSWORD),
             "created_at": now_iso(),
         })
-        logger.info(f"Seedet admin: {ADMIN_EMAIL}")
+        logger.info(f"Seedet plattformeier: {ADMIN_EMAIL}")
     else:
-        update = {"role": "admin", "is_super_admin": True, "active": True, "permissions": admin_perms()}
+        update = {"role": "platform_owner", "is_super_admin": True, "active": True, "tenant_id": None, "permissions": admin_perms()}
         if not verify_password(ADMIN_PASSWORD, existing.get("password_hash", "")):
             update["password_hash"] = hash_password(ADMIN_PASSWORD)
         await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": update})
 
-    # seed default club
-    clubs = await db.clubs.count_documents({})
-    if clubs == 0:
-        await db.clubs.insert_one({"id": new_id(), "name": "Min Idrettsklubb", "org_number": "", "logo_url": "", "created_at": now_iso()})
+
+# ---------------- Public: Plans ----------------
+@api.get("/plans")
+async def list_plans():
+    return [{k: v for k, v in p.items() if k != "lookup_key"} for p in PLANS.values()]
 
 
-def _cookie_response(resp: Response, token: str):
-    resp.set_cookie(
-        key="access_token", value=token, httponly=True, secure=True, samesite="none",
-        max_age=12 * 3600, path="/"
-    )
-
-
-def _clean(doc: dict) -> dict:
-    if not doc:
-        return doc
-    doc.pop("_id", None)
-    doc.pop("password_hash", None)
-    return doc
-
-
-# ---------------- Auth routes ----------------
+# ---------------- Auth ----------------
 @api.post("/auth/login")
 async def login(data: LoginIn, response: Response):
     email = data.email.lower()
@@ -339,30 +428,260 @@ async def login(data: LoginIn, response: Response):
     if not user.get("active", True):
         raise HTTPException(status_code=403, detail="Konto deaktivert")
     token = create_access_token(user["id"], user["email"])
-    _cookie_response(response, token)
+    _cookie(response, "access_token", token)
+    # also clear impersonation on login
+    response.delete_cookie("imp_cid", path="/")
     return {"user": _clean(dict(user)), "token": token}
 
 
 @api.post("/auth/logout")
 async def logout(response: Response):
     response.delete_cookie("access_token", path="/")
+    response.delete_cookie("imp_cid", path="/")
     return {"ok": True}
 
 
 @api.get("/auth/me")
-async def me(user=Depends(get_current_user)):
-    return user
+async def me(request: Request, user=Depends(get_current_user)):
+    tid = await resolve_tenant_id(request, user)
+    customer = None
+    plan = None
+    if tid:
+        customer = await db.customers.find_one({"id": tid}, {"_id": 0})
+        plan = PLANS.get(customer.get("plan", "basic")) if customer else None
+    return {
+        "user": user,
+        "tenant_id": tid,
+        "customer": customer,
+        "plan": plan,
+        "impersonating": bool(user.get("role") == "platform_owner" and tid),
+    }
 
 
+# ---------------- Signup ----------------
+@api.post("/signup")
+async def signup(data: SignupIn, response: Response):
+    if data.plan not in PLANS:
+        raise HTTPException(400, "Ugyldig pakke")
+    if len(data.password) < 6:
+        raise HTTPException(400, "Passord må være minst 6 tegn")
+    email = data.owner_email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "E-post finnes allerede")
+
+    customer_number = await _generate_customer_number()
+    tenant_id = new_id()
+    trial_ends = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+
+    customer_doc = {
+        "id": tenant_id,
+        "customer_number": customer_number,
+        "club_name": data.club_name,
+        "owner_name": data.owner_name,
+        "owner_email": email,
+        "owner_phone": data.owner_phone,
+        "plan": data.plan,
+        "status": "trial",
+        "trial_ends_at": trial_ends,
+        "stripe_customer_id": None,
+        "stripe_subscription_id": None,
+        "created_at": now_iso(),
+    }
+    await db.customers.insert_one(customer_doc)
+
+    user_id = new_id()
+    await db.users.insert_one({
+        "id": user_id,
+        "email": email,
+        "name": data.owner_name,
+        "phone": data.owner_phone,
+        "address": "",
+        "role": "admin",
+        "permissions": admin_perms(),
+        "active": True,
+        "tenant_id": tenant_id,
+        "is_super_admin": False,
+        "password_hash": hash_password(data.password),
+        "created_at": now_iso(),
+    })
+
+    token = create_access_token(user_id, email)
+    _cookie(response, "access_token", token)
+    return {"ok": True, "customer_number": customer_number, "token": token, "customer": _clean(customer_doc)}
+
+
+# ---------------- Subscription ----------------
+@api.post("/subscription/checkout")
+async def subscription_checkout(data: CheckoutIn, request: Request, user=Depends(require_admin)):
+    tid = await resolve_tenant_id(request, user)
+    if not tid:
+        raise HTTPException(400, "Ingen kunde")
+    if data.plan not in PLANS:
+        raise HTTPException(400, "Ugyldig pakke")
+    cust = await db.customers.find_one({"id": tid})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+
+    plan = PLANS[data.plan]
+    prices = stripe.Price.list(lookup_keys=[plan["lookup_key"]], active=True, limit=1).data
+    if not prices:
+        raise HTTPException(500, f"Pris ikke funnet: {plan['lookup_key']}")
+    price = prices[0]
+
+    sub_data = {}
+    try:
+        if cust.get("status") == "trial" and cust.get("trial_ends_at"):
+            trial_end = datetime.fromisoformat(cust["trial_ends_at"])
+            if trial_end > datetime.now(timezone.utc):
+                sub_data["trial_end"] = int(trial_end.timestamp())
+    except Exception:
+        pass
+
+    kwargs = dict(
+        line_items=[{"price": price.id, "quantity": 1}],
+        mode="subscription",
+        success_url=f"{data.origin_url}/abonnement/suksess?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{data.origin_url}/abonnement",
+        customer_email=cust["owner_email"] if not cust.get("stripe_customer_id") else None,
+        metadata={"tenant_id": tid, "plan": data.plan},
+        subscription_data={"metadata": {"tenant_id": tid, "plan": data.plan}, **sub_data},
+    )
+    if cust.get("stripe_customer_id"):
+        kwargs["customer"] = cust["stripe_customer_id"]
+        kwargs.pop("customer_email", None)
+
+    session = stripe.checkout.Session.create(**{k: v for k, v in kwargs.items() if v is not None})
+
+    await db.payment_transactions.insert_one({
+        "session_id": session.id, "tenant_id": tid, "plan": data.plan,
+        "status": "initiated", "payment_status": "pending", "created_at": now_iso(), "updated_at": now_iso(),
+    })
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
+@api.get("/subscription/status/{session_id}")
+async def subscription_status(session_id: str):
+    rec = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Transaksjon ikke funnet")
+    if rec.get("payment_status") != "paid":
+        try:
+            s = stripe.checkout.Session.retrieve(session_id)
+            if s.payment_status == "paid" or s.status == "complete":
+                tid = s.metadata.get("tenant_id") if s.metadata else rec.get("tenant_id")
+                plan = s.metadata.get("plan") if s.metadata else rec.get("plan")
+                await db.payment_transactions.update_one(
+                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                    {"$set": {"status": "completed", "payment_status": "paid",
+                              "stripe_subscription_id": s.subscription,
+                              "stripe_customer_id": s.customer,
+                              "updated_at": now_iso()}})
+                if tid:
+                    await db.customers.update_one({"id": tid}, {"$set": {
+                        "status": "active", "plan": plan or rec.get("plan"),
+                        "stripe_subscription_id": s.subscription,
+                        "stripe_customer_id": s.customer,
+                    }})
+                rec = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+        except stripe.error.StripeError:
+            pass
+    return {"session_id": rec["session_id"], "status": rec["status"], "payment_status": rec["payment_status"]}
+
+
+@api.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception:
+        raise HTTPException(400, "Invalid signature")
+    obj, t = event["data"]["object"], event["type"]
+
+    if t == "checkout.session.completed":
+        tid = (obj.get("metadata") or {}).get("tenant_id")
+        plan = (obj.get("metadata") or {}).get("plan")
+        await db.payment_transactions.update_one(
+            {"session_id": obj["id"], "payment_status": {"$ne": "paid"}},
+            {"$set": {"status": "completed", "payment_status": obj.get("payment_status", "paid"),
+                      "stripe_subscription_id": obj.get("subscription"),
+                      "stripe_customer_id": obj.get("customer"),
+                      "updated_at": now_iso()}})
+        if tid:
+            await db.customers.update_one({"id": tid}, {"$set": {
+                "status": "active", "plan": plan,
+                "stripe_subscription_id": obj.get("subscription"),
+                "stripe_customer_id": obj.get("customer"),
+            }})
+    elif t == "customer.subscription.updated":
+        tid = (obj.get("metadata") or {}).get("tenant_id")
+        if tid:
+            status_map = {"active": "active", "trialing": "trial", "past_due": "past_due",
+                          "canceled": "canceled", "unpaid": "past_due", "incomplete": "past_due"}
+            await db.customers.update_one({"id": tid}, {"$set": {
+                "status": status_map.get(obj.get("status"), "active"),
+                "stripe_subscription_id": obj.get("id"),
+            }})
+    elif t == "customer.subscription.deleted":
+        tid = (obj.get("metadata") or {}).get("tenant_id")
+        if tid:
+            await db.customers.update_one({"id": tid}, {"$set": {"status": "canceled"}})
+    return {"status": "ok"}
+
+
+# ---------------- Platform Owner: Impersonation ----------------
+@api.get("/owner/customers/search")
+async def owner_search(q: str = "", user=Depends(require_platform_owner)):
+    q = (q or "").strip()
+    if not q:
+        return []
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    customers = await db.customers.find({"$or": [
+        {"customer_number": rx},
+        {"club_name": rx},
+        {"owner_name": rx},
+        {"owner_email": rx},
+        {"owner_phone": rx},
+    ]}, {"_id": 0}).to_list(50)
+    return customers
+
+
+@api.post("/owner/impersonate/{customer_id}")
+async def owner_impersonate(customer_id: str, response: Response, user=Depends(require_platform_owner)):
+    cust = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    _cookie(response, "imp_cid", customer_id)
+    return {"ok": True, "customer": cust}
+
+
+@api.post("/owner/stop-impersonate")
+async def owner_stop(response: Response, user=Depends(require_platform_owner)):
+    response.delete_cookie("imp_cid", path="/")
+    return {"ok": True}
+
+
+@api.get("/owner/customers")
+async def owner_list_customers(user=Depends(require_platform_owner)):
+    return await db.customers.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+
+@api.put("/owner/customers/{customer_id}")
+async def owner_update_customer(customer_id: str, data: UpdatePlanIn, user=Depends(require_platform_owner)):
+    if data.plan not in PLANS:
+        raise HTTPException(400, "Ugyldig pakke")
+    await db.customers.update_one({"id": customer_id}, {"$set": {"plan": data.plan}})
+    return await db.customers.find_one({"id": customer_id}, {"_id": 0})
+
+
+# ---------------- Invitations / Set password ----------------
 @api.get("/auth/invitation/{token}")
 async def check_invitation(token: str):
     inv = await db.invitations.find_one({"token": token})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Ugyldig invitasjon")
-    if inv.get("used"):
-        raise HTTPException(status_code=400, detail="Invitasjon er allerede brukt")
-    user = await db.users.find_one({"id": inv["user_id"]}, {"_id": 0, "password_hash": 0})
-    return {"email": user["email"], "name": user["name"]}
+    if not inv or inv.get("used"):
+        raise HTTPException(status_code=400, detail="Ugyldig eller brukt invitasjon")
+    u = await db.users.find_one({"id": inv["user_id"]}, {"_id": 0, "password_hash": 0})
+    return {"email": u["email"], "name": u["name"]}
 
 
 @api.post("/auth/set-password")
@@ -374,77 +693,86 @@ async def set_password(data: SetPasswordIn, response: Response):
         raise HTTPException(status_code=400, detail="Passord må være minst 6 tegn")
     await db.users.update_one({"id": inv["user_id"]}, {"$set": {"password_hash": hash_password(data.password), "active": True}})
     await db.invitations.update_one({"token": data.token}, {"$set": {"used": True, "used_at": now_iso()}})
-    user = await db.users.find_one({"id": inv["user_id"]}, {"_id": 0, "password_hash": 0})
-    token = create_access_token(user["id"], user["email"])
-    _cookie_response(response, token)
-    return {"user": user, "token": token}
+    u = await db.users.find_one({"id": inv["user_id"]}, {"_id": 0, "password_hash": 0})
+    token = create_access_token(u["id"], u["email"])
+    _cookie(response, "access_token", token)
+    return {"user": u, "token": token}
 
 
-# ---------------- Users (admin) ----------------
+# ---------------- Users (per tenant) ----------------
 @api.get("/users")
-async def list_users(user=Depends(require_admin)):
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+async def list_users(request: Request, user=Depends(require_admin)):
+    tid = await require_tenant(request, user)
+    users = await db.users.find({"tenant_id": tid}, {"_id": 0, "password_hash": 0}).to_list(200)
     return users
 
 
 @api.post("/users")
-async def create_user(data: UserCreateIn, admin=Depends(require_admin)):
+async def create_user(data: UserCreateIn, request: Request, admin=Depends(require_admin)):
+    tid = await require_tenant(request, admin)
+    plan = await get_tenant_plan(tid)
+    max_users = plan.get("max_users")
+    if max_users is not None:
+        count = await db.users.count_documents({"tenant_id": tid, "role": {"$ne": "admin"}})
+        if count >= max_users:
+            raise HTTPException(403, f"Pakken støtter maks {max_users} ekstra brukere. Oppgrader for flere.")
+
     email = data.email.lower()
     if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="E-post finnes allerede")
+        raise HTTPException(400, "E-post finnes allerede")
     uid = new_id()
     perms = data.permissions if data.permissions else (admin_perms() if data.role == "admin" else default_perms("read"))
-    user_doc = {
+    doc = {
         "id": uid, "email": email, "name": data.name, "phone": data.phone or "", "address": data.address or "",
         "role": data.role, "permissions": perms, "active": True, "is_super_admin": False,
+        "tenant_id": tid,
         "password_hash": hash_password(data.password) if data.password else "",
         "created_at": now_iso(),
     }
-    await db.users.insert_one(user_doc)
+    await db.users.insert_one(doc)
     inv_token = None
     if not data.password:
         inv_token = pysecrets.token_urlsafe(32)
-        await db.invitations.insert_one({
-            "token": inv_token, "user_id": uid, "created_at": now_iso(), "used": False,
-        })
+        await db.invitations.insert_one({"token": inv_token, "user_id": uid, "created_at": now_iso(), "used": False})
         await send_invitation_email(email, data.name, inv_token)
-    _clean(user_doc)
-    return {"user": user_doc, "invitation_sent": not data.password, "invitation_link": f"{FRONTEND_URL}/sett-passord?token={inv_token}" if inv_token else None}
+    _clean(doc)
+    return {"user": doc, "invitation_sent": not data.password,
+            "invitation_link": f"{FRONTEND_URL}/sett-passord?token={inv_token}" if inv_token else None}
 
 
 @api.put("/users/{user_id}")
-async def update_user(user_id: str, data: UserUpdateIn, admin=Depends(require_admin)):
+async def update_user(user_id: str, data: UserUpdateIn, request: Request, admin=Depends(require_admin)):
+    tid = await require_tenant(request, admin)
     target = await db.users.find_one({"id": user_id})
-    if not target:
-        raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+    if not target or target.get("tenant_id") != tid:
+        raise HTTPException(404, "Bruker ikke funnet")
     update = {k: v for k, v in data.dict(exclude_unset=True).items() if k != "password"}
-    if target.get("is_super_admin"):
-        # super admin cannot be demoted or deactivated
-        update.pop("role", None)
-        update.pop("active", None)
     if data.password:
         update["password_hash"] = hash_password(data.password)
     await db.users.update_one({"id": user_id}, {"$set": update})
-    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
-    return user
+    return await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
 
 
 @api.delete("/users/{user_id}")
-async def delete_user(user_id: str, admin=Depends(require_admin)):
+async def delete_user(user_id: str, request: Request, admin=Depends(require_admin)):
+    tid = await require_tenant(request, admin)
     target = await db.users.find_one({"id": user_id})
-    if not target:
-        raise HTTPException(status_code=404, detail="Bruker ikke funnet")
-    if target.get("is_super_admin"):
-        raise HTTPException(status_code=403, detail="Kan ikke slette overordnet admin")
+    if not target or target.get("tenant_id") != tid:
+        raise HTTPException(404, "Bruker ikke funnet")
+    if target.get("role") == "admin":
+        count = await db.users.count_documents({"tenant_id": tid, "role": "admin"})
+        if count <= 1:
+            raise HTTPException(400, "Kan ikke slette siste admin for kunden")
     await db.users.delete_one({"id": user_id})
     return {"ok": True}
 
 
 @api.post("/users/{user_id}/resend-invitation")
-async def resend_invite(user_id: str, admin=Depends(require_admin)):
+async def resend_invite(user_id: str, request: Request, admin=Depends(require_admin)):
+    tid = await require_tenant(request, admin)
     target = await db.users.find_one({"id": user_id})
-    if not target:
-        raise HTTPException(status_code=404, detail="Bruker ikke funnet")
+    if not target or target.get("tenant_id") != tid:
+        raise HTTPException(404, "Bruker ikke funnet")
     inv_token = pysecrets.token_urlsafe(32)
     await db.invitations.insert_one({"token": inv_token, "user_id": user_id, "created_at": now_iso(), "used": False})
     await send_invitation_email(target["email"], target["name"], inv_token)
@@ -453,116 +781,134 @@ async def resend_invite(user_id: str, admin=Depends(require_admin)):
 
 # ---------------- Clubs ----------------
 @api.get("/clubs")
-async def list_clubs(user=Depends(get_current_user)):
-    return await db.clubs.find({}, {"_id": 0}).to_list(100)
+async def list_clubs(request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    return await db.clubs.find({"tenant_id": tid}, {"_id": 0}).to_list(100)
 
 
 @api.post("/clubs")
-async def create_club(data: ClubIn, user=Depends(require_perm("settings", "write"))):
-    doc = {"id": new_id(), "name": data.name, "org_number": data.org_number, "logo_url": data.logo_url, "created_at": now_iso()}
+async def create_club(data: ClubIn, request: Request, user=Depends(require_perm("settings", "write"))):
+    tid = await require_feature(request, user, "settings")
+    doc = {"id": new_id(), "tenant_id": tid, "name": data.name, "org_number": data.org_number,
+           "logo_url": data.logo_url, "created_at": now_iso()}
     await db.clubs.insert_one(doc)
     return _clean(doc)
 
 
 @api.put("/clubs/{club_id}")
-async def update_club(club_id: str, data: ClubIn, user=Depends(require_perm("settings", "write"))):
-    await db.clubs.update_one({"id": club_id}, {"$set": data.dict()})
-    return await db.clubs.find_one({"id": club_id}, {"_id": 0})
+async def update_club(club_id: str, data: ClubIn, request: Request, user=Depends(require_perm("settings", "write"))):
+    tid = await require_feature(request, user, "settings")
+    await db.clubs.update_one({"id": club_id, "tenant_id": tid}, {"$set": data.dict()})
+    return await db.clubs.find_one({"id": club_id, "tenant_id": tid}, {"_id": 0})
 
 
 @api.delete("/clubs/{club_id}")
-async def delete_club(club_id: str, user=Depends(require_admin)):
-    await db.clubs.delete_one({"id": club_id})
+async def delete_club(club_id: str, request: Request, user=Depends(require_admin)):
+    tid = await require_feature(request, user, "settings")
+    await db.clubs.delete_one({"id": club_id, "tenant_id": tid})
     return {"ok": True}
+
+
+@api.post("/clubs/{club_id}/logo")
+async def upload_logo(club_id: str, request: Request, file: UploadFile = File(...), user=Depends(require_perm("settings", "write"))):
+    tid = await require_feature(request, user, "logo_upload")
+    import base64
+    data = await file.read()
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(400, "Logo for stor (maks 2MB)")
+    data_url = f"data:{file.content_type};base64,{base64.b64encode(data).decode()}"
+    await db.clubs.update_one({"id": club_id, "tenant_id": tid}, {"$set": {"logo_url": data_url}})
+    return {"logo_url": data_url}
 
 
 # ---------------- Teams ----------------
 @api.get("/teams")
-async def list_teams(user=Depends(require_perm("teams", "read"))):
-    return await db.teams.find({}, {"_id": 0}).to_list(1000)
+async def list_teams(request: Request, user=Depends(require_perm("teams", "read"))):
+    tid = await require_tenant(request, user)
+    return await db.teams.find({"tenant_id": tid}, {"_id": 0}).to_list(1000)
 
 
 @api.post("/teams")
-async def create_team(data: TeamIn, user=Depends(require_perm("teams", "write"))):
+async def create_team(data: TeamIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    if user.get("role") != "platform_owner":
+        plan = await get_tenant_plan(tid)
+        if plan.get("max_teams") is not None:
+            count = await db.teams.count_documents({"tenant_id": tid})
+            if count >= plan["max_teams"]:
+                raise HTTPException(403, f"Pakken støtter maks {plan['max_teams']} lag. Oppgrader for flere.")
     doc = data.dict()
-    doc["id"] = new_id()
-    doc["debt"] = 0.0
-    doc["created_at"] = now_iso()
+    doc.update({"id": new_id(), "tenant_id": tid, "debt": 0.0, "created_at": now_iso()})
     await db.teams.insert_one(doc)
     return _clean(doc)
 
 
 @api.get("/teams/{team_id}")
-async def get_team(team_id: str, user=Depends(require_perm("teams", "read"))):
-    t = await db.teams.find_one({"id": team_id}, {"_id": 0})
+async def get_team(team_id: str, request: Request, user=Depends(require_perm("teams", "read"))):
+    tid = await require_tenant(request, user)
+    t = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
     if not t:
-        raise HTTPException(status_code=404, detail="Lag ikke funnet")
+        raise HTTPException(404, "Lag ikke funnet")
     return t
 
 
 @api.put("/teams/{team_id}")
-async def update_team(team_id: str, data: TeamIn, user=Depends(require_perm("teams", "write"))):
-    await db.teams.update_one({"id": team_id}, {"$set": data.dict()})
-    return await db.teams.find_one({"id": team_id}, {"_id": 0})
+async def update_team(team_id: str, data: TeamIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    await db.teams.update_one({"id": team_id, "tenant_id": tid}, {"$set": data.dict()})
+    return await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
 
 
 @api.delete("/teams/{team_id}")
-async def delete_team(team_id: str, user=Depends(require_perm("teams", "admin"))):
-    await db.teams.delete_one({"id": team_id})
+async def delete_team(team_id: str, request: Request, user=Depends(require_perm("teams", "admin"))):
+    tid = await require_tenant(request, user)
+    await db.teams.delete_one({"id": team_id, "tenant_id": tid})
     return {"ok": True}
 
 
 # ---------------- People ----------------
 @api.get("/people")
-async def list_people(user=Depends(require_perm("people", "read"))):
-    return await db.people.find({}, {"_id": 0}).to_list(2000)
+async def list_people(request: Request, user=Depends(require_perm("people", "read"))):
+    tid = await require_tenant(request, user)
+    return await db.people.find({"tenant_id": tid}, {"_id": 0}).to_list(2000)
 
 
 @api.post("/people")
-async def create_person(data: PersonIn, user=Depends(require_perm("people", "write"))):
+async def create_person(data: PersonIn, request: Request, user=Depends(require_perm("people", "write"))):
+    tid = await require_tenant(request, user)
     doc = data.dict()
-    doc["id"] = new_id()
-    doc["debt"] = 0.0
-    doc["created_at"] = now_iso()
+    doc.update({"id": new_id(), "tenant_id": tid, "debt": 0.0, "created_at": now_iso()})
     await db.people.insert_one(doc)
     return _clean(doc)
 
 
 @api.get("/people/{person_id}")
-async def get_person(person_id: str, user=Depends(require_perm("people", "read"))):
-    p = await db.people.find_one({"id": person_id}, {"_id": 0})
+async def get_person(person_id: str, request: Request, user=Depends(require_perm("people", "read"))):
+    tid = await require_tenant(request, user)
+    p = await db.people.find_one({"id": person_id, "tenant_id": tid}, {"_id": 0})
     if not p:
-        raise HTTPException(status_code=404, detail="Person ikke funnet")
-    # Team debts for teams person is linked to
-    teams = await db.teams.find({"id": {"$in": p.get("team_ids", [])}}, {"_id": 0}).to_list(100)
-    # Loan history for person
-    history = await db.loans.find({"person_id": person_id}, {"_id": 0}).sort("loan_date", -1).to_list(500)
+        raise HTTPException(404, "Person ikke funnet")
+    teams = await db.teams.find({"id": {"$in": p.get("team_ids", [])}, "tenant_id": tid}, {"_id": 0}).to_list(100)
+    history = await db.loans.find({"person_id": person_id, "tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(500)
     return {"person": p, "teams": teams, "history": history}
 
 
 @api.put("/people/{person_id}")
-async def update_person(person_id: str, data: PersonIn, user=Depends(require_perm("people", "write"))):
-    await db.people.update_one({"id": person_id}, {"$set": data.dict()})
-    return await db.people.find_one({"id": person_id}, {"_id": 0})
+async def update_person(person_id: str, data: PersonIn, request: Request, user=Depends(require_perm("people", "write"))):
+    tid = await require_tenant(request, user)
+    await db.people.update_one({"id": person_id, "tenant_id": tid}, {"$set": data.dict()})
+    return await db.people.find_one({"id": person_id, "tenant_id": tid}, {"_id": 0})
 
 
 @api.delete("/people/{person_id}")
-async def delete_person(person_id: str, user=Depends(require_perm("people", "admin"))):
-    await db.people.delete_one({"id": person_id})
+async def delete_person(person_id: str, request: Request, user=Depends(require_perm("people", "admin"))):
+    tid = await require_tenant(request, user)
+    await db.people.delete_one({"id": person_id, "tenant_id": tid})
     return {"ok": True}
 
 
 # ---------------- Items ----------------
-@api.get("/items")
-async def list_items(user=Depends(require_perm("inventory", "read"))):
-    return await db.items.find({}, {"_id": 0}).to_list(5000)
-
-
-@api.post("/items")
-async def create_item(data: ItemIn, user=Depends(require_perm("inventory", "write"))):
-    doc = data.dict()
-    doc["id"] = new_id()
-    doc["created_at"] = now_iso()
+def _prep_item_doc(doc: dict) -> dict:
     if doc.get("is_clothing") or doc.get("is_ball"):
         for s in doc["sizes"]:
             if doc.get("is_clothing") and not s.get("jersey_number"):
@@ -570,86 +916,90 @@ async def create_item(data: ItemIn, user=Depends(require_perm("inventory", "writ
             if doc.get("is_ball"):
                 s["jersey_number"] = ""
         doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
+    return doc
+
+
+@api.get("/items")
+async def list_items(request: Request, user=Depends(require_perm("inventory", "read"))):
+    tid = await require_tenant(request, user)
+    return await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+
+
+@api.post("/items")
+async def create_item(data: ItemIn, request: Request, user=Depends(require_perm("inventory", "write"))):
+    tid = await require_tenant(request, user)
+    doc = _prep_item_doc(data.dict())
+    doc.update({"id": new_id(), "tenant_id": tid, "created_at": now_iso()})
     await db.items.insert_one(doc)
     return _clean(doc)
 
 
 @api.put("/items/{item_id}")
-async def update_item(item_id: str, data: ItemIn, user=Depends(require_perm("inventory", "write"))):
-    doc = data.dict()
-    if doc.get("is_clothing") or doc.get("is_ball"):
-        for s in doc["sizes"]:
-            if doc.get("is_clothing") and not s.get("jersey_number"):
-                s["jersey_number"] = "X"
-            if doc.get("is_ball"):
-                s["jersey_number"] = ""
-        doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
-    await db.items.update_one({"id": item_id}, {"$set": doc})
-    return await db.items.find_one({"id": item_id}, {"_id": 0})
+async def update_item(item_id: str, data: ItemIn, request: Request, user=Depends(require_perm("inventory", "write"))):
+    tid = await require_tenant(request, user)
+    doc = _prep_item_doc(data.dict())
+    await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": doc})
+    return await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
 
 
 @api.delete("/items/{item_id}")
-async def delete_item(item_id: str, user=Depends(require_perm("inventory", "admin"))):
-    await db.items.delete_one({"id": item_id})
+async def delete_item(item_id: str, request: Request, user=Depends(require_perm("inventory", "admin"))):
+    tid = await require_tenant(request, user)
+    await db.items.delete_one({"id": item_id, "tenant_id": tid})
     return {"ok": True}
 
 
-# ---------------- Items: Excel Import ----------------
 BALL_SIZES = ["00 Mykball", "Street håndball", "00", "0", "1", "2", "3"]
 IMPORT_COLUMNS = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Type", "Størrelse", "Draktnr", "Antall", "Lokasjon pr str"]
 
 
+def _xlsx_response(wb: Workbook, filename: str):
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
 @api.get("/items/import/template")
-async def items_import_template(user=Depends(require_perm("inventory", "write"))):
+async def items_import_template(request: Request, user=Depends(require_perm("inventory", "write"))):
+    await require_feature(request, user, "excel_import")
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Varer"
-    ws.append(IMPORT_COLUMNS)
-    # Examples
+    ws = wb.active; ws.title = "Varer"; ws.append(IMPORT_COLUMNS)
     ws.append(["Kjegler", "Trening", "Trening", "Markering", 29, "Hylle A1", "vare", "", "", 50, ""])
     ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "klær", "S", "X", 5, "Skap B2 - øverst"])
     ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "klær", "M", "10", 8, "Skap B2 - midten"])
-    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "klær", "L", "X", 6, "Skap B2 - nederst"])
     ws.append(["Håndball Select", "Baller", "Trening", "Håndball", 299, "Ballbur", "ball", "00 Mykball", "", 10, "Ballbur hylle 1"])
     ws.append(["Håndball Select", "Baller", "Trening", "Håndball", 299, "Ballbur", "ball", "1", "", 15, "Ballbur hylle 2"])
-    ws.append(["Håndball Select", "Baller", "Trening", "Håndball", 299, "Ballbur", "ball", "2", "", 12, "Ballbur hylle 3"])
     info = wb.create_sheet("Instruksjoner")
-    info.append(["UTSTYRSROMMET - Import-mal for varer"])
+    info.append(["UTSTYRSROMMET - Import-mal"])
     info.append([])
-    info.append(["Kolonner (må være i denne rekkefølgen):"])
     for c in IMPORT_COLUMNS:
         info.append([f"- {c}"])
     info.append([])
-    info.append(["Type-feltet:"])
-    info.append(["- 'vare'  : vanlig vare uten størrelser. Fyll 'Antall' med total beholdning."])
-    info.append(["- 'klær'  : én rad per størrelse. Draktnr: 'X' hvis mangler."])
-    info.append(["- 'ball'  : én rad per ballstørrelse. Draktnr er ikke relevant."])
-    info.append([])
+    info.append(["Type: 'vare' | 'klær' | 'ball'"])
     info.append(["Gyldige ballstørrelser:"])
     for b in BALL_SIZES:
         info.append([f"- {b}"])
-    info.append([])
-    info.append(["- Samme Varenavn grupperes automatisk til én vare med flere størrelser."])
-    info.append(["- 'Lokasjon pr str' er valgfri - overstyrer varens lokasjon for den størrelsen."])
-    info.append(["- Pris i NOK (tall, uten valuta)."])
     return _xlsx_response(wb, "utstyrsrommet_import_mal.xlsx")
 
 
 @api.post("/items/import")
-async def items_import(file: UploadFile = File(...), user=Depends(require_perm("inventory", "write"))):
+async def items_import(request: Request, file: UploadFile = File(...), user=Depends(require_perm("inventory", "write"))):
+    tid = await require_feature(request, user, "excel_import")
     content = await file.read()
     try:
         wb = load_workbook(io.BytesIO(content), data_only=True)
     except Exception:
-        raise HTTPException(status_code=400, detail="Kunne ikke lese Excel-fil")
+        raise HTTPException(400, "Kunne ikke lese Excel-fil")
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
-        raise HTTPException(status_code=400, detail="Tom fil")
-    header = [str(h or "").strip() for h in rows[0]]
+        raise HTTPException(400, "Tom fil")
+    header = [str(h or "").strip().lower() for h in rows[0]]
     expected = [h.lower() for h in IMPORT_COLUMNS]
-    if [h.lower() for h in header[:len(expected)]] != expected:
-        raise HTTPException(status_code=400, detail=f"Feil kolonner. Forventet: {', '.join(IMPORT_COLUMNS)}")
+    if header[:len(expected)] != expected:
+        raise HTTPException(400, f"Feil kolonner. Forventet: {', '.join(IMPORT_COLUMNS)}")
 
     grouped: Dict[str, Dict[str, Any]] = {}
     errors: List[str] = []
@@ -660,55 +1010,45 @@ async def items_import(file: UploadFile = File(...), user=Depends(require_perm("
             name = (str(row[0]) if row[0] is not None else "").strip()
             if not name:
                 continue
-            category = (str(row[1]) if row[1] is not None else "").strip()
-            main_group = (str(row[2]) if row[2] is not None else "").strip()
-            sub_group = (str(row[3]) if row[3] is not None else "").strip()
+            cat = (str(row[1]) if row[1] else "").strip()
+            mg = (str(row[2]) if row[2] else "").strip()
+            sg = (str(row[3]) if row[3] else "").strip()
             price = float(row[4]) if row[4] not in (None, "") else 0.0
-            location = (str(row[5]) if row[5] is not None else "").strip()
-            type_raw = (str(row[6]) if row[6] is not None else "").strip().lower()
-            is_clothing = type_raw in ("klær", "klar", "clothing", "ja", "yes")
+            loc = (str(row[5]) if row[5] else "").strip()
+            type_raw = (str(row[6]) if row[6] else "").strip().lower()
+            is_cloth = type_raw in ("klær", "klar", "clothing")
             is_ball = type_raw in ("ball", "baller")
-            size = (str(row[7]) if row[7] is not None else "").strip()
-            jersey = (str(row[8]) if row[8] is not None else "").strip() or "X"
+            size = (str(row[7]) if row[7] else "").strip()
+            jersey = (str(row[8]) if row[8] else "").strip() or "X"
             qty = int(row[9]) if row[9] not in (None, "") else 0
-            size_loc = (str(row[10]) if len(row) > 10 and row[10] is not None else "").strip()
-
-            key = f"{name}||{category}||{main_group}||{sub_group}"
-            if key not in grouped:
-                grouped[key] = {
-                    "id": new_id(), "name": name, "category": category, "main_group": main_group,
-                    "sub_group": sub_group, "price": price, "location": location,
-                    "is_clothing": is_clothing, "is_ball": is_ball, "sizes": [], "total_stock": 0,
-                    "created_at": now_iso(),
-                }
-            doc = grouped[key]
-            if is_clothing or is_ball:
-                doc["is_clothing"] = is_clothing or doc.get("is_clothing", False)
+            size_loc = (str(row[10]) if len(row) > 10 and row[10] else "").strip()
+            k = f"{name}||{cat}||{mg}||{sg}"
+            if k not in grouped:
+                grouped[k] = {"id": new_id(), "tenant_id": tid, "name": name, "category": cat, "main_group": mg,
+                              "sub_group": sg, "price": price, "location": loc, "is_clothing": is_cloth,
+                              "is_ball": is_ball, "sizes": [], "total_stock": 0, "created_at": now_iso()}
+            doc = grouped[k]
+            if is_cloth or is_ball:
+                doc["is_clothing"] = is_cloth or doc.get("is_clothing", False)
                 doc["is_ball"] = is_ball or doc.get("is_ball", False)
-                doc["sizes"].append({
-                    "size": size,
-                    "jersey_number": "" if is_ball else jersey,
-                    "quantity": qty,
-                    "location": size_loc,
-                })
+                doc["sizes"].append({"size": size, "jersey_number": "" if is_ball else jersey,
+                                     "quantity": qty, "location": size_loc})
             else:
                 doc["total_stock"] = (doc.get("total_stock") or 0) + qty
         except Exception as e:
             errors.append(f"Rad {idx}: {e}")
-
     created = 0
-    for key, doc in grouped.items():
+    for doc in grouped.values():
         if doc.get("is_clothing") or doc.get("is_ball"):
             doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
         await db.items.insert_one(doc)
         created += 1
-
     return {"created": created, "errors": errors}
 
 
 # ---------------- Loans ----------------
-async def _adjust_stock(item_id: str, delta: int, size: Optional[str] = None):
-    item = await db.items.find_one({"id": item_id})
+async def _adjust_stock(tid: str, item_id: str, delta: int, size: Optional[str] = None):
+    item = await db.items.find_one({"id": item_id, "tenant_id": tid})
     if not item:
         return
     if (item.get("is_clothing") or item.get("is_ball")) and size:
@@ -717,37 +1057,35 @@ async def _adjust_stock(item_id: str, delta: int, size: Optional[str] = None):
             if s["size"] == size:
                 s["quantity"] = max(0, s.get("quantity", 0) + delta)
         total = sum(s.get("quantity", 0) for s in sizes)
-        await db.items.update_one({"id": item_id}, {"$set": {"sizes": sizes, "total_stock": total}})
+        await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"sizes": sizes, "total_stock": total}})
     else:
         new_total = max(0, item.get("total_stock", 0) + delta)
-        await db.items.update_one({"id": item_id}, {"$set": {"total_stock": new_total}})
+        await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"total_stock": new_total}})
 
 
 @api.get("/loans")
-async def list_loans(status: Optional[str] = None, team_id: Optional[str] = None, person_id: Optional[str] = None,
-                     user=Depends(require_perm("loans", "read"))):
-    q: Dict[str, Any] = {}
-    if status:
-        q["status"] = status
-    if team_id:
-        q["team_id"] = team_id
-    if person_id:
-        q["person_id"] = person_id
+async def list_loans(request: Request, status: Optional[str] = None, team_id: Optional[str] = None,
+                     person_id: Optional[str] = None, user=Depends(require_perm("loans", "read"))):
+    tid = await require_tenant(request, user)
+    q: Dict[str, Any] = {"tenant_id": tid}
+    if status: q["status"] = status
+    if team_id: q["team_id"] = team_id
+    if person_id: q["person_id"] = person_id
     return await db.loans.find(q, {"_id": 0}).sort("loan_date", -1).to_list(2000)
 
 
 @api.post("/loans")
-async def create_loan(data: LoanIn, user=Depends(require_perm("loans", "write"))):
-    item = await db.items.find_one({"id": data.item_id})
+async def create_loan(data: LoanIn, request: Request, user=Depends(require_perm("loans", "write"))):
+    tid = await require_tenant(request, user)
+    item = await db.items.find_one({"id": data.item_id, "tenant_id": tid})
     if not item:
-        raise HTTPException(status_code=404, detail="Vare ikke funnet")
-    # check availability
+        raise HTTPException(404, "Vare ikke funnet")
     if (item.get("is_clothing") or item.get("is_ball")) and data.size:
         avail = next((s.get("quantity", 0) for s in item.get("sizes", []) if s["size"] == data.size), 0)
     else:
         avail = item.get("total_stock", 0)
     if data.quantity > avail:
-        raise HTTPException(status_code=400, detail=f"Ikke nok på lager (tilgjengelig: {avail})")
+        raise HTTPException(400, f"Ikke nok på lager (tilgjengelig: {avail})")
 
     price = float(item.get("price", 0))
     charge = price * data.quantity
@@ -755,191 +1093,155 @@ async def create_loan(data: LoanIn, user=Depends(require_perm("loans", "write"))
         charge = 0.0
 
     loan_doc = {
-        "id": new_id(),
-        "item_id": data.item_id,
-        "item_name": item.get("name", ""),
-        "quantity": data.quantity,
-        "size": data.size,
-        "jersey_number": data.jersey_number,
-        "team_id": data.team_id,
-        "person_id": data.person_id,
-        "mode": data.mode,
-        "unit_price": price,
-        "amount_owed": charge,
-        "status": "borrowed",
-        "loan_date": now_iso(),
-        "picked_up_by": data.person_id,
-        "return_date": None,
-        "received_by_person_id": None,
-        "notes": data.notes,
+        "id": new_id(), "tenant_id": tid, "item_id": data.item_id, "item_name": item.get("name", ""),
+        "quantity": data.quantity, "size": data.size, "jersey_number": data.jersey_number,
+        "team_id": data.team_id, "person_id": data.person_id, "mode": data.mode,
+        "unit_price": price, "amount_owed": charge, "status": "borrowed",
+        "loan_date": now_iso(), "picked_up_by": data.person_id,
+        "return_date": None, "received_by_person_id": None, "notes": data.notes,
     }
     await db.loans.insert_one(loan_doc)
-    await _adjust_stock(data.item_id, -data.quantity, data.size)
+    await _adjust_stock(tid, data.item_id, -data.quantity, data.size)
 
     if charge > 0:
         if data.team_id:
-            await db.teams.update_one({"id": data.team_id}, {"$inc": {"debt": charge}})
+            await db.teams.update_one({"id": data.team_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
         if data.person_id:
-            await db.people.update_one({"id": data.person_id}, {"$inc": {"debt": charge}})
-
+            await db.people.update_one({"id": data.person_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
     return _clean(loan_doc)
 
 
 @api.post("/loans/{loan_id}/return")
-async def return_loan(loan_id: str, data: ReturnIn, user=Depends(require_perm("loans", "write"))):
-    loan = await db.loans.find_one({"id": loan_id})
+async def return_loan(loan_id: str, data: ReturnIn, request: Request, user=Depends(require_perm("loans", "write"))):
+    tid = await require_tenant(request, user)
+    loan = await db.loans.find_one({"id": loan_id, "tenant_id": tid})
     if not loan:
-        raise HTTPException(status_code=404, detail="Utlån ikke funnet")
+        raise HTTPException(404, "Utlån ikke funnet")
     if loan.get("status") == "returned":
-        raise HTTPException(status_code=400, detail="Allerede returnert")
+        raise HTTPException(400, "Allerede returnert")
     qty = min(data.quantity, loan["quantity"])
-    # proportional owed amount
     unit_owed = (loan.get("amount_owed", 0) / loan["quantity"]) if loan["quantity"] else 0
     owed_reduce = unit_owed * qty
-
-    await _adjust_stock(loan["item_id"], qty, loan.get("size"))
-
+    await _adjust_stock(tid, loan["item_id"], qty, loan.get("size"))
     if owed_reduce > 0:
         if loan.get("team_id"):
-            await db.teams.update_one({"id": loan["team_id"]}, {"$inc": {"debt": -owed_reduce}})
+            await db.teams.update_one({"id": loan["team_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
         if loan.get("person_id"):
-            await db.people.update_one({"id": loan["person_id"]}, {"$inc": {"debt": -owed_reduce}})
-
+            await db.people.update_one({"id": loan["person_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
     if qty >= loan["quantity"]:
-        await db.loans.update_one({"id": loan_id}, {"$set": {
+        await db.loans.update_one({"id": loan_id, "tenant_id": tid}, {"$set": {
             "status": "returned", "return_date": now_iso(),
-            "received_by_person_id": data.received_by_person_id,
-            "amount_owed": 0,
+            "received_by_person_id": data.received_by_person_id, "amount_owed": 0,
         }})
         return {"ok": True, "status": "returned", "amount_owed": 0}
     else:
-        # partial return - split
         remaining = loan["quantity"] - qty
         new_owed = loan.get("amount_owed", 0) - owed_reduce
-        await db.loans.update_one({"id": loan_id}, {"$set": {
-            "quantity": remaining,
-            "amount_owed": new_owed,
+        await db.loans.update_one({"id": loan_id, "tenant_id": tid}, {"$set": {
+            "quantity": remaining, "amount_owed": new_owed,
         }})
         returned_doc = {**loan}
         returned_doc.pop("_id", None)
-        returned_doc.update({
-            "id": new_id(), "quantity": qty, "status": "returned",
-            "return_date": now_iso(),
-            "received_by_person_id": data.received_by_person_id,
-            "amount_owed": 0,
-        })
+        returned_doc.update({"id": new_id(), "quantity": qty, "status": "returned",
+                             "return_date": now_iso(),
+                             "received_by_person_id": data.received_by_person_id, "amount_owed": 0})
         await db.loans.insert_one(returned_doc)
         return {"ok": True, "status": "partial", "amount_owed": new_owed}
 
 
 # ---------------- Dashboard ----------------
 @api.get("/dashboard/stats")
-async def dashboard_stats(user=Depends(get_current_user)):
-    total_items = await db.items.count_documents({})
-    active_loans = await db.loans.count_documents({"status": "borrowed"})
-    teams = await db.teams.count_documents({})
-    people = await db.people.count_documents({})
-    agg = await db.teams.aggregate([{"$group": {"_id": None, "total": {"$sum": "$debt"}}}]).to_list(1)
+async def dashboard_stats(request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    total_items = await db.items.count_documents({"tenant_id": tid})
+    active_loans = await db.loans.count_documents({"tenant_id": tid, "status": "borrowed"})
+    teams = await db.teams.count_documents({"tenant_id": tid})
+    people = await db.people.count_documents({"tenant_id": tid})
+    agg = await db.teams.aggregate([{"$match": {"tenant_id": tid}}, {"$group": {"_id": None, "total": {"$sum": "$debt"}}}]).to_list(1)
     team_debt = agg[0]["total"] if agg else 0
-    agg2 = await db.people.aggregate([{"$group": {"_id": None, "total": {"$sum": "$debt"}}}]).to_list(1)
+    agg2 = await db.people.aggregate([{"$match": {"tenant_id": tid}}, {"$group": {"_id": None, "total": {"$sum": "$debt"}}}]).to_list(1)
     person_debt = agg2[0]["total"] if agg2 else 0
-    items = await db.items.find({}, {"_id": 0, "name": 1, "total_stock": 1, "price": 1}).to_list(5000)
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0, "name": 1, "total_stock": 1, "price": 1}).to_list(5000)
     stock_value = sum((i.get("total_stock", 0) * i.get("price", 0)) for i in items)
     low_stock = [i for i in items if i.get("total_stock", 0) <= 3]
-    recent = await db.loans.find({}, {"_id": 0}).sort("loan_date", -1).to_list(10)
-    return {
-        "total_items": total_items,
-        "active_loans": active_loans,
-        "teams": teams,
-        "people": people,
-        "team_debt": team_debt,
-        "person_debt": person_debt,
-        "stock_value": stock_value,
-        "low_stock_count": len(low_stock),
-        "low_stock_items": low_stock[:10],
-        "recent_loans": recent,
-    }
+    recent = await db.loans.find({"tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(10)
+    return {"total_items": total_items, "active_loans": active_loans, "teams": teams, "people": people,
+            "team_debt": team_debt, "person_debt": person_debt, "stock_value": stock_value,
+            "low_stock_count": len(low_stock), "low_stock_items": low_stock[:10], "recent_loans": recent}
 
 
 # ---------------- Stock Audit ----------------
 @api.get("/stock-counts")
-async def list_stock_counts(user=Depends(require_perm("stock_audit", "read"))):
-    return await db.stock_counts.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+async def list_stock_counts(request: Request, user=Depends(require_perm("stock_audit", "read"))):
+    tid = await require_feature(request, user, "stock_audit")
+    return await db.stock_counts.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).to_list(100)
 
 
 @api.post("/stock-counts")
-async def start_stock_count(data: StockCountIn, user=Depends(require_perm("stock_audit", "write"))):
-    doc = {"id": new_id(), "name": data.name or f"Varetelling {datetime.now().strftime('%Y-%m-%d')}", "status": "open", "created_at": now_iso(), "lines": []}
+async def start_stock_count(data: StockCountIn, request: Request, user=Depends(require_perm("stock_audit", "write"))):
+    tid = await require_feature(request, user, "stock_audit")
+    doc = {"id": new_id(), "tenant_id": tid,
+           "name": data.name or f"Varetelling {datetime.now().strftime('%Y-%m-%d')}",
+           "status": "open", "created_at": now_iso(), "lines": []}
     await db.stock_counts.insert_one(doc)
     return _clean(doc)
 
 
 @api.post("/stock-counts/{count_id}/lines")
-async def add_count_line(count_id: str, data: StockCountLineIn, user=Depends(require_perm("stock_audit", "write"))):
-    item = await db.items.find_one({"id": data.item_id})
+async def add_count_line(count_id: str, data: StockCountLineIn, request: Request, user=Depends(require_perm("stock_audit", "write"))):
+    tid = await require_feature(request, user, "stock_audit")
+    item = await db.items.find_one({"id": data.item_id, "tenant_id": tid})
     if not item:
-        raise HTTPException(status_code=404, detail="Vare ikke funnet")
-    if item.get("is_clothing") and data.size:
+        raise HTTPException(404, "Vare ikke funnet")
+    if (item.get("is_clothing") or item.get("is_ball")) and data.size:
         system = next((s.get("quantity", 0) for s in item.get("sizes", []) if s["size"] == data.size), 0)
     else:
         system = item.get("total_stock", 0)
-    line = {
-        "line_id": new_id(), "item_id": data.item_id, "item_name": item.get("name", ""),
-        "size": data.size, "system_quantity": system, "counted_quantity": data.counted_quantity,
-        "diff": data.counted_quantity - system, "adjusted": False,
-    }
-    await db.stock_counts.update_one({"id": count_id}, {"$push": {"lines": line}})
+    line = {"line_id": new_id(), "item_id": data.item_id, "item_name": item.get("name", ""),
+            "size": data.size, "system_quantity": system, "counted_quantity": data.counted_quantity,
+            "diff": data.counted_quantity - system, "adjusted": False}
+    await db.stock_counts.update_one({"id": count_id, "tenant_id": tid}, {"$push": {"lines": line}})
     return line
 
 
 @api.post("/stock-counts/{count_id}/apply")
-async def apply_stock_count(count_id: str, user=Depends(require_perm("stock_audit", "write"))):
-    sc = await db.stock_counts.find_one({"id": count_id})
+async def apply_stock_count(count_id: str, request: Request, user=Depends(require_perm("stock_audit", "write"))):
+    tid = await require_feature(request, user, "stock_audit")
+    sc = await db.stock_counts.find_one({"id": count_id, "tenant_id": tid})
     if not sc:
-        raise HTTPException(status_code=404, detail="Varetelling ikke funnet")
+        raise HTTPException(404, "Varetelling ikke funnet")
     for line in sc.get("lines", []):
-        if line.get("adjusted"):
-            continue
-        item = await db.items.find_one({"id": line["item_id"]})
+        item = await db.items.find_one({"id": line["item_id"], "tenant_id": tid})
         if not item:
             continue
-        if item.get("is_clothing") and line.get("size"):
+        if (item.get("is_clothing") or item.get("is_ball")) and line.get("size"):
             sizes = item.get("sizes", [])
             for s in sizes:
                 if s["size"] == line["size"]:
                     s["quantity"] = line["counted_quantity"]
             total = sum(s.get("quantity", 0) for s in sizes)
-            await db.items.update_one({"id": item["id"]}, {"$set": {"sizes": sizes, "total_stock": total}})
+            await db.items.update_one({"id": item["id"], "tenant_id": tid}, {"$set": {"sizes": sizes, "total_stock": total}})
         else:
-            await db.items.update_one({"id": item["id"]}, {"$set": {"total_stock": line["counted_quantity"]}})
-    await db.stock_counts.update_one({"id": count_id}, {"$set": {"status": "applied", "applied_at": now_iso()}})
+            await db.items.update_one({"id": item["id"], "tenant_id": tid}, {"$set": {"total_stock": line["counted_quantity"]}})
+    await db.stock_counts.update_one({"id": count_id, "tenant_id": tid}, {"$set": {"status": "applied", "applied_at": now_iso()}})
     return {"ok": True}
 
 
-# ---------------- Excel Exports ----------------
-def _xlsx_response(wb: Workbook, filename: str):
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return StreamingResponse(
-        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
-
-
+# ---------------- Exports ----------------
 @api.get("/export/inventory")
-async def export_inventory(user=Depends(require_perm("inventory", "read"))):
-    items = await db.items.find({}, {"_id": 0}).to_list(10000)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Beholdning"
-    ws.append(["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Beholdning", "Lokasjon", "Type", "Størrelse", "Draktnr", "Antall pr str", "Lokasjon pr str"])
+async def export_inventory(request: Request, user=Depends(require_perm("inventory", "read"))):
+    tid = await require_feature(request, user, "excel_export")
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(10000)
+    wb = Workbook(); ws = wb.active; ws.title = "Beholdning"
+    ws.append(["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Beholdning", "Lokasjon",
+               "Type", "Størrelse", "Draktnr", "Antall pr str", "Lokasjon pr str"])
     for it in items:
         type_str = "klær" if it.get("is_clothing") else ("ball" if it.get("is_ball") else "vare")
         if (it.get("is_clothing") or it.get("is_ball")) and it.get("sizes"):
             for s in it["sizes"]:
                 ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
-                           it.get("price"), it.get("total_stock"), it.get("location"), type_str, s.get("size"), s.get("jersey_number"), s.get("quantity"), s.get("location", "")])
+                           it.get("price"), it.get("total_stock"), it.get("location"), type_str,
+                           s.get("size"), s.get("jersey_number"), s.get("quantity"), s.get("location", "")])
         else:
             ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
                        it.get("price"), it.get("total_stock"), it.get("location"), type_str, "", "", "", ""])
@@ -947,58 +1249,40 @@ async def export_inventory(user=Depends(require_perm("inventory", "read"))):
 
 
 @api.get("/export/team/{team_id}")
-async def export_team(team_id: str, user=Depends(require_perm("teams", "read"))):
-    team = await db.teams.find_one({"id": team_id})
+async def export_team(team_id: str, request: Request, user=Depends(require_perm("teams", "read"))):
+    tid = await require_feature(request, user, "excel_export")
+    team = await db.teams.find_one({"id": team_id, "tenant_id": tid})
     if not team:
-        raise HTTPException(status_code=404, detail="Lag ikke funnet")
-    loans = await db.loans.find({"team_id": team_id}, {"_id": 0}).sort("loan_date", -1).to_list(5000)
-    people_ids = list({l.get("person_id") for l in loans if l.get("person_id")} |
-                      {l.get("received_by_person_id") for l in loans if l.get("received_by_person_id")})
-    people = {p["id"]: p for p in await db.people.find({"id": {"$in": people_ids}}, {"_id": 0}).to_list(1000)}
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Oversikt"
+        raise HTTPException(404, "Lag ikke funnet")
+    loans = await db.loans.find({"team_id": team_id, "tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(5000)
+    pids = list({l.get("person_id") for l in loans if l.get("person_id")} |
+                {l.get("received_by_person_id") for l in loans if l.get("received_by_person_id")})
+    people = {p["id"]: p for p in await db.people.find({"id": {"$in": pids}, "tenant_id": tid}, {"_id": 0}).to_list(1000)}
+    wb = Workbook(); ws = wb.active; ws.title = "Oversikt"
     ws.append(["Lag", team.get("team_name")])
     ws.append(["Aldersklasse", team.get("age_class")])
     ws.append(["Kontaktperson", team.get("contact_person")])
     ws.append(["Epost", team.get("email")])
     ws.append(["Skyldig beløp (NOK)", round(team.get("debt", 0), 2)])
-
     ws2 = wb.create_sheet("Historikk")
-    ws2.append(["Dato utlånt", "Vare", "Antall", "Størrelse", "Draktnr", "Modus", "Hentet av", "Status", "Dato returnert", "Mottatt av", "Skyldig"])
+    ws2.append(["Dato utlånt", "Vare", "Antall", "Størrelse", "Draktnr", "Modus", "Hentet av",
+                "Status", "Dato returnert", "Mottatt av", "Skyldig"])
     for l in loans:
-        picked = people.get(l.get("picked_up_by"), {}).get("name", "")
-        recv = people.get(l.get("received_by_person_id"), {}).get("name", "")
         ws2.append([l.get("loan_date", ""), l.get("item_name", ""), l.get("quantity", 0),
-                    l.get("size") or "", l.get("jersey_number") or "", l.get("mode", ""), picked,
-                    l.get("status", ""), l.get("return_date") or "", recv, l.get("amount_owed", 0)])
-    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
-    return _xlsx_response(wb, f"lag_{safe_name}.xlsx")
-
-
-# ---------------- Logo upload ----------------
-@api.post("/clubs/{club_id}/logo")
-async def upload_logo(club_id: str, file: UploadFile = File(...), user=Depends(require_perm("settings", "write"))):
-    import base64
-    data = await file.read()
-    if len(data) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Logo for stor (maks 2MB)")
-    b64 = base64.b64encode(data).decode()
-    data_url = f"data:{file.content_type};base64,{b64}"
-    await db.clubs.update_one({"id": club_id}, {"$set": {"logo_url": data_url}})
-    return {"logo_url": data_url}
+                    l.get("size") or "", l.get("jersey_number") or "", l.get("mode", ""),
+                    people.get(l.get("picked_up_by"), {}).get("name", ""),
+                    l.get("status", ""), l.get("return_date") or "",
+                    people.get(l.get("received_by_person_id"), {}).get("name", ""),
+                    l.get("amount_owed", 0)])
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
+    return _xlsx_response(wb, f"lag_{safe}.xlsx")
 
 
 app.include_router(api)
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    CORSMiddleware, allow_credentials=True, allow_origins=["*"],
+    allow_methods=["*"], allow_headers=["*"], expose_headers=["*"],
 )
 
 

@@ -21,7 +21,7 @@ export default function Login() {
     try {
       await login(email, password);
       toast.success("Innlogget");
-      nav("/");
+      nav("/app");
     } catch (e) {
       toast.error(formatError(e.response?.data?.detail) || "Innlogging feilet");
     } finally {

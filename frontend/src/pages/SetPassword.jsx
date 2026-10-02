@@ -34,7 +34,7 @@ export default function SetPassword() {
       if (data.token) localStorage.setItem("utr_token", data.token);
       setUser(data.user);
       toast.success("Passord satt - du er innlogget");
-      nav("/");
+      nav("/app");
     } catch (e) {
       toast.error(formatError(e.response?.data?.detail));
     } finally { setLoading(false); }
