@@ -83,7 +83,7 @@ export default function Inventory() {
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
-  const filtered = items.filter((i) => !q || (i.name || "").toLowerCase().includes(q.toLowerCase()) || (i.category || "").toLowerCase().includes(q.toLowerCase()));
+  const filtered = items;
 
   return (
     <div className="space-y-6" data-testid="inventory-page">
@@ -109,31 +109,14 @@ export default function Inventory() {
       </div>
 
       <Card className="p-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input className="pl-9" placeholder="Søk vare, kategori..." value={q} onChange={(e) => setQ(e.target.value)} data-testid="inventory-search" />
-        </div>
-      </Card>
-
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Varenavn</TableHead>
-              <TableHead>Kategori</TableHead>
-              <TableHead>Hovedgruppe</TableHead>
-              <TableHead>Pris</TableHead>
-              <TableHead>Beholdning</TableHead>
-              <TableHead>Lokasjon</TableHead>
-              <TableHead className="text-right">Handlinger</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-slate-500 py-8">Ingen varer.</TableCell></TableRow>}
-            {filtered.map((i) => (
-              <TableRow key={i.id} data-testid={`item-row-${i.id}`}>
-                <TableCell className="font-semibold">
-                  {i.name}
+        <DataTable
+          rows={items}
+          emptyLabel="Ingen varer."
+          searchPlaceholder="Søk vare, kategori, lokasjon…"
+          columns={[
+            { key: "name", label: "Varenavn", filter: "text", render: (i) => (
+                <div>
+                  <div className="font-semibold">{i.name}</div>
                   {(i.is_clothing || i.is_ball) && (
                     <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
                       {i.sizes?.map((s, idx) => (
@@ -145,20 +128,25 @@ export default function Inventory() {
                       ))}
                     </div>
                   )}
-                </TableCell>
-                <TableCell>{i.category || "-"}</TableCell>
-                <TableCell className="text-sm">{i.main_group}{i.sub_group ? ` / ${i.sub_group}` : ""}</TableCell>
-                <TableCell>{nok(i.price)}</TableCell>
-                <TableCell><span className={i.total_stock <= 3 ? "text-amber-700 font-semibold" : ""}>{i.total_stock}</span></TableCell>
-                <TableCell>{i.location || "-"}</TableCell>
-                <TableCell className="text-right space-x-1">
-                  {hasPerm("inventory", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(i)}><Pencil className="h-4 w-4" /></Button>}
-                  {hasPerm("inventory", "admin") && <Button variant="ghost" size="icon" onClick={() => del(i.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                </div>
+            ) },
+            { key: "category", label: "Kategori", filter: "text", render: (i) => i.category || "-" },
+            { key: "main_group", label: "Hovedgruppe", filter: "text", render: (i) => i.main_group || "-" },
+            { key: "sub_group", label: "Undergruppe", filter: "text", render: (i) => i.sub_group || "-" },
+            { key: "type", label: "Type", filter: "select",
+              options: [{value:"vare",label:"Vare"},{value:"klær",label:"Klær"},{value:"ball",label:"Ball"}],
+              accessor: (i) => i.is_clothing ? "klær" : (i.is_ball ? "ball" : "vare") },
+            { key: "price", label: "Pris", filter: "number", accessor: (i) => i.price || 0, render: (i) => nok(i.price) },
+            { key: "total_stock", label: "Beholdning", filter: "number", render: (i) => <span className={i.total_stock <= 3 ? "text-amber-700 font-semibold" : ""}>{i.total_stock}</span> },
+            { key: "location", label: "Lokasjon", filter: "text", render: (i) => i.location || "-" },
+          ]}
+          actions={(i) => (
+            <>
+              {hasPerm("inventory", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(i)}><Pencil className="h-4 w-4" /></Button>}
+              {hasPerm("inventory", "admin") && <Button variant="ghost" size="icon" onClick={() => del(i.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
+            </>
+          )}
+        />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

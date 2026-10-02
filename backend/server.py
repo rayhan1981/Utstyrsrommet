@@ -1045,6 +1045,39 @@ async def list_teams(request: Request, user=Depends(require_perm("teams", "read"
     return await db.teams.find({"tenant_id": tid}, {"_id": 0}).to_list(1000)
 
 
+async def _sync_team_people(tid: str, team_id: str, team_doc: dict):
+    """Opprett eller oppdater personer basert på trenerroller på laget."""
+    slots = ["head_coach", "team_manager", "trainer1", "trainer2", "trainer3", "trainer4", "trainer5"]
+    for slot in slots:
+        trainer = team_doc.get(slot) or {}
+        name = (trainer.get("name") or "").strip()
+        if not name:
+            continue
+        phone = (trainer.get("phone") or "").strip()
+        email = (trainer.get("email") or "").strip()
+        # Match by name+phone within same tenant
+        query = {"tenant_id": tid, "name": name}
+        if phone:
+            query["phone"] = phone
+        existing = await db.people.find_one(query)
+        if existing:
+            team_ids = existing.get("team_ids") or []
+            if team_id not in team_ids:
+                team_ids.append(team_id)
+            update = {"team_ids": team_ids}
+            if email and not existing.get("email"):
+                update["email"] = email
+            if phone and not existing.get("phone"):
+                update["phone"] = phone
+            await db.people.update_one({"id": existing["id"]}, {"$set": update})
+        else:
+            await db.people.insert_one({
+                "id": new_id(), "tenant_id": tid, "name": name,
+                "phone": phone, "email": email, "team_ids": [team_id],
+                "debt": 0.0, "auto_created_from_team": True, "created_at": now_iso(),
+            })
+
+
 @api.post("/teams")
 async def create_team(data: TeamIn, request: Request, user=Depends(require_perm("teams", "write"))):
     tid = await require_tenant(request, user)
@@ -1057,6 +1090,7 @@ async def create_team(data: TeamIn, request: Request, user=Depends(require_perm(
     doc = data.dict()
     doc.update({"id": new_id(), "tenant_id": tid, "debt": 0.0, "created_at": now_iso()})
     await db.teams.insert_one(doc)
+    await _sync_team_people(tid, doc["id"], doc)
     return _clean(doc)
 
 
@@ -1073,7 +1107,10 @@ async def get_team(team_id: str, request: Request, user=Depends(require_perm("te
 async def update_team(team_id: str, data: TeamIn, request: Request, user=Depends(require_perm("teams", "write"))):
     tid = await require_tenant(request, user)
     await db.teams.update_one({"id": team_id, "tenant_id": tid}, {"$set": data.dict()})
-    return await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
+    team_doc = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
+    if team_doc:
+        await _sync_team_people(tid, team_id, team_doc)
+    return team_doc
 
 
 @api.delete("/teams/{team_id}")
@@ -1321,10 +1358,11 @@ async def create_loan(data: LoanIn, request: Request, user=Depends(require_perm(
     await _adjust_stock(tid, data.item_id, -data.quantity, data.size)
 
     if charge > 0:
-        if data.team_id:
-            await db.teams.update_one({"id": data.team_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
+        # Skyldig beløp: person-utlån → kun person; lag-utlån uten person → kun lag
         if data.person_id:
             await db.people.update_one({"id": data.person_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
+        elif data.team_id:
+            await db.teams.update_one({"id": data.team_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
     return _clean(loan_doc)
 
 
@@ -1341,10 +1379,10 @@ async def return_loan(loan_id: str, data: ReturnIn, request: Request, user=Depen
     owed_reduce = unit_owed * qty
     await _adjust_stock(tid, loan["item_id"], qty, loan.get("size"))
     if owed_reduce > 0:
-        if loan.get("team_id"):
-            await db.teams.update_one({"id": loan["team_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
         if loan.get("person_id"):
             await db.people.update_one({"id": loan["person_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
+        elif loan.get("team_id"):
+            await db.teams.update_one({"id": loan["team_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
     if qty >= loan["quantity"]:
         await db.loans.update_one({"id": loan_id, "tenant_id": tid}, {"$set": {
             "status": "returned", "return_date": now_iso(),

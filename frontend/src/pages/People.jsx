@@ -5,11 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pencil, Trash2, Plus, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import DataTable from "@/components/DataTable";
 
 export default function People() {
   const { hasPerm } = useAuth();
@@ -68,38 +68,29 @@ export default function People() {
         )}
       </div>
 
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Navn</TableHead>
-              <TableHead>Telefon</TableHead>
-              <TableHead>Epost</TableHead>
-              <TableHead>Lag</TableHead>
-              <TableHead>Skyldig</TableHead>
-              <TableHead className="text-right">Handlinger</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {people.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-slate-500 py-8">Ingen personer registrert.</TableCell></TableRow>}
-            {people.map((p) => (
-              <TableRow key={p.id} data-testid={`person-row-${p.id}`}>
-                <TableCell className="font-semibold">{p.name}</TableCell>
-                <TableCell>{p.phone || "-"}</TableCell>
-                <TableCell>{p.email || "-"}</TableCell>
-                <TableCell className="text-xs">{(p.team_ids || []).map(id => teams.find(t => t.id === id)?.team_name).filter(Boolean).join(", ") || "-"}</TableCell>
-                <TableCell className={p.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(p.debt)}</TableCell>
-                <TableCell className="text-right space-x-1">
-                  <Button variant="ghost" size="icon" onClick={() => showDetail(p.id)} data-testid={`view-person-${p.id}`}>
-                    <Eye className="h-4 w-4" />
-                  </Button>
-                  {hasPerm("people", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button>}
-                  {hasPerm("people", "admin") && <Button variant="ghost" size="icon" onClick={() => del(p.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <Card className="p-3">
+        <DataTable
+          rows={people}
+          emptyLabel="Ingen personer registrert."
+          searchPlaceholder="Søk navn, telefon, epost…"
+          columns={[
+            { key: "name", label: "Navn", filter: "text", render: (p) => <span className="font-semibold">{p.name}</span> },
+            { key: "phone", label: "Telefon", filter: "text", render: (p) => p.phone || "-" },
+            { key: "email", label: "Epost", filter: "text", render: (p) => p.email || "-" },
+            { key: "teams_label", label: "Lag", filter: "text",
+              accessor: (p) => (p.team_ids || []).map(id => teams.find(t => t.id === id)?.team_name).filter(Boolean).join(", "),
+              render: (p) => <span className="text-xs">{(p.team_ids || []).map(id => teams.find(t => t.id === id)?.team_name).filter(Boolean).join(", ") || "-"}</span> },
+            { key: "debt", label: "Skyldig", filter: "number", accessor: (p) => p.debt || 0, render: (p) => <span className={p.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(p.debt)}</span> },
+            { key: "auto_created_from_team", label: "Fra lag?", filter: "boolean", accessor: (p) => !!p.auto_created_from_team, render: (p) => p.auto_created_from_team ? <span className="text-xs text-emerald-700">Auto</span> : "-" },
+          ]}
+          actions={(p) => (
+            <>
+              <Button variant="ghost" size="icon" onClick={() => showDetail(p.id)} data-testid={`view-person-${p.id}`}><Eye className="h-4 w-4" /></Button>
+              {hasPerm("people", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button>}
+              {hasPerm("people", "admin") && <Button variant="ghost" size="icon" onClick={() => del(p.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
+            </>
+          )}
+        />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

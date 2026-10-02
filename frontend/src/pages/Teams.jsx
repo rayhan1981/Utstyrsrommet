@@ -6,10 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Pencil, Trash2, Plus, Download, Users } from "lucide-react";
+import { Pencil, Trash2, Plus, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import DataTable from "@/components/DataTable";
 
 const EMPTY_TRAINER = { name: "", email: "", phone: "", years_engaged: "" };
 const EMPTY_TEAM = {
@@ -100,48 +100,36 @@ export default function Teams() {
         )}
       </div>
 
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Lagsnavn</TableHead>
-              <TableHead>Aldersklasse</TableHead>
-              <TableHead>Kontaktperson</TableHead>
-              <TableHead>Hovedtrener</TableHead>
-              <TableHead>Skyldig</TableHead>
-              <TableHead className="text-right">Handlinger</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {teams.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-center text-slate-500 py-8">Ingen lag registrert.</TableCell></TableRow>
-            )}
-            {teams.map((t) => (
-              <TableRow key={t.id} data-testid={`team-row-${t.id}`}>
-                <TableCell className="font-semibold">{t.team_name}</TableCell>
-                <TableCell>{t.age_class || "-"}</TableCell>
-                <TableCell>{t.contact_person || "-"}</TableCell>
-                <TableCell>{t.head_coach?.name || "-"}</TableCell>
-                <TableCell className={t.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(t.debt)}</TableCell>
-                <TableCell className="text-right space-x-1">
-                  <Button variant="ghost" size="icon" onClick={() => exportTeam(t.id, t.team_name)} data-testid={`export-team-${t.id}`}>
-                    <Download className="h-4 w-4" />
-                  </Button>
-                  {hasPerm("teams", "write") && (
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(t)} data-testid={`edit-team-${t.id}`}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                  )}
-                  {hasPerm("teams", "admin") && (
-                    <Button variant="ghost" size="icon" onClick={() => del(t.id)} data-testid={`del-team-${t.id}`}>
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <Card className="p-3">
+        <DataTable
+          rows={teams}
+          emptyLabel="Ingen lag registrert."
+          searchPlaceholder="Søk lag, aldersklasse, trener…"
+          columns={[
+            { key: "team_name", label: "Lagsnavn", filter: "text", render: (t) => <span className="font-semibold">{t.team_name}</span> },
+            { key: "age_class", label: "Aldersklasse", filter: "text" },
+            { key: "contact_person", label: "Kontaktperson", filter: "text", render: (t) => t.contact_person || "-" },
+            { key: "head_coach_name", label: "Hovedtrener", filter: "text", accessor: (t) => t.head_coach?.name || "", render: (t) => t.head_coach?.name || "-" },
+            { key: "debt", label: "Skyldig", filter: "number", accessor: (t) => t.debt || 0, render: (t) => <span className={t.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(t.debt)}</span> },
+          ]}
+          actions={(t) => (
+            <>
+              <Button variant="ghost" size="icon" onClick={() => exportTeam(t.id, t.team_name)} data-testid={`export-team-${t.id}`}>
+                <Download className="h-4 w-4" />
+              </Button>
+              {hasPerm("teams", "write") && (
+                <Button variant="ghost" size="icon" onClick={() => openEdit(t)} data-testid={`edit-team-${t.id}`}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              )}
+              {hasPerm("teams", "admin") && (
+                <Button variant="ghost" size="icon" onClick={() => del(t.id)} data-testid={`del-team-${t.id}`}>
+                  <Trash2 className="h-4 w-4 text-red-600" />
+                </Button>
+              )}
+            </>
+          )}
+        />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

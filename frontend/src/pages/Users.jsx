@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Switch } from "@/components/ui/switch";
 import { Plus, Mail, Trash2, Pencil, Shield } from "lucide-react";
 import { toast } from "sonner";
+import DataTable from "@/components/DataTable";
 
 const defaultPerms = (level = "read") => Object.fromEntries(MODULES.map((m) => [m.key, level]));
 
@@ -78,33 +79,33 @@ export default function Users() {
         <Button onClick={openNew} data-testid="new-user-btn" className="bg-emerald-900 hover:bg-emerald-800"><Plus className="h-4 w-4 mr-2" />Ny bruker</Button>
       </div>
 
-      <Card>
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>Navn</TableHead><TableHead>E-post</TableHead><TableHead>Telefon</TableHead><TableHead>Rolle</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Handlinger</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {users.map((u) => (
-              <TableRow key={u.id} data-testid={`user-row-${u.id}`}>
-                <TableCell className="font-semibold">{u.name} {u.is_super_admin && <Shield className="h-3 w-3 inline text-emerald-700 ml-1" />}</TableCell>
-                <TableCell>{u.email}</TableCell>
-                <TableCell>{u.phone || "-"}</TableCell>
-                <TableCell><span className={`text-xs font-semibold px-2 py-1 rounded ${u.role === "admin" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>{u.role === "admin" ? "Admin" : "Bruker"}</span></TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <Switch checked={u.active} onCheckedChange={() => toggleActive(u)} disabled={u.is_super_admin} />
-                    <span className="text-xs text-slate-500">{u.active ? "Aktiv" : "Deaktivert"}</span>
-                  </div>
-                </TableCell>
-                <TableCell className="text-right space-x-1">
-                  <Button variant="ghost" size="icon" onClick={() => resend(u)} title="Send invitasjon på nytt"><Mail className="h-4 w-4" /></Button>
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(u)}><Pencil className="h-4 w-4" /></Button>
-                  {!u.is_super_admin && <Button variant="ghost" size="icon" onClick={() => del(u)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <Card className="p-3">
+        <DataTable
+          rows={users}
+          emptyLabel="Ingen brukere."
+          searchPlaceholder="Søk navn, epost, telefon…"
+          columns={[
+            { key: "name", label: "Navn", filter: "text", render: (u) => <span className="font-semibold">{u.name} {u.is_super_admin && <Shield className="h-3 w-3 inline text-emerald-700 ml-1" />}</span> },
+            { key: "email", label: "E-post", filter: "text" },
+            { key: "phone", label: "Telefon", filter: "text", render: (u) => u.phone || "-" },
+            { key: "role", label: "Rolle", filter: "select",
+              options: [{value:"admin",label:"Admin"},{value:"user",label:"Bruker"}],
+              render: (u) => <span className={`text-xs font-semibold px-2 py-1 rounded ${u.role === "admin" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>{u.role === "admin" ? "Admin" : "Bruker"}</span> },
+            { key: "active", label: "Status", filter: "boolean", render: (u) => (
+              <div className="flex items-center gap-2">
+                <Switch checked={u.active} onCheckedChange={() => toggleActive(u)} disabled={u.is_super_admin} />
+                <span className="text-xs text-slate-500">{u.active ? "Aktiv" : "Deaktivert"}</span>
+              </div>
+            ) },
+          ]}
+          actions={(u) => (
+            <>
+              <Button variant="ghost" size="icon" onClick={() => resend(u)} title="Send invitasjon på nytt"><Mail className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="icon" onClick={() => openEdit(u)}><Pencil className="h-4 w-4" /></Button>
+              {!u.is_super_admin && <Button variant="ghost" size="icon" onClick={() => del(u)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
+            </>
+          )}
+        />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

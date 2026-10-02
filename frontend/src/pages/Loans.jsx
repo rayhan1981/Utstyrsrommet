@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Plus, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import DataTable from "@/components/DataTable";
 
 export default function Loans() {
   const { hasPerm } = useAuth();
@@ -69,30 +70,19 @@ export default function Loans() {
   const active = loans.filter((l) => l.status === "borrowed");
   const returned = loans.filter((l) => l.status === "returned");
 
-  const row = (l, isActive) => (
-    <TableRow key={l.id} data-testid={`loan-row-${l.id}`}>
-      <TableCell className="text-xs">{new Date(l.loan_date).toLocaleDateString("nb-NO")}</TableCell>
-      <TableCell className="font-semibold">{l.item_name}{l.size ? ` (${l.size})` : ""}{l.jersey_number && l.jersey_number !== "X" ? ` #${l.jersey_number}` : ""}</TableCell>
-      <TableCell>{l.quantity}</TableCell>
-      <TableCell className="text-xs">{teams.find(t => t.id === l.team_id)?.team_name || "-"}</TableCell>
-      <TableCell className="text-xs">{people.find(p => p.id === l.person_id)?.name || "-"}</TableCell>
-      <TableCell className="text-xs">{l.mode === "handout" ? "Utlevert" : "Utlånt"}</TableCell>
-      <TableCell className={l.amount_owed > 0 ? "text-red-700 font-semibold" : ""}>{nok(l.amount_owed)}</TableCell>
-      <TableCell className="text-right">
-        {isActive && hasPerm("loans", "write") && (
-          <Button variant="outline" size="sm" onClick={() => openReturn(l)} data-testid={`return-btn-${l.id}`}>
-            <Undo2 className="h-3 w-3 mr-1" />Returner
-          </Button>
-        )}
-        {!isActive && (
-          <span className="text-xs text-slate-500">
-            {l.return_date ? new Date(l.return_date).toLocaleDateString("nb-NO") : ""}
-            {l.received_by_person_id && ` / ${people.find(p => p.id === l.received_by_person_id)?.name || ""}`}
-          </span>
-        )}
-      </TableCell>
-    </TableRow>
-  );
+  const loanColumns = [
+    { key: "loan_date", label: "Dato", filter: "text", render: (l) => new Date(l.loan_date).toLocaleDateString("nb-NO") },
+    { key: "item_name", label: "Vare", filter: "text", render: (l) => (
+        <span className="font-semibold">{l.item_name}{l.size ? ` (${l.size})` : ""}{l.jersey_number && l.jersey_number !== "X" ? ` #${l.jersey_number}` : ""}</span>
+    ) },
+    { key: "quantity", label: "Antall", filter: "number" },
+    { key: "team_name", label: "Lag", filter: "text", accessor: (l) => teams.find(t => t.id === l.team_id)?.team_name || "" },
+    { key: "person_name", label: "Hentet av", filter: "text", accessor: (l) => people.find(p => p.id === l.person_id)?.name || "" },
+    { key: "mode", label: "Type", filter: "select",
+      options: [{value:"loan",label:"Utlån"},{value:"handout",label:"Utlevert"}],
+      render: (l) => l.mode === "handout" ? "Utlevert" : "Utlånt" },
+    { key: "amount_owed", label: "Skyldig", filter: "number", render: (l) => <span className={l.amount_owed > 0 ? "text-red-700 font-semibold" : ""}>{nok(l.amount_owed)}</span> },
+  ];
 
   return (
     <div className="space-y-6" data-testid="loans-page">
@@ -114,29 +104,32 @@ export default function Loans() {
           <TabsTrigger value="returned" data-testid="tab-returned">Returnert ({returned.length})</TabsTrigger>
         </TabsList>
         <TabsContent value="active">
-          <Card>
-            <Table>
-              <TableHeader><TableRow>
-                <TableHead>Dato</TableHead><TableHead>Vare</TableHead><TableHead>Antall</TableHead><TableHead>Lag</TableHead><TableHead>Hentet av</TableHead><TableHead>Type</TableHead><TableHead>Skyldig</TableHead><TableHead className="text-right">Handling</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {active.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-slate-500 py-8">Ingen aktive utlån.</TableCell></TableRow>}
-                {active.map((l) => row(l, true))}
-              </TableBody>
-            </Table>
+          <Card className="p-3">
+            <DataTable
+              rows={active}
+              emptyLabel="Ingen aktive utlån."
+              searchPlaceholder="Søk vare, lag, person…"
+              columns={loanColumns}
+              actions={(l) => hasPerm("loans", "write") ? (
+                <Button variant="outline" size="sm" onClick={() => openReturn(l)} data-testid={`return-btn-${l.id}`}>
+                  <Undo2 className="h-3 w-3 mr-1" />Returner
+                </Button>
+              ) : null}
+            />
           </Card>
         </TabsContent>
         <TabsContent value="returned">
-          <Card>
-            <Table>
-              <TableHeader><TableRow>
-                <TableHead>Dato</TableHead><TableHead>Vare</TableHead><TableHead>Antall</TableHead><TableHead>Lag</TableHead><TableHead>Hentet av</TableHead><TableHead>Type</TableHead><TableHead>Skyldig</TableHead><TableHead className="text-right">Retur</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {returned.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-slate-500 py-8">Ingen returnerte utlån.</TableCell></TableRow>}
-                {returned.map((l) => row(l, false))}
-              </TableBody>
-            </Table>
+          <Card className="p-3">
+            <DataTable
+              rows={returned}
+              emptyLabel="Ingen returnerte utlån."
+              searchPlaceholder="Søk vare, lag, person…"
+              columns={[
+                ...loanColumns,
+                { key: "return_date", label: "Returnert", filter: "text", render: (l) => l.return_date ? new Date(l.return_date).toLocaleDateString("nb-NO") : "-" },
+                { key: "received_by", label: "Mottatt av", filter: "text", accessor: (l) => people.find(p => p.id === l.received_by_person_id)?.name || "" },
+              ]}
+            />
           </Card>
         </TabsContent>
       </Tabs>
