@@ -519,6 +519,11 @@ async def login(data: LoginIn, response: Response):
     except Exception:
         pass
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now, "last_seen": now}})
+    # Close any previous "open" sessions for this user so history stays tidy
+    await db.login_history.update_many(
+        {"user_id": user["id"], "logged_out_at": None},
+        {"$set": {"logged_out_at": now}}
+    )
     await db.login_history.insert_one({
         "id": new_id(), "user_id": user["id"], "email": user["email"],
         "tenant_id": user.get("tenant_id"), "logged_in_at": now, "logged_out_at": None,

@@ -241,6 +241,97 @@ export default function Teams() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{detail?.team?.team_name} {detail?.team?.age_class && `(${detail.team.age_class})`}</DialogTitle>
+            <DialogDescription>
+              Skyldig beløp: <span className={detail?.team?.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(detail?.team?.debt)}</span>
+            </DialogDescription>
+          </DialogHeader>
+          {detail && (
+            <div className="space-y-4">
+              <div>
+                <h4 className="font-semibold text-sm mb-2">Personer tilknyttet laget ({detail.people.length})</h4>
+                <div className="border border-slate-200 rounded-md overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50"><tr><th className="text-left p-2">Navn</th><th className="text-left p-2">Telefon</th><th className="text-left p-2">Epost</th><th className="text-right p-2">Skyldig</th></tr></thead>
+                    <tbody>
+                      {detail.people.length === 0 && <tr><td colSpan={4} className="text-center text-slate-500 py-4">Ingen personer.</td></tr>}
+                      {detail.people.map((p) => (
+                        <tr key={p.id} className="border-t border-slate-100"><td className="p-2 font-semibold">{p.name}</td><td className="p-2">{p.phone || "-"}</td><td className="p-2">{p.email || "-"}</td><td className={`p-2 text-right ${p.debt > 0 ? "text-red-700 font-semibold" : ""}`}>{nok(p.debt)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <h4 className="font-semibold text-sm mb-2">Utlånshistorikk ({detail.history.length})</h4>
+                <div className="border border-slate-200 rounded-md overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50"><tr><th className="text-left p-2">Dato</th><th className="text-left p-2">Vare</th><th className="text-left p-2">Antall</th><th className="text-left p-2">Status</th><th className="text-right p-2">Skyldig</th></tr></thead>
+                    <tbody>
+                      {detail.history.length === 0 && <tr><td colSpan={5} className="text-center text-slate-500 py-4">Ingen utlån.</td></tr>}
+                      {detail.history.map((l) => (
+                        <tr key={l.id} className="border-t border-slate-100">
+                          <td className="p-2 text-xs">{new Date(l.loan_date).toLocaleDateString("nb-NO")}</td>
+                          <td className="p-2">{l.item_name}{l.size ? ` (${l.size})` : ""}</td>
+                          <td className="p-2">{l.quantity}</td>
+                          <td className="p-2"><span className={`text-xs font-semibold px-2 py-1 rounded ${l.status === "returned" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{l.status === "returned" ? "Returnert" : "Utlånt"}</span></td>
+                          <td className={`p-2 text-right ${l.amount_owed > 0 ? "text-red-700 font-semibold" : ""}`}>{nok(l.amount_owed)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter><Button variant="outline" onClick={() => setDetail(null)}>Lukk</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!loanFor} onOpenChange={(o) => !o && setLoanFor(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Lån ut til {loanFor?.team_name}</DialogTitle>
+            <DialogDescription>Ett-klikks utlån – skyldig beløp går til laget.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Vare</Label>
+              <Select value={loanForm.item_id} onValueChange={(v) => setLoanForm({ ...loanForm, item_id: v, size: "", jersey_number: "" })}>
+                <SelectTrigger data-testid="quick-loan-team-item"><SelectValue placeholder="Velg vare" /></SelectTrigger>
+                <SelectContent>{items.map((i) => <SelectItem key={i.id} value={i.id}>{i.name} ({nok(i.price)})</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            {(selectedItem?.is_clothing || selectedItem?.is_ball) && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Størrelse</Label>
+                  <Select value={loanForm.size} onValueChange={(v) => {
+                    const s = selectedItem.sizes.find((x) => x.size === v);
+                    setLoanForm({ ...loanForm, size: v, jersey_number: s?.jersey_number || (selectedItem.is_ball ? "" : "X") });
+                  }}>
+                    <SelectTrigger><SelectValue placeholder="Velg str" /></SelectTrigger>
+                    <SelectContent>{(selectedItem.sizes || []).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} (lager: {s.quantity})</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                {selectedItem?.is_clothing && (
+                  <div><Label>Draktnr</Label><Input value={loanForm.jersey_number} onChange={(e) => setLoanForm({ ...loanForm, jersey_number: e.target.value })} /></div>
+                )}
+              </div>
+            )}
+            <div><Label>Antall</Label><Input type="number" min="1" value={loanForm.quantity} onChange={(e) => setLoanForm({ ...loanForm, quantity: e.target.value })} data-testid="quick-loan-team-qty" /></div>
+            <div><Label>Notater</Label><Input value={loanForm.notes} onChange={(e) => setLoanForm({ ...loanForm, notes: e.target.value })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLoanFor(null)}>Avbryt</Button>
+            <Button onClick={submitQuickLoan} className="bg-emerald-900 hover:bg-emerald-800" data-testid="submit-quick-loan-team">Lån ut</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

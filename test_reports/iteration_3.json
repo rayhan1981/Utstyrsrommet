@@ -1,0 +1,38 @@
+{
+  "summary": "Tested iteration 3 changes end-to-end. Backend: 6/6 pytest cases pass (loan_target routing to team/person, return reverses the correct debt, GET /teams/{id} returns {team,people,history}, GET /users includes online+last_login, login_history tracked on login/logout, admin-only history endpoint). Frontend: Loans dialog has new target toggle (Person/Lag) with correct dark-green styling + testids; Users page shows online dot, 'Pålogget' badge, 'Siste pålogging' column + history dialog (table columns: Pålogget / Avlogget / Varighet). CRITICAL frontend regression on Teams.jsx: the view-team detail dialog AND the team quick-loan dialog are NOT rendered. Teams.jsx declares `detail` and `loanFor` React state and the open-functions (`showDetail`, `openQuickLoan`, `submitQuickLoan`) but the file contains ONLY the create/edit dialog JSX - no <Dialog open={!!detail}> block and no <Dialog open={!!loanFor}> block. Clicking eye icon or 'Lån ut' on /app/lag therefore does nothing visible. All associated testids (quick-loan-team-item, quick-loan-team-qty, submit-quick-loan-team) are also missing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/login", "issue": "A new login_history record is created on each login without closing the previous open (logged_out_at==null) record for the same user. UI shows multiple 'Fortsatt aktiv' sessions for the same user. Consider closing stale open sessions on new login."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Teams.jsx (detail dialog)", "issue": "Eye icon (view-team-{id}) sets state `detail` but no Dialog component renders it - the detail dialog JSX is missing entirely. User sees no feedback when clicking eye.", "selector": "[data-testid^=\"view-team-\"]", "priority": "HIGH"},
+      {"component": "Teams.jsx (quick-loan dialog)", "issue": "'Lån ut' button (quick-loan-team-{id}) sets state `loanFor` but no Dialog component renders it - the quick-loan dialog JSX is missing entirely. Required testids quick-loan-team-item / quick-loan-team-qty / submit-quick-loan-team are absent in DOM.", "selector": "[data-testid^=\"quick-loan-team-\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Team quick-loan (loan_target=team)", "issue": "Cannot be exercised from UI because the dialog is not rendered. Backend path works - verified via pytest.", "affected_selectors": ["[data-testid=\"quick-loan-team-item\"]", "[data-testid=\"submit-quick-loan-team\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration3.py", "/app/test_reports/pytest/iteration3.xml"],
+  "action_items": [
+    "Add the missing <Dialog open={!!detail} onOpenChange={() => setDetail(null)}> block to Teams.jsx rendering team name, debt, people table, and loan history table using the {team, people, history} response.",
+    "Add the missing <Dialog open={!!loanFor} onOpenChange={() => setLoanFor(null)}> block to Teams.jsx with item Select (data-testid=quick-loan-team-item), quantity Input (data-testid=quick-loan-team-qty), and submit button calling submitQuickLoan (data-testid=submit-quick-loan-team).",
+    "(Optional) On login, close any open login_history for the user before inserting the new record to avoid accumulating 'Fortsatt aktiv' entries."
+  ],
+  "critical_code_review_comments": [
+    "Teams.jsx carries dead state (`detail`, `loanFor`, `loanForm`, `selectedItem`, `submitQuickLoan`) with no rendering — likely truncated during edit. ESLint rule react/jsx-no-undef wouldn't catch this; add a smoke test or storybook snapshot per page.",
+    "server.py login handler creates login_history on every login; no cleanup for abandoned sessions can grow unbounded. Consider TTL index or close-on-new-login logic.",
+    "server.py get_current_user heartbeat updates last_seen on every authenticated request (write-amplification); may be acceptable but worth noting for high-traffic tenants."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration3.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "70% (Loans + Users verified; Teams detail/quick-loan missing)"},
+  "test_credentials": "raymond.d.hansen@gmail.com / Snowboard1! (super admin from /app/memory/test_credentials.md)",
+  "seed_data_creation": "pytest creates a TEST_It3_* tenant via /api/signup, upgrades to deluxe, exercises CRUD. Soft-deleted on teardown. People/items/teams/loans created inside tenant are left in place but prefixed TEST_.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent adds the two missing Dialogs in Teams.jsx, retest: (1) click view-team-{id} → dialog shows team name, debt, people-table (name/phone/debt), history-table (date, item, qty, status); (2) click quick-loan-team-{id} → dialog opens with team pre-filled, fill item+qty+submit; verify GET /api/teams returns team.debt increased and GET /api/people shows no debt change (loan_target='team' already works at backend).",
+  "rca of the issue": "Teams.jsx was partially implemented: handler functions `showDetail` and `openQuickLoan` set React state, but the corresponding <Dialog> JSX was never added to the component return tree. Verified by grepping Dialog usage: only the create/edit Dialog (lines 183-243) exists. State mutations therefore have no visual effect. Mitigation: main agent must add the two Dialog blocks using the already-fetched {team, people, history} structure and the loanForm state."
+}
