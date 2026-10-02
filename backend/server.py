@@ -236,6 +236,7 @@ class ItemIn(BaseModel):
     total_stock: int = 0
     location: str = ""
     is_clothing: bool = False
+    is_ball: bool = False
     sizes: List[SizeStock] = Field(default_factory=list)
 
 
@@ -562,11 +563,12 @@ async def create_item(data: ItemIn, user=Depends(require_perm("inventory", "writ
     doc = data.dict()
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
-    # ensure jersey_number default X
-    if doc.get("is_clothing"):
+    if doc.get("is_clothing") or doc.get("is_ball"):
         for s in doc["sizes"]:
-            if not s.get("jersey_number"):
+            if doc.get("is_clothing") and not s.get("jersey_number"):
                 s["jersey_number"] = "X"
+            if doc.get("is_ball"):
+                s["jersey_number"] = ""
         doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
     await db.items.insert_one(doc)
     return _clean(doc)
@@ -575,10 +577,12 @@ async def create_item(data: ItemIn, user=Depends(require_perm("inventory", "writ
 @api.put("/items/{item_id}")
 async def update_item(item_id: str, data: ItemIn, user=Depends(require_perm("inventory", "write"))):
     doc = data.dict()
-    if doc.get("is_clothing"):
+    if doc.get("is_clothing") or doc.get("is_ball"):
         for s in doc["sizes"]:
-            if not s.get("jersey_number"):
+            if doc.get("is_clothing") and not s.get("jersey_number"):
                 s["jersey_number"] = "X"
+            if doc.get("is_ball"):
+                s["jersey_number"] = ""
         doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
     await db.items.update_one({"id": item_id}, {"$set": doc})
     return await db.items.find_one({"id": item_id}, {"_id": 0})
@@ -591,7 +595,8 @@ async def delete_item(item_id: str, user=Depends(require_perm("inventory", "admi
 
 
 # ---------------- Items: Excel Import ----------------
-IMPORT_COLUMNS = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Klær (ja/nei)", "Størrelse", "Draktnr", "Antall", "Lokasjon pr str"]
+BALL_SIZES = ["00 Mykball", "Street håndball", "00", "0", "1", "2", "3"]
+IMPORT_COLUMNS = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Type", "Størrelse", "Draktnr", "Antall", "Lokasjon pr str"]
 
 
 @api.get("/items/import/template")
@@ -601,10 +606,13 @@ async def items_import_template(user=Depends(require_perm("inventory", "write"))
     ws.title = "Varer"
     ws.append(IMPORT_COLUMNS)
     # Examples
-    ws.append(["Ball Adidas", "Baller", "Trening", "Fotball", 299, "Hylle A1", "nei", "", "", 20, ""])
-    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "S", "X", 5, "Skap B2 - øverst"])
-    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "M", "10", 8, "Skap B2 - midten"])
-    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "L", "X", 6, "Skap B2 - nederst"])
+    ws.append(["Kjegler", "Trening", "Trening", "Markering", 29, "Hylle A1", "vare", "", "", 50, ""])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "klær", "S", "X", 5, "Skap B2 - øverst"])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "klær", "M", "10", 8, "Skap B2 - midten"])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "klær", "L", "X", 6, "Skap B2 - nederst"])
+    ws.append(["Håndball Select", "Baller", "Trening", "Håndball", 299, "Ballbur", "ball", "00 Mykball", "", 10, "Ballbur hylle 1"])
+    ws.append(["Håndball Select", "Baller", "Trening", "Håndball", 299, "Ballbur", "ball", "1", "", 15, "Ballbur hylle 2"])
+    ws.append(["Håndball Select", "Baller", "Trening", "Håndball", 299, "Ballbur", "ball", "2", "", 12, "Ballbur hylle 3"])
     info = wb.create_sheet("Instruksjoner")
     info.append(["UTSTYRSROMMET - Import-mal for varer"])
     info.append([])
@@ -612,12 +620,17 @@ async def items_import_template(user=Depends(require_perm("inventory", "write"))
     for c in IMPORT_COLUMNS:
         info.append([f"- {c}"])
     info.append([])
-    info.append(["Regler:"])
-    info.append(["- 'Klær (ja/nei)' = 'ja' betyr at Størrelse/Draktnr/Antall gjelder én størrelse."])
-    info.append(["- For klær: legg til én rad per størrelse. Samme Varenavn grupperes automatisk."])
-    info.append(["- For ikke-klær: fyll 'Antall' med total beholdning. La Størrelse/Draktnr stå tomme."])
-    info.append(["- Draktnr: bruk 'X' hvis draktnummer mangler."])
-    info.append(["- 'Lokasjon pr str' er valgfri - overstyrer varens lokasjon kun for denne størrelsen."])
+    info.append(["Type-feltet:"])
+    info.append(["- 'vare'  : vanlig vare uten størrelser. Fyll 'Antall' med total beholdning."])
+    info.append(["- 'klær'  : én rad per størrelse. Draktnr: 'X' hvis mangler."])
+    info.append(["- 'ball'  : én rad per ballstørrelse. Draktnr er ikke relevant."])
+    info.append([])
+    info.append(["Gyldige ballstørrelser:"])
+    for b in BALL_SIZES:
+        info.append([f"- {b}"])
+    info.append([])
+    info.append(["- Samme Varenavn grupperes automatisk til én vare med flere størrelser."])
+    info.append(["- 'Lokasjon pr str' er valgfri - overstyrer varens lokasjon for den størrelsen."])
     info.append(["- Pris i NOK (tall, uten valuta)."])
     return _xlsx_response(wb, "utstyrsrommet_import_mal.xlsx")
 
@@ -652,8 +665,9 @@ async def items_import(file: UploadFile = File(...), user=Depends(require_perm("
             sub_group = (str(row[3]) if row[3] is not None else "").strip()
             price = float(row[4]) if row[4] not in (None, "") else 0.0
             location = (str(row[5]) if row[5] is not None else "").strip()
-            is_cloth_raw = (str(row[6]) if row[6] is not None else "").strip().lower()
-            is_clothing = is_cloth_raw in ("ja", "yes", "y", "true", "1")
+            type_raw = (str(row[6]) if row[6] is not None else "").strip().lower()
+            is_clothing = type_raw in ("klær", "klar", "clothing", "ja", "yes")
+            is_ball = type_raw in ("ball", "baller")
             size = (str(row[7]) if row[7] is not None else "").strip()
             jersey = (str(row[8]) if row[8] is not None else "").strip() or "X"
             qty = int(row[9]) if row[9] not in (None, "") else 0
@@ -664,13 +678,19 @@ async def items_import(file: UploadFile = File(...), user=Depends(require_perm("
                 grouped[key] = {
                     "id": new_id(), "name": name, "category": category, "main_group": main_group,
                     "sub_group": sub_group, "price": price, "location": location,
-                    "is_clothing": is_clothing, "sizes": [], "total_stock": 0,
+                    "is_clothing": is_clothing, "is_ball": is_ball, "sizes": [], "total_stock": 0,
                     "created_at": now_iso(),
                 }
             doc = grouped[key]
-            if is_clothing:
-                doc["is_clothing"] = True
-                doc["sizes"].append({"size": size, "jersey_number": jersey, "quantity": qty, "location": size_loc})
+            if is_clothing or is_ball:
+                doc["is_clothing"] = is_clothing or doc.get("is_clothing", False)
+                doc["is_ball"] = is_ball or doc.get("is_ball", False)
+                doc["sizes"].append({
+                    "size": size,
+                    "jersey_number": "" if is_ball else jersey,
+                    "quantity": qty,
+                    "location": size_loc,
+                })
             else:
                 doc["total_stock"] = (doc.get("total_stock") or 0) + qty
         except Exception as e:
@@ -678,7 +698,7 @@ async def items_import(file: UploadFile = File(...), user=Depends(require_perm("
 
     created = 0
     for key, doc in grouped.items():
-        if doc.get("is_clothing"):
+        if doc.get("is_clothing") or doc.get("is_ball"):
             doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
         await db.items.insert_one(doc)
         created += 1
@@ -691,7 +711,7 @@ async def _adjust_stock(item_id: str, delta: int, size: Optional[str] = None):
     item = await db.items.find_one({"id": item_id})
     if not item:
         return
-    if item.get("is_clothing") and size:
+    if (item.get("is_clothing") or item.get("is_ball")) and size:
         sizes = item.get("sizes", [])
         for s in sizes:
             if s["size"] == size:
@@ -722,7 +742,7 @@ async def create_loan(data: LoanIn, user=Depends(require_perm("loans", "write"))
     if not item:
         raise HTTPException(status_code=404, detail="Vare ikke funnet")
     # check availability
-    if item.get("is_clothing") and data.size:
+    if (item.get("is_clothing") or item.get("is_ball")) and data.size:
         avail = next((s.get("quantity", 0) for s in item.get("sizes", []) if s["size"] == data.size), 0)
     else:
         avail = item.get("total_stock", 0)
@@ -913,15 +933,16 @@ async def export_inventory(user=Depends(require_perm("inventory", "read"))):
     wb = Workbook()
     ws = wb.active
     ws.title = "Beholdning"
-    ws.append(["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Beholdning", "Lokasjon", "Størrelse", "Draktnr", "Antall pr str", "Lokasjon pr str"])
+    ws.append(["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Beholdning", "Lokasjon", "Type", "Størrelse", "Draktnr", "Antall pr str", "Lokasjon pr str"])
     for it in items:
-        if it.get("is_clothing") and it.get("sizes"):
+        type_str = "klær" if it.get("is_clothing") else ("ball" if it.get("is_ball") else "vare")
+        if (it.get("is_clothing") or it.get("is_ball")) and it.get("sizes"):
             for s in it["sizes"]:
                 ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
-                           it.get("price"), it.get("total_stock"), it.get("location"), s.get("size"), s.get("jersey_number"), s.get("quantity"), s.get("location", "")])
+                           it.get("price"), it.get("total_stock"), it.get("location"), type_str, s.get("size"), s.get("jersey_number"), s.get("quantity"), s.get("location", "")])
         else:
             ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
-                       it.get("price"), it.get("total_stock"), it.get("location"), "", "", "", ""])
+                       it.get("price"), it.get("total_stock"), it.get("location"), type_str, "", "", "", ""])
     return _xlsx_response(wb, "beholdning.xlsx")
 
 

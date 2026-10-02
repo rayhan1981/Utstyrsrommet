@@ -37,6 +37,8 @@ export const MODULES = [
   { key: "settings", label: "Innstillinger" },
 ];
 
+export const BALL_SIZES = ["00 Mykball", "Street håndball", "00", "0", "1", "2", "3"];
+
 export const TEAM_NAME_OPTIONS = [
   "Jenter 7", "Jenter 8", "Jenter 9", "Jenter 10", "Jenter 11", "Jenter 12", "Jenter 13",
   "Jenter 14", "Jenter 15", "Jenter 16", "Jenter 17", "Jenter 18", "Jenter 19", "Jenter 20",

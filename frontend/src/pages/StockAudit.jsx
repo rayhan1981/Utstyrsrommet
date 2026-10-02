@@ -125,7 +125,7 @@ export default function StockAudit() {
                 <SelectContent>{items.map((i) => <SelectItem key={i.id} value={i.id}>{i.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            {selectedItem?.is_clothing && (
+            {(selectedItem?.is_clothing || selectedItem?.is_ball) && (
               <div>
                 <Label>Størrelse</Label>
                 <Select value={line.size} onValueChange={(v) => setLine({ ...line, size: v })}>

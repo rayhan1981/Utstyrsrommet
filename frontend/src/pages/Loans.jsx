@@ -171,19 +171,21 @@ export default function Loans() {
               </Select>
             </div>
 
-            {selectedItem?.is_clothing && (
+            {(selectedItem?.is_clothing || selectedItem?.is_ball) && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Størrelse</Label>
                   <Select value={form.size} onValueChange={(v) => {
                     const s = selectedItem.sizes.find((x) => x.size === v);
-                    setForm({ ...form, size: v, jersey_number: s?.jersey_number || "X" });
+                    setForm({ ...form, size: v, jersey_number: s?.jersey_number || (selectedItem.is_ball ? "" : "X") });
                   }}>
                     <SelectTrigger><SelectValue placeholder="Velg str" /></SelectTrigger>
                     <SelectContent>{(selectedItem.sizes || []).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} (lager: {s.quantity})</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div><Label>Draktnr</Label><Input value={form.jersey_number} onChange={(e) => setForm({ ...form, jersey_number: e.target.value })} /></div>
+                {selectedItem?.is_clothing && (
+                  <div><Label>Draktnr</Label><Input value={form.jersey_number} onChange={(e) => setForm({ ...form, jersey_number: e.target.value })} /></div>
+                )}
               </div>
             )}
 
