@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { Pencil, Trash2, Plus, Download, Search, X } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 
@@ -59,6 +59,29 @@ export default function Inventory() {
       });
   };
 
+  const downloadTemplate = () => {
+    const token = localStorage.getItem("utr_token");
+    fetch(`${BASE}/api/items/import/template`, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.blob()).then(b => {
+        const u = URL.createObjectURL(b);
+        const a = document.createElement("a"); a.href = u; a.download = "utstyrsrommet_import_mal.xlsx"; a.click(); URL.revokeObjectURL(u);
+      });
+  };
+
+  const importFile = async (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    try {
+      const { data } = await api.post("/items/import", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      if (data.errors && data.errors.length) {
+        toast.warning(`${data.created} varer importert med ${data.errors.length} feil`);
+        console.warn("Importfeil:", data.errors);
+      } else {
+        toast.success(`${data.created} varer importert`);
+      }
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   const filtered = items.filter((i) => !q || (i.name || "").toLowerCase().includes(q.toLowerCase()) || (i.category || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
@@ -68,7 +91,17 @@ export default function Inventory() {
           <h1 className="font-display text-3xl font-extrabold">Utstyr & Beholdning</h1>
           <p className="text-slate-600 text-sm mt-1">Varer, kategorier, størrelser og lokasjon</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" onClick={downloadTemplate} data-testid="download-template-btn"><FileSpreadsheet className="h-4 w-4 mr-2" />Last ned mal</Button>
+          {hasPerm("inventory", "write") && (
+            <label className="inline-flex">
+              <Button variant="outline" asChild data-testid="import-items-btn">
+                <span className="cursor-pointer"><Upload className="h-4 w-4 mr-2" />Importer Excel
+                  <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
+                </span>
+              </Button>
+            </label>
+          )}
           <Button variant="outline" onClick={exportInv} data-testid="export-inventory-btn"><Download className="h-4 w-4 mr-2" />Eksporter Excel</Button>
           {hasPerm("inventory", "write") && <Button onClick={openNew} data-testid="new-item-btn" className="bg-emerald-900 hover:bg-emerald-800"><Plus className="h-4 w-4 mr-2" />Nytt utstyr</Button>}
         </div>

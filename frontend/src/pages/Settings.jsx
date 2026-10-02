@@ -4,23 +4,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Upload, Plus, Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Upload, Plus, Trash2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 
 export default function Settings() {
   const { user } = useAuth();
   const [clubs, setClubs] = useState([]);
-  const [editing, setEditing] = useState(null);
   const [newName, setNewName] = useState("");
-  const fileRef = useRef(null);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ name: "", org_number: "" });
 
   const load = () => api.get("/clubs").then((r) => setClubs(r.data));
   useEffect(() => { load(); }, []);
 
-  const save = async (c) => {
-    try { await api.put(`/clubs/${c.id}`, { name: c.name, org_number: c.org_number || "", logo_url: c.logo_url || "" }); toast.success("Lagret"); load(); }
-    catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  const openEdit = (c) => { setEditing(c); setForm({ name: c.name, org_number: c.org_number || "" }); };
+
+  const saveEdit = async () => {
+    try {
+      await api.put(`/clubs/${editing.id}`, { name: form.name, org_number: form.org_number, logo_url: editing.logo_url || "" });
+      toast.success("Klubb oppdatert"); setEditing(null); load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
   const create = async () => {
@@ -30,8 +35,8 @@ export default function Settings() {
   };
 
   const del = async (c) => {
-    if (!window.confirm(`Slette klubben ${c.name}?`)) return;
-    try { await api.delete(`/clubs/${c.id}`); toast.success("Slettet"); load(); }
+    if (!window.confirm(`Slette klubben "${c.name}"? Dette kan ikke angres.`)) return;
+    try { await api.delete(`/clubs/${c.id}`); toast.success("Klubb slettet"); load(); }
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
@@ -60,32 +65,52 @@ export default function Settings() {
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {clubs.length === 0 && <p className="text-sm text-slate-500 col-span-2">Ingen klubber opprettet.</p>}
         {clubs.map((c) => (
-          <Card key={c.id} className="p-5 space-y-3" data-testid={`club-card-${c.id}`}>
-            <div className="flex items-center gap-4">
-              <div className="h-20 w-20 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
+          <Card key={c.id} className="p-5" data-testid={`club-card-${c.id}`}>
+            <div className="flex items-start gap-4">
+              <div className="h-24 w-24 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
                 {c.logo_url ? <img src={c.logo_url} alt={c.name} className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">Logo</span>}
               </div>
-              <div className="flex-1">
-                <h4 className="font-display font-bold text-lg">{c.name}</h4>
-                <p className="text-xs text-slate-500">Org.nr: {c.org_number || "ikke satt"}</p>
-                <label className="inline-flex items-center gap-2 text-xs text-emerald-800 font-semibold mt-1 cursor-pointer hover:underline">
+              <div className="flex-1 min-w-0">
+                <h4 className="font-display font-bold text-lg truncate">{c.name}</h4>
+                <p className="text-xs text-slate-500 mt-0.5">Org.nr: {c.org_number || "ikke satt"}</p>
+                <label className="inline-flex items-center gap-2 text-xs text-emerald-800 font-semibold mt-2 cursor-pointer hover:underline">
                   <Upload className="h-3 w-3" /> Last opp logo
                   <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(c.id, e.target.files[0])} />
                 </label>
+                <div className="flex gap-2 mt-3">
+                  <Button size="sm" variant="outline" onClick={() => openEdit(c)} data-testid={`edit-club-${c.id}`}>
+                    <Pencil className="h-3 w-3 mr-1" />Rediger
+                  </Button>
+                  {user?.role === "admin" && (
+                    <Button size="sm" variant="outline" onClick={() => del(c)} data-testid={`del-club-${c.id}`} className="text-red-600 hover:text-red-700">
+                      <Trash2 className="h-3 w-3 mr-1" />Slett
+                    </Button>
+                  )}
+                </div>
               </div>
-              {user?.role === "admin" && (
-                <Button variant="ghost" size="icon" onClick={() => del(c)}><Trash2 className="h-4 w-4 text-red-600" /></Button>
-              )}
-            </div>
-            <div className="space-y-2">
-              <div><Label>Klubbnavn</Label><Input value={c.name} onChange={(e) => setClubs(clubs.map((x) => x.id === c.id ? { ...x, name: e.target.value } : x))} /></div>
-              <div><Label>Organisasjonsnummer</Label><Input value={c.org_number || ""} onChange={(e) => setClubs(clubs.map((x) => x.id === c.id ? { ...x, org_number: e.target.value } : x))} /></div>
-              <Button onClick={() => save(c)} size="sm" className="bg-emerald-900 hover:bg-emerald-800">Lagre</Button>
             </div>
           </Card>
         ))}
       </div>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rediger klubb</DialogTitle>
+            <DialogDescription>Endre navn og organisasjonsnummer</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Klubbnavn</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="edit-club-name" /></div>
+            <div><Label>Organisasjonsnummer</Label><Input value={form.org_number} onChange={(e) => setForm({ ...form, org_number: e.target.value })} data-testid="edit-club-org" /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>Avbryt</Button>
+            <Button onClick={saveEdit} className="bg-emerald-900 hover:bg-emerald-800" data-testid="save-club-btn">Lagre</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

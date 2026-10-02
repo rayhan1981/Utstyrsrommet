@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 # ---------------- Config ----------------
 MONGO_URL = os.environ['MONGO_URL']
@@ -587,6 +587,100 @@ async def update_item(item_id: str, data: ItemIn, user=Depends(require_perm("inv
 async def delete_item(item_id: str, user=Depends(require_perm("inventory", "admin"))):
     await db.items.delete_one({"id": item_id})
     return {"ok": True}
+
+
+# ---------------- Items: Excel Import ----------------
+IMPORT_COLUMNS = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Klær (ja/nei)", "Størrelse", "Draktnr", "Antall"]
+
+
+@api.get("/items/import/template")
+async def items_import_template(user=Depends(require_perm("inventory", "write"))):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Varer"
+    ws.append(IMPORT_COLUMNS)
+    # Examples
+    ws.append(["Ball Adidas", "Baller", "Trening", "Fotball", 299, "Hylle A1", "nei", "", "", 20])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "S", "X", 5])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "M", "10", 8])
+    ws.append(["Hjemmedrakt", "Klær", "Drakt", "Hjemme", 450, "Skap B2", "ja", "L", "X", 6])
+    info = wb.create_sheet("Instruksjoner")
+    info.append(["UTSTYRSROMMET - Import-mal for varer"])
+    info.append([])
+    info.append(["Kolonner (må være i denne rekkefølgen):"])
+    for c in IMPORT_COLUMNS:
+        info.append([f"- {c}"])
+    info.append([])
+    info.append(["Regler:"])
+    info.append(["- 'Klær (ja/nei)' = 'ja' betyr at Størrelse/Draktnr/Antall gjelder én størrelse."])
+    info.append(["- For klær: legg til én rad per størrelse. Samme Varenavn grupperes automatisk."])
+    info.append(["- For ikke-klær: fyll 'Antall' med total beholdning. La Størrelse/Draktnr stå tomme."])
+    info.append(["- Draktnr: bruk 'X' hvis draktnummer mangler."])
+    info.append(["- Pris i NOK (tall, uten valuta)."])
+    return _xlsx_response(wb, "utstyrsrommet_import_mal.xlsx")
+
+
+@api.post("/items/import")
+async def items_import(file: UploadFile = File(...), user=Depends(require_perm("inventory", "write"))):
+    content = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Kunne ikke lese Excel-fil")
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(status_code=400, detail="Tom fil")
+    header = [str(h or "").strip() for h in rows[0]]
+    expected = [h.lower() for h in IMPORT_COLUMNS]
+    if [h.lower() for h in header[:len(expected)]] != expected:
+        raise HTTPException(status_code=400, detail=f"Feil kolonner. Forventet: {', '.join(IMPORT_COLUMNS)}")
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+    errors: List[str] = []
+    for idx, row in enumerate(rows[1:], start=2):
+        if row is None or all(v is None or (isinstance(v, str) and not v.strip()) for v in row):
+            continue
+        try:
+            name = (str(row[0]) if row[0] is not None else "").strip()
+            if not name:
+                continue
+            category = (str(row[1]) if row[1] is not None else "").strip()
+            main_group = (str(row[2]) if row[2] is not None else "").strip()
+            sub_group = (str(row[3]) if row[3] is not None else "").strip()
+            price = float(row[4]) if row[4] not in (None, "") else 0.0
+            location = (str(row[5]) if row[5] is not None else "").strip()
+            is_cloth_raw = (str(row[6]) if row[6] is not None else "").strip().lower()
+            is_clothing = is_cloth_raw in ("ja", "yes", "y", "true", "1")
+            size = (str(row[7]) if row[7] is not None else "").strip()
+            jersey = (str(row[8]) if row[8] is not None else "").strip() or "X"
+            qty = int(row[9]) if row[9] not in (None, "") else 0
+
+            key = f"{name}||{category}||{main_group}||{sub_group}"
+            if key not in grouped:
+                grouped[key] = {
+                    "id": new_id(), "name": name, "category": category, "main_group": main_group,
+                    "sub_group": sub_group, "price": price, "location": location,
+                    "is_clothing": is_clothing, "sizes": [], "total_stock": 0,
+                    "created_at": now_iso(),
+                }
+            doc = grouped[key]
+            if is_clothing:
+                doc["is_clothing"] = True
+                doc["sizes"].append({"size": size, "jersey_number": jersey, "quantity": qty})
+            else:
+                doc["total_stock"] = (doc.get("total_stock") or 0) + qty
+        except Exception as e:
+            errors.append(f"Rad {idx}: {e}")
+
+    created = 0
+    for key, doc in grouped.items():
+        if doc.get("is_clothing"):
+            doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
+        await db.items.insert_one(doc)
+        created += 1
+
+    return {"created": created, "errors": errors}
 
 
 # ---------------- Loans ----------------
