@@ -154,6 +154,11 @@ async def get_current_user(request: Request) -> dict:
                     raise HTTPException(status_code=403, detail="Kundekonto er slettet")
                 if cust.get("status") == "inactive":
                     raise HTTPException(status_code=403, detail="Kundekonto er deaktivert")
+        # Heartbeat: update last_seen (used to determine online/offline)
+        try:
+            await db.users.update_one({"id": user["id"]}, {"$set": {"last_seen": now_iso()}})
+        except Exception:
+            pass
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token utløpt")
@@ -346,13 +351,14 @@ class ItemIn(BaseModel):
 class LoanIn(BaseModel):
     item_id: str
     quantity: int = 1
-    team_id: Optional[str] = None
-    person_id: Optional[str] = None
-    mode: str = "loan"
-    charge_price: bool = True
     size: Optional[str] = None
     jersey_number: Optional[str] = None
-    notes: str = ""
+    team_id: Optional[str] = None
+    person_id: Optional[str] = None
+    mode: str = "loan"  # 'loan' or 'handout'
+    loan_target: Optional[str] = None  # 'team' | 'person' - overstyrer hvem gjelden havner på
+    charge_price: bool = True
+    notes: Optional[str] = ""
 
 
 class ReturnIn(BaseModel):
@@ -505,11 +511,36 @@ async def login(data: LoginIn, response: Response):
     _cookie(response, "access_token", token)
     # also clear impersonation on login
     response.delete_cookie("imp_cid", path="/")
+    # Track login
+    now = now_iso()
+    ip = None
+    try:
+        from fastapi import Request as _R  # noqa
+    except Exception:
+        pass
+    await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now, "last_seen": now}})
+    await db.login_history.insert_one({
+        "id": new_id(), "user_id": user["id"], "email": user["email"],
+        "tenant_id": user.get("tenant_id"), "logged_in_at": now, "logged_out_at": None,
+    })
     return {"user": _clean(dict(user)), "token": token}
 
 
 @api.post("/auth/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    # Mark newest login_history record as logged out for this user
+    token = request.cookies.get("access_token") or (request.headers.get("Authorization", "")[7:] if request.headers.get("Authorization", "").startswith("Bearer ") else None)
+    if token:
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
+            uid = payload.get("sub")
+            if uid:
+                last = await db.login_history.find_one({"user_id": uid, "logged_out_at": None}, sort=[("logged_in_at", -1)])
+                if last:
+                    await db.login_history.update_one({"id": last["id"]}, {"$set": {"logged_out_at": now_iso()}})
+                await db.users.update_one({"id": uid}, {"$set": {"last_seen": None}})
+        except Exception:
+            pass
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("imp_cid", path="/")
     return {"ok": True}
@@ -1063,7 +1094,22 @@ async def set_password(data: SetPasswordIn, response: Response):
 async def list_users(request: Request, user=Depends(require_admin)):
     tid = await require_tenant(request, user)
     users = await db.users.find({"tenant_id": tid}, {"_id": 0, "password_hash": 0}).to_list(200)
+    # Online = last_seen innen 5 min
+    threshold = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    for u in users:
+        last_seen = u.get("last_seen")
+        u["online"] = bool(last_seen and last_seen >= threshold)
     return users
+
+
+@api.get("/users/{user_id}/login-history")
+async def user_login_history(user_id: str, request: Request, admin=Depends(require_admin)):
+    tid = await require_tenant(request, admin)
+    target = await db.users.find_one({"id": user_id, "tenant_id": tid})
+    if not target:
+        raise HTTPException(404, "Bruker ikke funnet")
+    history = await db.login_history.find({"user_id": user_id}, {"_id": 0}).sort("logged_in_at", -1).to_list(500)
+    return history
 
 
 @api.post("/users")
@@ -1261,7 +1307,9 @@ async def get_team(team_id: str, request: Request, user=Depends(require_perm("te
     t = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
     if not t:
         raise HTTPException(404, "Lag ikke funnet")
-    return t
+    people = await db.people.find({"tenant_id": tid, "team_ids": team_id}, {"_id": 0}).to_list(500)
+    history = await db.loans.find({"team_id": team_id, "tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(500)
+    return {"team": t, "people": people, "history": history}
 
 
 @api.put("/teams/{team_id}")
@@ -1511,6 +1559,7 @@ async def create_loan(data: LoanIn, request: Request, user=Depends(require_perm(
         "id": new_id(), "tenant_id": tid, "item_id": data.item_id, "item_name": item.get("name", ""),
         "quantity": data.quantity, "size": data.size, "jersey_number": data.jersey_number,
         "team_id": data.team_id, "person_id": data.person_id, "mode": data.mode,
+        "loan_target": data.loan_target or ("team" if (data.team_id and not data.person_id) else "person" if data.person_id else None),
         "unit_price": price, "amount_owed": charge, "status": "borrowed",
         "loan_date": now_iso(), "picked_up_by": data.person_id,
         "return_date": None, "received_by_person_id": None, "notes": data.notes,
@@ -1519,11 +1568,12 @@ async def create_loan(data: LoanIn, request: Request, user=Depends(require_perm(
     await _adjust_stock(tid, data.item_id, -data.quantity, data.size)
 
     if charge > 0:
-        # Skyldig beløp: person-utlån → kun person; lag-utlån uten person → kun lag
-        if data.person_id:
-            await db.people.update_one({"id": data.person_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
-        elif data.team_id:
+        # Skyldig beløp styres av loan_target
+        target = loan_doc["loan_target"]
+        if target == "team" and data.team_id:
             await db.teams.update_one({"id": data.team_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
+        elif target == "person" and data.person_id:
+            await db.people.update_one({"id": data.person_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
     return _clean(loan_doc)
 
 
@@ -1540,10 +1590,11 @@ async def return_loan(loan_id: str, data: ReturnIn, request: Request, user=Depen
     owed_reduce = unit_owed * qty
     await _adjust_stock(tid, loan["item_id"], qty, loan.get("size"))
     if owed_reduce > 0:
-        if loan.get("person_id"):
-            await db.people.update_one({"id": loan["person_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
-        elif loan.get("team_id"):
+        target = loan.get("loan_target") or ("team" if (loan.get("team_id") and not loan.get("person_id")) else "person" if loan.get("person_id") else None)
+        if target == "team" and loan.get("team_id"):
             await db.teams.update_one({"id": loan["team_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
+        elif target == "person" and loan.get("person_id"):
+            await db.people.update_one({"id": loan["person_id"], "tenant_id": tid}, {"$inc": {"debt": -owed_reduce}})
     if qty >= loan["quantity"]:
         await db.loans.update_one({"id": loan_id, "tenant_id": tid}, {"$set": {
             "status": "returned", "return_date": now_iso(),

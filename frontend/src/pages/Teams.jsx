@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Trash2, Plus, Download } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Pencil, Trash2, Plus, Download, Eye, HandCoins } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
@@ -42,12 +43,19 @@ function TrainerFields({ label, value, onChange }) {
 export default function Teams() {
   const { hasPerm } = useAuth();
   const [teams, setTeams] = useState([]);
+  const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_TEAM);
   const [editId, setEditId] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [loanFor, setLoanFor] = useState(null);
+  const [loanForm, setLoanForm] = useState({ item_id: "", quantity: 1, size: "", jersey_number: "", notes: "" });
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
-  const load = () => api.get("/teams").then((r) => setTeams(r.data));
+  const load = async () => {
+    const [t, i] = await Promise.all([api.get("/teams"), api.get("/items")]);
+    setTeams(t.data); setItems(i.data);
+  };
   useEffect(() => { load(); }, []);
 
   const nok = (v) => (v || 0).toLocaleString("nb-NO", { style: "currency", currency: "NOK", maximumFractionDigits: 0 });
@@ -57,6 +65,38 @@ export default function Teams() {
     setEditId(t.id);
     setForm({ ...EMPTY_TEAM, ...t, training_times: [...(t.training_times || []), ...Array(7).fill("")].slice(0, 7) });
     setOpen(true);
+  };
+
+  const showDetail = async (id) => {
+    const { data } = await api.get(`/teams/${id}`);
+    setDetail(data);
+  };
+
+  const openQuickLoan = (t) => {
+    setLoanFor(t);
+    setLoanForm({ item_id: "", quantity: 1, size: "", jersey_number: "", notes: "" });
+  };
+
+  const selectedItem = items.find((i) => i.id === loanForm.item_id);
+
+  const submitQuickLoan = async () => {
+    try {
+      if (!loanForm.item_id) { toast.error("Velg vare"); return; }
+      await api.post("/loans", {
+        mode: "loan", charge_price: true,
+        item_id: loanForm.item_id,
+        quantity: parseInt(loanForm.quantity) || 1,
+        team_id: loanFor.id,
+        person_id: null,
+        loan_target: "team",
+        size: loanForm.size || null,
+        jersey_number: loanForm.jersey_number || null,
+        notes: loanForm.notes,
+      });
+      toast.success(`Utlån registrert til ${loanFor.team_name}`);
+      setLoanFor(null);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
   const save = async () => {
@@ -114,6 +154,14 @@ export default function Teams() {
           ]}
           actions={(t) => (
             <>
+              {hasPerm("loans", "write") && (
+                <Button variant="outline" size="sm" onClick={() => openQuickLoan(t)} data-testid={`quick-loan-team-${t.id}`}>
+                  <HandCoins className="h-3 w-3 mr-1" />Lån ut
+                </Button>
+              )}
+              <Button variant="ghost" size="icon" onClick={() => showDetail(t.id)} data-testid={`view-team-${t.id}`}>
+                <Eye className="h-4 w-4" />
+              </Button>
               <Button variant="ghost" size="icon" onClick={() => exportTeam(t.id, t.team_name)} data-testid={`export-team-${t.id}`}>
                 <Download className="h-4 w-4" />
               </Button>

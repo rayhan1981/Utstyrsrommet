@@ -28,6 +28,7 @@ export default function Loans() {
   const [form, setForm] = useState({
     mode: "loan", charge_price: true, item_id: "", quantity: 1,
     team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "",
+    loan_target: "person",
   });
 
   const load = async () => {
@@ -52,7 +53,7 @@ export default function Loans() {
       };
       await api.post("/loans", payload);
       toast.success(form.mode === "loan" ? "Utlån registrert" : "Utlevering registrert");
-      setOpen(false); setForm({ mode: "loan", charge_price: true, item_id: "", quantity: 1, team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "" });
+      setOpen(false); setForm({ mode: "loan", charge_price: true, item_id: "", quantity: 1, team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "", loan_target: "person" });
       load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
@@ -155,6 +156,15 @@ export default function Loans() {
                 <span>Legg pris til som skyldig beløp</span>
               </label>
             )}
+
+            <div className="border border-slate-200 rounded-md p-3 bg-emerald-50/50">
+              <Label className="text-sm font-semibold">Skyldig beløp går til</Label>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <button type="button" onClick={() => setForm({ ...form, loan_target: "person" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "person" ? "bg-emerald-900 text-white" : "bg-white border border-slate-200 hover:border-emerald-700"}`} data-testid="target-person-btn">Person</button>
+                <button type="button" onClick={() => setForm({ ...form, loan_target: "team" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "team" ? "bg-emerald-900 text-white" : "bg-white border border-slate-200 hover:border-emerald-700"}`} data-testid="target-team-btn">Lag</button>
+              </div>
+              <p className="text-xs text-slate-600 mt-1.5">{form.loan_target === "team" ? "Gjelden belastes LAGET, ikke personen." : "Gjelden belastes PERSONEN som henter."}</p>
+            </div>
 
             <div>
               <Label>Vare</Label>

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Mail, Trash2, Pencil, Shield } from "lucide-react";
+import { Plus, Mail, Trash2, Pencil, Shield, History } from "lucide-react";
 import { toast } from "sonner";
 import DataTable from "@/components/DataTable";
 
@@ -20,9 +20,25 @@ export default function Users() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), active: true, password: "" });
   const [sendInvite, setSendInvite] = useState(true);
+  const [historyFor, setHistoryFor] = useState(null);
+  const [history, setHistory] = useState([]);
 
   const load = () => api.get("/users").then((r) => setUsers(r.data));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 30000); // refresh online status
+    return () => clearInterval(t);
+  }, []);
+
+  const showHistory = async (u) => {
+    try {
+      const { data } = await api.get(`/users/${u.id}/login-history`);
+      setHistory(data);
+      setHistoryFor(u);
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleString("nb-NO") : "-";
 
   const openNew = () => {
     setEditId(null); setSendInvite(true);
@@ -85,9 +101,17 @@ export default function Users() {
           emptyLabel="Ingen brukere."
           searchPlaceholder="Søk navn, epost, telefon…"
           columns={[
-            { key: "name", label: "Navn", filter: "text", render: (u) => <span className="font-semibold">{u.name} {u.is_super_admin && <Shield className="h-3 w-3 inline text-emerald-700 ml-1" />}</span> },
+            { key: "name", label: "Navn", filter: "text", render: (u) => (
+              <span className="font-semibold flex items-center gap-2">
+                <span className={`inline-block h-2 w-2 rounded-full ${u.online ? "bg-emerald-500" : "bg-slate-300"}`} title={u.online ? "Pålogget" : "Avlogget"}></span>
+                {u.name} {u.is_super_admin && <Shield className="h-3 w-3 inline text-emerald-700" />}
+              </span>
+            ) },
             { key: "email", label: "E-post", filter: "text" },
-            { key: "phone", label: "Telefon", filter: "text", render: (u) => u.phone || "-" },
+            { key: "online", label: "Pålogget", filter: "boolean", accessor: (u) => !!u.online, render: (u) => (
+              <span className={`text-xs font-semibold px-2 py-1 rounded ${u.online ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>{u.online ? "Pålogget" : "Avlogget"}</span>
+            ) },
+            { key: "last_login", label: "Siste pålogging", filter: "text", render: (u) => <span className="text-xs">{fmtDate(u.last_login)}</span> },
             { key: "role", label: "Rolle", filter: "select",
               options: [{value:"admin",label:"Admin"},{value:"user",label:"Bruker"}],
               render: (u) => <span className={`text-xs font-semibold px-2 py-1 rounded ${u.role === "admin" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>{u.role === "admin" ? "Admin" : "Bruker"}</span> },
@@ -100,6 +124,7 @@ export default function Users() {
           ]}
           actions={(u) => (
             <>
+              <Button variant="ghost" size="icon" onClick={() => showHistory(u)} title="Påloggingshistorikk" data-testid={`history-btn-${u.id}`}><History className="h-4 w-4" /></Button>
               <Button variant="ghost" size="icon" onClick={() => resend(u)} title="Send invitasjon på nytt"><Mail className="h-4 w-4" /></Button>
               <Button variant="ghost" size="icon" onClick={() => openEdit(u)}><Pencil className="h-4 w-4" /></Button>
               {!u.is_super_admin && <Button variant="ghost" size="icon" onClick={() => del(u)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
@@ -166,6 +191,39 @@ export default function Users() {
             <Button variant="outline" onClick={() => setOpen(false)}>Avbryt</Button>
             <Button onClick={save} data-testid="save-user-btn" className="bg-emerald-900 hover:bg-emerald-800">Lagre</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!historyFor} onOpenChange={(o) => !o && setHistoryFor(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Påloggingshistorikk: {historyFor?.name}</DialogTitle>
+            <DialogDescription>{historyFor?.email} - {history.length} pålogginger</DialogDescription>
+          </DialogHeader>
+          <div className="border border-slate-200 rounded-md overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow><TableHead>Pålogget</TableHead><TableHead>Avlogget</TableHead><TableHead>Varighet</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {history.length === 0 && <TableRow><TableCell colSpan={3} className="text-center text-slate-500 py-4">Ingen pålogginger registrert.</TableCell></TableRow>}
+                {history.map((h) => {
+                  const start = h.logged_in_at ? new Date(h.logged_in_at) : null;
+                  const end = h.logged_out_at ? new Date(h.logged_out_at) : null;
+                  let dur = "-";
+                  if (start && end) {
+                    const mins = Math.round((end - start) / 60000);
+                    dur = mins >= 60 ? `${Math.floor(mins/60)}t ${mins%60}min` : `${mins} min`;
+                  } else if (start && !end) dur = "Fortsatt aktiv";
+                  return (
+                    <TableRow key={h.id}>
+                      <TableCell className="text-xs">{fmtDate(h.logged_in_at)}</TableCell>
+                      <TableCell className="text-xs">{fmtDate(h.logged_out_at)}</TableCell>
+                      <TableCell className="text-xs">{dur}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setHistoryFor(null)}>Lukk</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

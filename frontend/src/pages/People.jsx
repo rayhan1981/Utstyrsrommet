@@ -75,6 +75,7 @@ export default function People() {
         quantity: parseInt(loanForm.quantity) || 1,
         team_id: loanForm.team_id === "none" ? null : loanForm.team_id,
         person_id: loanFor.id,
+        loan_target: "person",
         size: loanForm.size || null,
         jersey_number: loanForm.jersey_number || null,
         notes: loanForm.notes,
