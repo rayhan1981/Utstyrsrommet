@@ -26,8 +26,14 @@ CATALOG = [
     {
         "emergent_product_id": "utr_deluxe",
         "name": "Klubb Deluxe",
-        "description": "Full pakke - ubegrenset lag/brukere, Excel-import, logo, prioritert support",
+        "description": "Full pakke - ubegrenset lag, 5 brukere, Excel-import, logo, prioritert support",
         "prices": [{"lookup_key": "utr_deluxe_monthly", "amount": 99900, "interval": "month"}],
+    },
+    {
+        "emergent_product_id": "utr_user_addon",
+        "name": "Ekstra bruker",
+        "description": "Ekstra bruker-sete i tillegg til pakkens inkluderte brukere",
+        "prices": [{"lookup_key": "utr_user_addon_monthly", "amount": 19900, "interval": "month"}],
     },
 ]
 

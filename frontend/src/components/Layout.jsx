@@ -42,7 +42,7 @@ export default function Layout() {
         {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
       </button>
 
-      <aside className={`fixed lg:static inset-y-0 left-0 w-64 bg-white border-r border-slate-200 z-40 transform transition-transform ${open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+      <aside className={`fixed lg:static inset-y-0 left-0 w-64 bg-white border-r border-slate-200 z-40 flex flex-col transform transition-transform ${open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
         <div className="h-16 flex items-center px-5 border-b border-slate-200 brand-gradient">
           <Link to="/app" className="font-display text-white text-xl font-extrabold tracking-tight">UTSTYRS<span className="text-emerald-200">ROMMET</span></Link>
         </div>
@@ -57,7 +57,7 @@ export default function Layout() {
             {plan && <div className="mt-1 inline-block text-xs font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">{plan.name}</div>}
           </div>
         )}
-        <nav className="p-3 space-y-1 overflow-y-auto" onClick={() => setOpen(false)}>
+        <nav className="p-3 space-y-1 overflow-y-auto flex-1" onClick={() => setOpen(false)}>
           {isOwner && (
             <div className="mb-2 pb-2 border-b border-slate-200 space-y-1">
               <button
@@ -83,14 +83,24 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-slate-200 bg-white">
-          <div className="text-xs text-slate-500 mb-2 px-2">
-            <div className="font-semibold text-slate-800 truncate">{user?.name}</div>
-            <div className="truncate">{user?.email}</div>
+        <div className="border-t border-slate-200 bg-white">
+          <div className="p-3">
+            <div className="text-xs text-slate-500 mb-2 px-2">
+              <div className="font-semibold text-slate-800 truncate">{user?.name}</div>
+              <div className="truncate">{user?.email}</div>
+            </div>
+            <Button variant="outline" size="sm" className="w-full" onClick={handleLogout} data-testid="logout-btn">
+              <LogOut className="h-4 w-4 mr-2" />Logg ut
+            </Button>
           </div>
-          <Button variant="outline" size="sm" className="w-full" onClick={handleLogout} data-testid="logout-btn">
-            <LogOut className="h-4 w-4 mr-2" />Logg ut
-          </Button>
+          <div className="px-4 py-3 text-[10px] leading-relaxed text-slate-500 border-t border-slate-100 bg-slate-50 space-y-0.5">
+            <div className="font-semibold text-slate-700">Hansen Logistikk</div>
+            <div>Designet og utviklet av Raymond Dalgård Hansen</div>
+            <div>Versjon 1.00 · 2026</div>
+            <div><a href="mailto:hansenlogistikk@gmail.com" className="hover:text-emerald-800">hansenlogistikk@gmail.com</a></div>
+            <div>Tlf. 90 96 70 88</div>
+            <div className="pt-1 text-slate-400">© 2026 - 2036 Hansen Logistikk</div>
+          </div>
         </div>
       </aside>
 

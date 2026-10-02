@@ -67,10 +67,10 @@ PLANS: Dict[str, Dict[str, Any]] = {
     },
     "deluxe": {
         "key": "deluxe", "name": "Klubb Deluxe", "price": 999, "lookup_key": "utr_deluxe_monthly",
-        "max_teams": None, "max_users": None,
+        "max_teams": None, "max_users": 5,
         "stock_audit": True, "excel_export": True, "excel_import": True,
-        "logo_upload": True, "settings": True,
-        "features": ["Alt i Pro", "Ubegrenset lag", "Ubegrensede ekstra brukere", "Excel-import m/mal", "Klubbinnstillinger + logo", "Prioritert support"],
+        "logo_upload": True, "settings": True, "allow_user_addon": True,
+        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "Prioritert support"],
     },
 }
 
@@ -365,8 +365,14 @@ class CheckoutIn(BaseModel):
     origin_url: str
 
 
+class SeatCheckoutIn(BaseModel):
+    quantity: int = 1
+    origin_url: str
+
+
 class UpdatePlanIn(BaseModel):
     plan: str
+    extra_user_seats: Optional[int] = None
 
 
 # ---------------- Startup ----------------
@@ -591,6 +597,47 @@ async def subscription_checkout(data: CheckoutIn, request: Request, user=Depends
     return {"checkout_url": session.url, "session_id": session.id}
 
 
+@api.post("/subscription/seats/checkout")
+async def seats_checkout(data: SeatCheckoutIn, request: Request, user=Depends(require_admin)):
+    tid = await resolve_tenant_id(request, user)
+    if not tid:
+        raise HTTPException(400, "Ingen kunde")
+    if data.quantity < 1:
+        raise HTTPException(400, "Minst 1 ekstra bruker")
+    cust = await db.customers.find_one({"id": tid})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    plan = PLANS.get(cust.get("plan", "basic"), PLANS["basic"])
+    if not plan.get("allow_user_addon"):
+        raise HTTPException(403, "Pakken støtter ikke kjøp av ekstra brukere. Oppgrader til Deluxe.")
+
+    prices = stripe.Price.list(lookup_keys=["utr_user_addon_monthly"], active=True, limit=1).data
+    if not prices:
+        raise HTTPException(500, "Pris for ekstra bruker ikke funnet")
+    price = prices[0]
+
+    kwargs = dict(
+        line_items=[{"price": price.id, "quantity": data.quantity}],
+        mode="subscription",
+        success_url=f"{data.origin_url}/abonnement/suksess?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{data.origin_url}/app/abonnement",
+        customer_email=cust["owner_email"] if not cust.get("stripe_customer_id") else None,
+        metadata={"tenant_id": tid, "addon": "user_seats", "quantity": str(data.quantity)},
+        subscription_data={"metadata": {"tenant_id": tid, "addon": "user_seats", "quantity": str(data.quantity)}},
+    )
+    if cust.get("stripe_customer_id"):
+        kwargs["customer"] = cust["stripe_customer_id"]
+        kwargs.pop("customer_email", None)
+    session = stripe.checkout.Session.create(**{k: v for k, v in kwargs.items() if v is not None})
+
+    await db.payment_transactions.insert_one({
+        "session_id": session.id, "tenant_id": tid, "addon": "user_seats",
+        "quantity": data.quantity, "status": "initiated", "payment_status": "pending",
+        "created_at": now_iso(), "updated_at": now_iso(),
+    })
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
 @api.get("/subscription/status/{session_id}")
 async def subscription_status(session_id: str):
     rec = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
@@ -602,6 +649,8 @@ async def subscription_status(session_id: str):
             if s.payment_status == "paid" or s.status == "complete":
                 tid = s.metadata.get("tenant_id") if s.metadata else rec.get("tenant_id")
                 plan = s.metadata.get("plan") if s.metadata else rec.get("plan")
+                addon = s.metadata.get("addon") if s.metadata else rec.get("addon")
+                qty = int(s.metadata.get("quantity", 0)) if s.metadata and s.metadata.get("quantity") else rec.get("quantity", 0)
                 await db.payment_transactions.update_one(
                     {"session_id": session_id, "payment_status": {"$ne": "paid"}},
                     {"$set": {"status": "completed", "payment_status": "paid",
@@ -609,11 +658,17 @@ async def subscription_status(session_id: str):
                               "stripe_customer_id": s.customer,
                               "updated_at": now_iso()}})
                 if tid:
-                    await db.customers.update_one({"id": tid}, {"$set": {
-                        "status": "active", "plan": plan or rec.get("plan"),
-                        "stripe_subscription_id": s.subscription,
-                        "stripe_customer_id": s.customer,
-                    }})
+                    if addon == "user_seats":
+                        await db.customers.update_one({"id": tid}, {
+                            "$inc": {"extra_user_seats": int(qty)},
+                            "$set": {"stripe_customer_id": s.customer},
+                        })
+                    else:
+                        await db.customers.update_one({"id": tid}, {"$set": {
+                            "status": "active", "plan": plan or rec.get("plan"),
+                            "stripe_subscription_id": s.subscription,
+                            "stripe_customer_id": s.customer,
+                        }})
                 rec = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
         except stripe.error.StripeError:
             pass
@@ -631,8 +686,11 @@ async def stripe_webhook(request: Request):
     obj, t = event["data"]["object"], event["type"]
 
     if t == "checkout.session.completed":
-        tid = (obj.get("metadata") or {}).get("tenant_id")
-        plan = (obj.get("metadata") or {}).get("plan")
+        md = obj.get("metadata") or {}
+        tid = md.get("tenant_id")
+        addon = md.get("addon")
+        plan = md.get("plan")
+        qty = int(md.get("quantity") or 0)
         await db.payment_transactions.update_one(
             {"session_id": obj["id"], "payment_status": {"$ne": "paid"}},
             {"$set": {"status": "completed", "payment_status": obj.get("payment_status", "paid"),
@@ -640,11 +698,17 @@ async def stripe_webhook(request: Request):
                       "stripe_customer_id": obj.get("customer"),
                       "updated_at": now_iso()}})
         if tid:
-            await db.customers.update_one({"id": tid}, {"$set": {
-                "status": "active", "plan": plan,
-                "stripe_subscription_id": obj.get("subscription"),
-                "stripe_customer_id": obj.get("customer"),
-            }})
+            if addon == "user_seats":
+                await db.customers.update_one({"id": tid}, {
+                    "$inc": {"extra_user_seats": qty},
+                    "$set": {"stripe_customer_id": obj.get("customer")},
+                })
+            else:
+                await db.customers.update_one({"id": tid}, {"$set": {
+                    "status": "active", "plan": plan,
+                    "stripe_subscription_id": obj.get("subscription"),
+                    "stripe_customer_id": obj.get("customer"),
+                }})
     elif t == "customer.subscription.updated":
         tid = (obj.get("metadata") or {}).get("tenant_id")
         if tid:
@@ -705,7 +769,10 @@ async def owner_list_customers(user=Depends(require_platform_owner)):
 async def owner_update_customer(customer_id: str, data: UpdatePlanIn, user=Depends(require_platform_owner)):
     if data.plan not in PLANS:
         raise HTTPException(400, "Ugyldig pakke")
-    await db.customers.update_one({"id": customer_id}, {"$set": {"plan": data.plan}})
+    update = {"plan": data.plan}
+    if data.extra_user_seats is not None:
+        update["extra_user_seats"] = max(0, int(data.extra_user_seats))
+    await db.customers.update_one({"id": customer_id}, {"$set": update})
     return await db.customers.find_one({"id": customer_id}, {"_id": 0})
 
 
@@ -746,11 +813,19 @@ async def list_users(request: Request, user=Depends(require_admin)):
 async def create_user(data: UserCreateIn, request: Request, admin=Depends(require_admin)):
     tid = await require_tenant(request, admin)
     plan = await get_tenant_plan(tid)
+    cust = await db.customers.find_one({"id": tid})
+    extra = int((cust or {}).get("extra_user_seats", 0))
     max_users = plan.get("max_users")
-    if max_users is not None:
+    if max_users is not None and not (cust or {}).get("is_owner_workspace"):
+        effective = max_users + extra
         count = await db.users.count_documents({"tenant_id": tid, "role": {"$ne": "admin"}})
-        if count >= max_users:
-            raise HTTPException(403, f"Pakken støtter maks {max_users} ekstra brukere. Oppgrader for flere.")
+        if count >= effective:
+            msg = f"Pakken støtter maks {effective} ekstra brukere"
+            if plan.get("allow_user_addon"):
+                msg += ". Kjøp flere bruker-seter (199,-/mnd) på Abonnement-siden."
+            else:
+                msg += ". Oppgrader for flere."
+            raise HTTPException(403, msg)
 
     email = data.email.lower()
     if await db.users.find_one({"email": email}):
