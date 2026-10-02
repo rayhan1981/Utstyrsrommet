@@ -19,6 +19,7 @@ import Settings from "@/pages/Settings";
 import Subscription from "@/pages/Subscription";
 import SubscriptionSuccess from "@/pages/SubscriptionSuccess";
 import OwnerPanel from "@/pages/OwnerPanel";
+import Terms from "@/pages/Terms";
 import { Toaster } from "sonner";
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
           <Route path="/innlogging" element={<Login />} />
           <Route path="/registrer" element={<Signup />} />
           <Route path="/sett-passord" element={<SetPassword />} />
+          <Route path="/vilkar" element={<Terms />} />
           <Route path="/abonnement/suksess" element={<SubscriptionSuccess />} />
           <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
             <Route index element={<Dashboard />} />

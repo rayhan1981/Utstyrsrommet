@@ -253,6 +253,7 @@ class SignupIn(BaseModel):
     owner_phone: str = ""
     password: str
     plan: str = "basic"
+    accept_terms: bool = False
 
 
 class UserCreateIn(BaseModel):
@@ -363,11 +364,17 @@ class StockCountLineIn(BaseModel):
 class CheckoutIn(BaseModel):
     plan: str
     origin_url: str
+    billing_cycle: str = "monthly"  # monthly | yearly
+    accept_terms: bool = False
 
 
 class SeatCheckoutIn(BaseModel):
     quantity: int = 1
     origin_url: str
+
+
+class CancelIn(BaseModel):
+    reason: str = ""
 
 
 class UpdatePlanIn(BaseModel):
@@ -501,6 +508,8 @@ async def me(request: Request, user=Depends(get_current_user)):
 async def signup(data: SignupIn, response: Response):
     if data.plan not in PLANS:
         raise HTTPException(400, "Ugyldig pakke")
+    if not data.accept_terms:
+        raise HTTPException(400, "Du må godta bruksvilkårene for å opprette konto")
     if len(data.password) < 6:
         raise HTTPException(400, "Passord må være minst 6 tegn")
     email = data.owner_email.lower()
@@ -523,6 +532,10 @@ async def signup(data: SignupIn, response: Response):
         "trial_ends_at": trial_ends,
         "stripe_customer_id": None,
         "stripe_subscription_id": None,
+        "seats_subscription_id": None,
+        "extra_user_seats": 0,
+        "accept_terms": True,
+        "terms_accepted_at": now_iso(),
         "created_at": now_iso(),
     }
     await db.customers.insert_one(customer_doc)
@@ -556,17 +569,21 @@ async def subscription_checkout(data: CheckoutIn, request: Request, user=Depends
         raise HTTPException(400, "Ingen kunde")
     if data.plan not in PLANS:
         raise HTTPException(400, "Ugyldig pakke")
+    if not data.accept_terms:
+        raise HTTPException(400, "Du må godta bruksvilkårene")
     cust = await db.customers.find_one({"id": tid})
     if not cust:
         raise HTTPException(404, "Kunde ikke funnet")
 
     plan = PLANS[data.plan]
-    prices = stripe.Price.list(lookup_keys=[plan["lookup_key"]], active=True, limit=1).data
+    cycle = "yearly" if data.billing_cycle == "yearly" else "monthly"
+    lookup_key = plan["lookup_key"] if cycle == "monthly" else plan.get("yearly_lookup_key") or plan["lookup_key"].replace("_monthly", "_yearly")
+    prices = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
     if not prices:
-        raise HTTPException(500, f"Pris ikke funnet: {plan['lookup_key']}")
+        raise HTTPException(500, f"Pris ikke funnet: {lookup_key}")
     price = prices[0]
 
-    sub_data = {}
+    sub_data = {"metadata": {"tenant_id": tid, "plan": data.plan, "billing_cycle": cycle}}
     try:
         if cust.get("status") == "trial" and cust.get("trial_ends_at"):
             trial_end = datetime.fromisoformat(cust["trial_ends_at"])
@@ -575,26 +592,103 @@ async def subscription_checkout(data: CheckoutIn, request: Request, user=Depends
     except Exception:
         pass
 
+    discounts = []
+    if cycle == "yearly":
+        discounts = [{"coupon": "UTR_YEARLY_50_FIRST"}]
+        sub_data["metadata"]["yearly_loyalty"] = "pending"
+
     kwargs = dict(
         line_items=[{"price": price.id, "quantity": 1}],
         mode="subscription",
         success_url=f"{data.origin_url}/abonnement/suksess?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{data.origin_url}/abonnement",
+        cancel_url=f"{data.origin_url}/app/abonnement",
         customer_email=cust["owner_email"] if not cust.get("stripe_customer_id") else None,
-        metadata={"tenant_id": tid, "plan": data.plan},
-        subscription_data={"metadata": {"tenant_id": tid, "plan": data.plan}, **sub_data},
+        metadata={"tenant_id": tid, "plan": data.plan, "billing_cycle": cycle},
+        subscription_data=sub_data,
     )
+    if discounts:
+        kwargs["discounts"] = discounts
     if cust.get("stripe_customer_id"):
         kwargs["customer"] = cust["stripe_customer_id"]
         kwargs.pop("customer_email", None)
-
     session = stripe.checkout.Session.create(**{k: v for k, v in kwargs.items() if v is not None})
 
     await db.payment_transactions.insert_one({
-        "session_id": session.id, "tenant_id": tid, "plan": data.plan,
-        "status": "initiated", "payment_status": "pending", "created_at": now_iso(), "updated_at": now_iso(),
+        "session_id": session.id, "tenant_id": tid, "plan": data.plan, "billing_cycle": cycle,
+        "status": "initiated", "payment_status": "pending",
+        "created_at": now_iso(), "updated_at": now_iso(),
     })
+    await db.customers.update_one({"id": tid}, {"$set": {"accept_terms": True, "terms_accepted_at": now_iso(), "billing_cycle": cycle}})
     return {"checkout_url": session.url, "session_id": session.id}
+
+
+@api.post("/subscription/cancel")
+async def subscription_cancel(data: CancelIn, request: Request, user=Depends(require_admin)):
+    """Si opp hovedabonnement med 3 måneders varsel."""
+    tid = await resolve_tenant_id(request, user)
+    cust = await db.customers.find_one({"id": tid})
+    if not cust or not cust.get("stripe_subscription_id"):
+        raise HTTPException(400, "Ingen aktivt abonnement å si opp")
+    cancel_at = int((datetime.now(timezone.utc) + timedelta(days=90)).timestamp())
+    try:
+        stripe.Subscription.modify(cust["stripe_subscription_id"], cancel_at=cancel_at,
+                                    metadata={**(cust.get("sub_metadata") or {}), "cancel_reason": data.reason})
+    except stripe.error.StripeError as e:
+        raise HTTPException(400, f"Stripe-feil: {e}")
+    await db.customers.update_one({"id": tid}, {"$set": {
+        "status": "canceling", "cancel_at": datetime.fromtimestamp(cancel_at, timezone.utc).isoformat(),
+        "cancel_reason": data.reason,
+    }})
+    return {"ok": True, "cancel_at": datetime.fromtimestamp(cancel_at, timezone.utc).isoformat()}
+
+
+@api.post("/subscription/resume")
+async def subscription_resume(request: Request, user=Depends(require_admin)):
+    """Angre oppsigelse."""
+    tid = await resolve_tenant_id(request, user)
+    cust = await db.customers.find_one({"id": tid})
+    if not cust or not cust.get("stripe_subscription_id"):
+        raise HTTPException(400, "Ingen abonnement")
+    try:
+        stripe.Subscription.modify(cust["stripe_subscription_id"], cancel_at="")
+    except stripe.error.StripeError as e:
+        raise HTTPException(400, f"Stripe-feil: {e}")
+    await db.customers.update_one({"id": tid}, {"$set": {"status": "active"}, "$unset": {"cancel_at": "", "cancel_reason": ""}})
+    return {"ok": True}
+
+
+@api.post("/subscription/seats/cancel")
+async def seats_cancel(request: Request, user=Depends(require_admin)):
+    """Si opp bruker-sete-abonnement umiddelbart."""
+    tid = await resolve_tenant_id(request, user)
+    cust = await db.customers.find_one({"id": tid})
+    if not cust or not cust.get("seats_subscription_id"):
+        raise HTTPException(400, "Ingen aktivt bruker-sete-abonnement")
+    try:
+        stripe.Subscription.delete(cust["seats_subscription_id"])
+    except stripe.error.StripeError as e:
+        raise HTTPException(400, f"Stripe-feil: {e}")
+    await db.customers.update_one({"id": tid}, {"$set": {"extra_user_seats": 0}, "$unset": {"seats_subscription_id": ""}})
+    return {"ok": True}
+
+
+@api.get("/subscription/invoices")
+async def subscription_invoices(request: Request, user=Depends(require_admin)):
+    tid = await resolve_tenant_id(request, user)
+    cust = await db.customers.find_one({"id": tid})
+    if not cust or not cust.get("stripe_customer_id"):
+        return []
+    try:
+        invoices = stripe.Invoice.list(customer=cust["stripe_customer_id"], limit=50).data
+    except stripe.error.StripeError:
+        return []
+    return [{
+        "id": i.id, "number": i.number, "status": i.status,
+        "amount_paid": i.amount_paid / 100.0, "currency": i.currency.upper(),
+        "created": datetime.fromtimestamp(i.created, timezone.utc).isoformat(),
+        "hosted_url": i.hosted_invoice_url, "pdf_url": i.invoice_pdf,
+        "description": (i.lines.data[0].description if i.lines and i.lines.data else ""),
+    } for i in invoices]
 
 
 @api.post("/subscription/seats/checkout")
@@ -691,6 +785,7 @@ async def stripe_webhook(request: Request):
         addon = md.get("addon")
         plan = md.get("plan")
         qty = int(md.get("quantity") or 0)
+        cycle = md.get("billing_cycle", "monthly")
         await db.payment_transactions.update_one(
             {"session_id": obj["id"], "payment_status": {"$ne": "paid"}},
             {"$set": {"status": "completed", "payment_status": obj.get("payment_status", "paid"),
@@ -701,14 +796,26 @@ async def stripe_webhook(request: Request):
             if addon == "user_seats":
                 await db.customers.update_one({"id": tid}, {
                     "$inc": {"extra_user_seats": qty},
-                    "$set": {"stripe_customer_id": obj.get("customer")},
+                    "$set": {"stripe_customer_id": obj.get("customer"),
+                             "seats_subscription_id": obj.get("subscription")},
                 })
             else:
                 await db.customers.update_one({"id": tid}, {"$set": {
-                    "status": "active", "plan": plan,
+                    "status": "active", "plan": plan, "billing_cycle": cycle,
                     "stripe_subscription_id": obj.get("subscription"),
                     "stripe_customer_id": obj.get("customer"),
                 }})
+    elif t == "invoice.payment_succeeded":
+        # Swap 50% coupon → 10% loyalty on yearly renewals
+        try:
+            sub_id = obj.get("subscription")
+            if sub_id and obj.get("billing_reason") == "subscription_cycle":
+                sub = stripe.Subscription.retrieve(sub_id)
+                if (sub.metadata or {}).get("yearly_loyalty") == "pending":
+                    stripe.Subscription.modify(sub_id, coupon="UTR_YEARLY_10_LOYAL",
+                                                metadata={**sub.metadata, "yearly_loyalty": "active"})
+        except Exception as e:
+            logger.error(f"Yearly loyalty swap feilet: {e}")
     elif t == "customer.subscription.updated":
         tid = (obj.get("metadata") or {}).get("tenant_id")
         if tid:
