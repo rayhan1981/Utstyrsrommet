@@ -459,7 +459,7 @@ async def list_clubs(user=Depends(get_current_user)):
 async def create_club(data: ClubIn, user=Depends(require_perm("settings", "write"))):
     doc = {"id": new_id(), "name": data.name, "org_number": data.org_number, "logo_url": data.logo_url, "created_at": now_iso()}
     await db.clubs.insert_one(doc)
-    return doc
+    return _clean(doc)
 
 
 @api.put("/clubs/{club_id}")
@@ -694,12 +694,14 @@ async def return_loan(loan_id: str, data: ReturnIn, user=Depends(require_perm("l
             "received_by_person_id": data.received_by_person_id,
             "amount_owed": 0,
         }})
+        return {"ok": True, "status": "returned", "amount_owed": 0}
     else:
         # partial return - split
         remaining = loan["quantity"] - qty
+        new_owed = loan.get("amount_owed", 0) - owed_reduce
         await db.loans.update_one({"id": loan_id}, {"$set": {
             "quantity": remaining,
-            "amount_owed": loan.get("amount_owed", 0) - owed_reduce,
+            "amount_owed": new_owed,
         }})
         returned_doc = {**loan}
         returned_doc.pop("_id", None)
@@ -710,8 +712,7 @@ async def return_loan(loan_id: str, data: ReturnIn, user=Depends(require_perm("l
             "amount_owed": 0,
         })
         await db.loans.insert_one(returned_doc)
-
-    return {"ok": True}
+        return {"ok": True, "status": "partial", "amount_owed": new_owed}
 
 
 # ---------------- Dashboard ----------------
