@@ -4,16 +4,19 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { ArrowUpDown, ArrowUp, ArrowDown, Search, Filter, X } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Search, Filter, X, Layers, ChevronRight, ChevronDown } from "lucide-react";
 
 /**
  * Columns: [{ key, label, sortable=true, filter: null | 'text' | 'select' | 'number' | 'boolean',
- *            options: [{value,label}], accessor: row => value, render: row => node, className? }]
+ *            options: [{value,label}], accessor: row => value, render: row => node, className?,
+ *            groupable?: boolean, groupLabel?: (val)=>string }]
  */
 export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", getRowId = (r) => r.id, actions, searchPlaceholder = "Søk…", initialSort }) {
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState(initialSort || null); // { key, dir: 'asc'|'desc' }
-  const [filters, setFilters] = useState({}); // { key: {op?, value|min|max} }
+  const [sort, setSort] = useState(initialSort || null);
+  const [filters, setFilters] = useState({});
+  const [groupBy, setGroupBy] = useState("");
+  const [collapsed, setCollapsed] = useState({});
 
   const get = (col, row) => (col.accessor ? col.accessor(row) : row[col.key]);
 
@@ -24,6 +27,8 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
     if (f.max !== undefined && f.max !== "") return true;
     return false;
   }).length;
+
+  const groupableCols = columns.filter((c) => c.groupable);
 
   const filteredSorted = useMemo(() => {
     let out = [...rows];
@@ -71,11 +76,36 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
     return out;
   }, [rows, search, sort, filters, columns]);
 
+  const grouped = useMemo(() => {
+    if (!groupBy) return null;
+    const col = columns.find((c) => c.key === groupBy);
+    if (!col) return null;
+    const groups = new Map();
+    for (const r of filteredSorted) {
+      const raw = get(col, r);
+      const parts = Array.isArray(raw) ? (raw.length ? raw : [null]) : [raw];
+      for (const p of parts) {
+        const label = col.groupLabel ? col.groupLabel(p, r) : (p == null || p === "" ? "(Ingen)" : String(p));
+        if (!groups.has(label)) groups.set(label, []);
+        groups.get(label).push(r);
+      }
+    }
+    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0], "nb"));
+  }, [groupBy, columns, filteredSorted]);
+
   const toggleSort = (k) => setSort((s) => s?.key === k ? (s.dir === "asc" ? { key: k, dir: "desc" } : null) : { key: k, dir: "asc" });
-
-  const clearFilters = () => { setFilters({}); setSearch(""); setSort(null); };
-
+  const toggleGroup = (label) => setCollapsed((c) => ({ ...c, [label]: !c[label] }));
+  const clearFilters = () => { setFilters({}); setSearch(""); setSort(null); setGroupBy(""); };
   const filterableCols = columns.filter((c) => c.filter);
+
+  const renderRow = (r) => (
+    <TableRow key={getRowId(r)} data-testid={`dt-row-${getRowId(r)}`}>
+      {columns.map((c) => (
+        <TableCell key={c.key} className={c.className}>{c.render ? c.render(r) : get(c, r)}</TableCell>
+      ))}
+      {actions && <TableCell className="text-right space-x-1">{actions(r)}</TableCell>}
+    </TableRow>
+  );
 
   return (
     <div className="space-y-3">
@@ -84,6 +114,18 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input className="pl-9" placeholder={searchPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)} data-testid="dt-search" />
         </div>
+        {groupableCols.length > 0 && (
+          <Select value={groupBy || "none"} onValueChange={(v) => setGroupBy(v === "none" ? "" : v)}>
+            <SelectTrigger className="w-[200px]" data-testid="dt-groupby">
+              <Layers className="h-4 w-4 mr-2" />
+              <SelectValue placeholder="Grupper etter…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Ingen gruppering</SelectItem>
+              {groupableCols.map((c) => <SelectItem key={c.key} value={c.key}>Grupper etter {c.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         {filterableCols.length > 0 && (
           <Popover>
             <PopoverTrigger asChild>
@@ -101,7 +143,7 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
                   <div key={c.key}>
                     <div className="text-xs font-semibold text-slate-600 mb-1">{c.label}</div>
                     {c.filter === "text" && (
-                      <Input value={filters[c.key]?.value || ""} onChange={(e) => setFilters({ ...filters, [c.key]: { value: e.target.value } })} placeholder={`Filtrer…`} />
+                      <Input value={filters[c.key]?.value || ""} onChange={(e) => setFilters({ ...filters, [c.key]: { value: e.target.value } })} placeholder="Filtrer…" />
                     )}
                     {c.filter === "select" && (
                       <Select value={filters[c.key]?.value || "all"} onValueChange={(v) => setFilters({ ...filters, [c.key]: { value: v } })}>
@@ -134,7 +176,7 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
             </PopoverContent>
           </Popover>
         )}
-        {(search || sort || activeFilterCount > 0) && (
+        {(search || sort || activeFilterCount > 0 || groupBy) && (
           <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="dt-clear"><X className="h-3 w-3 mr-1" />Nullstill</Button>
         )}
         <span className="text-xs text-slate-500 ml-auto">{filteredSorted.length} av {rows.length} rader</span>
@@ -161,14 +203,24 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
             {filteredSorted.length === 0 && (
               <TableRow><TableCell colSpan={columns.length + (actions ? 1 : 0)} className="text-center text-slate-500 py-8">{emptyLabel}</TableCell></TableRow>
             )}
-            {filteredSorted.map((r) => (
-              <TableRow key={getRowId(r)} data-testid={`dt-row-${getRowId(r)}`}>
-                {columns.map((c) => (
-                  <TableCell key={c.key} className={c.className}>{c.render ? c.render(r) : get(c, r)}</TableCell>
-                ))}
-                {actions && <TableCell className="text-right space-x-1">{actions(r)}</TableCell>}
-              </TableRow>
-            ))}
+            {!grouped && filteredSorted.map(renderRow)}
+            {grouped && grouped.map(([label, rowsInGroup]) => {
+              const isOpen = !collapsed[label];
+              return (
+                <React.Fragment key={label}>
+                  <TableRow className="bg-slate-50 hover:bg-slate-100 cursor-pointer" onClick={() => toggleGroup(label)} data-testid={`dt-group-${label}`}>
+                    <TableCell colSpan={columns.length + (actions ? 1 : 0)} className="font-semibold text-sm">
+                      <span className="inline-flex items-center gap-2">
+                        {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        {label}
+                        <span className="text-xs text-slate-500 font-normal">({rowsInGroup.length})</span>
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                  {isOpen && rowsInGroup.map(renderRow)}
+                </React.Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       </div>

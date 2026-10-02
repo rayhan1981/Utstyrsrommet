@@ -51,6 +51,13 @@ logger = logging.getLogger("utstyrsrommet")
 
 # ---------------- Plans ----------------
 PLANS: Dict[str, Dict[str, Any]] = {
+    "free": {
+        "key": "free", "name": "Gratis", "price": 0, "lookup_key": "",
+        "max_teams": 1, "max_users": 0,
+        "stock_audit": False, "excel_export": False, "excel_import": False,
+        "logo_upload": False, "settings": False,
+        "features": ["Manuell gratis-tilgang gitt av plattformeier"],
+    },
     "basic": {
         "key": "basic", "name": "Klubb Basic", "price": 399, "lookup_key": "utr_basic_monthly",
         "max_teams": 3, "max_users": 0,  # no extra users beyond admin
@@ -139,6 +146,14 @@ async def get_current_user(request: Request) -> dict:
             raise HTTPException(status_code=401, detail="Bruker ikke funnet")
         if not user.get("active", True):
             raise HTTPException(status_code=403, detail="Konto deaktivert")
+        # Block tenant users if customer is deactivated/deleted
+        if user.get("role") != "platform_owner" and user.get("tenant_id"):
+            cust = await db.customers.find_one({"id": user["tenant_id"]}, {"status": 1, "deleted_at": 1})
+            if cust:
+                if cust.get("deleted_at"):
+                    raise HTTPException(status_code=403, detail="Kundekonto er slettet")
+                if cust.get("status") == "inactive":
+                    raise HTTPException(status_code=403, detail="Kundekonto er deaktivert")
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token utløpt")
@@ -382,6 +397,18 @@ class UpdatePlanIn(BaseModel):
     extra_user_seats: Optional[int] = None
 
 
+class OwnerCustomerUpdateIn(BaseModel):
+    club_name: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[EmailStr] = None
+    owner_phone: Optional[str] = None
+    plan: Optional[str] = None
+    extra_user_seats: Optional[int] = None
+    custom_price: Optional[float] = None
+    status: Optional[str] = None  # "active" | "inactive"
+    cancel_stripe: Optional[bool] = False
+
+
 # ---------------- Startup ----------------
 async def _generate_customer_number() -> str:
     for _ in range(10):
@@ -453,7 +480,8 @@ async def startup():
 # ---------------- Public: Plans ----------------
 @api.get("/plans")
 async def list_plans():
-    return [{k: v for k, v in p.items() if k != "lookup_key"} for p in PLANS.values()]
+    # 'free' is a manual plan only assignable by platform owner – hidden from public listings
+    return [{k: v for k, v in p.items() if k != "lookup_key"} for p in PLANS.values() if p["key"] != "free"]
 
 
 # ---------------- Auth ----------------
@@ -465,6 +493,14 @@ async def login(data: LoginIn, response: Response):
         raise HTTPException(status_code=401, detail="Feil e-post eller passord")
     if not user.get("active", True):
         raise HTTPException(status_code=403, detail="Konto deaktivert")
+    # Block login if tenant customer is deactivated or soft-deleted
+    if user.get("role") != "platform_owner" and user.get("tenant_id"):
+        cust = await db.customers.find_one({"id": user["tenant_id"]})
+        if cust:
+            if cust.get("deleted_at"):
+                raise HTTPException(status_code=403, detail="Kundekonto er slettet. Kontakt support for gjenoppretting.")
+            if cust.get("status") == "inactive":
+                raise HTTPException(status_code=403, detail="Kundekonto er deaktivert. Kontakt support for å reaktivere.")
     token = create_access_token(user["id"], user["email"])
     _cookie(response, "access_token", token)
     # also clear impersonation on login
@@ -506,7 +542,7 @@ async def me(request: Request, user=Depends(get_current_user)):
 # ---------------- Signup ----------------
 @api.post("/signup")
 async def signup(data: SignupIn, response: Response):
-    if data.plan not in PLANS:
+    if data.plan not in PLANS or data.plan == "free":
         raise HTTPException(400, "Ugyldig pakke")
     if not data.accept_terms:
         raise HTTPException(400, "Du må godta bruksvilkårene for å opprette konto")
@@ -567,7 +603,7 @@ async def subscription_checkout(data: CheckoutIn, request: Request, user=Depends
     tid = await resolve_tenant_id(request, user)
     if not tid:
         raise HTTPException(400, "Ingen kunde")
-    if data.plan not in PLANS:
+    if data.plan not in PLANS or data.plan == "free":
         raise HTTPException(400, "Ugyldig pakke")
     if not data.accept_terms:
         raise HTTPException(400, "Du må godta bruksvilkårene")
@@ -883,6 +919,120 @@ async def owner_update_customer(customer_id: str, data: UpdatePlanIn, user=Depen
     return await db.customers.find_one({"id": customer_id}, {"_id": 0})
 
 
+@api.get("/owner/customers/{customer_id}")
+async def owner_get_customer(customer_id: str, user=Depends(require_platform_owner)):
+    cust = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    users = await db.users.find({"tenant_id": customer_id}, {"_id": 0, "password_hash": 0}).to_list(500)
+    teams_count = await db.teams.count_documents({"tenant_id": customer_id})
+    people_count = await db.people.count_documents({"tenant_id": customer_id})
+    items_count = await db.items.count_documents({"tenant_id": customer_id})
+    loans_count = await db.loans.count_documents({"tenant_id": customer_id})
+    return {"customer": cust, "users": users, "counts": {
+        "teams": teams_count, "people": people_count, "items": items_count, "loans": loans_count,
+        "users": len(users)
+    }}
+
+
+@api.patch("/owner/customers/{customer_id}")
+async def owner_patch_customer(customer_id: str, data: OwnerCustomerUpdateIn, user=Depends(require_platform_owner)):
+    cust = await db.customers.find_one({"id": customer_id})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    if cust.get("is_owner_workspace"):
+        raise HTTPException(400, "Kan ikke endre plattformeiers arbeidsområde")
+
+    update: Dict[str, Any] = {}
+    if data.club_name is not None:
+        update["club_name"] = data.club_name
+    if data.owner_name is not None:
+        update["owner_name"] = data.owner_name
+    if data.owner_phone is not None:
+        update["owner_phone"] = data.owner_phone
+    if data.extra_user_seats is not None:
+        update["extra_user_seats"] = max(0, int(data.extra_user_seats))
+    if data.custom_price is not None:
+        update["custom_price"] = float(data.custom_price)
+
+    # Email change: update customer + primary admin user
+    if data.owner_email is not None and data.owner_email.lower() != (cust.get("owner_email") or "").lower():
+        new_email = data.owner_email.lower()
+        clash = await db.users.find_one({"email": new_email})
+        if clash and clash.get("tenant_id") != customer_id:
+            raise HTTPException(400, "E-post er i bruk av en annen bruker")
+        update["owner_email"] = new_email
+        await db.users.update_one({"email": cust.get("owner_email", "").lower(), "tenant_id": customer_id}, {"$set": {"email": new_email}})
+
+    # Plan change: optionally cancel Stripe sub
+    if data.plan is not None:
+        if data.plan not in PLANS:
+            raise HTTPException(400, "Ugyldig pakke")
+        update["plan"] = data.plan
+        if data.cancel_stripe and cust.get("stripe_subscription_id"):
+            try:
+                stripe.Subscription.delete(cust["stripe_subscription_id"])
+            except Exception as e:
+                logger.error(f"Stripe cancel ved manuell planendring feilet: {e}")
+            update["stripe_subscription_id"] = None
+            update["status"] = "active" if data.status is None else data.status
+
+    # Status change
+    if data.status is not None:
+        if data.status not in ("active", "inactive"):
+            raise HTTPException(400, "Status må være 'active' eller 'inactive'")
+        update["status"] = data.status
+
+    if update:
+        await db.customers.update_one({"id": customer_id}, {"$set": update})
+    return await db.customers.find_one({"id": customer_id}, {"_id": 0})
+
+
+@api.delete("/owner/customers/{customer_id}")
+async def owner_delete_customer(customer_id: str, user=Depends(require_platform_owner)):
+    """Soft delete: markeres som slettet. Permanent sletting etter 12 måneder (via scheduled task)."""
+    cust = await db.customers.find_one({"id": customer_id})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    if cust.get("is_owner_workspace"):
+        raise HTTPException(400, "Kan ikke slette plattformeiers arbeidsområde")
+    purge_at = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+    await db.customers.update_one({"id": customer_id}, {"$set": {
+        "deleted_at": now_iso(), "purge_at": purge_at, "status": "inactive"
+    }})
+    return {"ok": True, "deleted_at": now_iso(), "purge_at": purge_at}
+
+
+@api.post("/owner/customers/{customer_id}/restore")
+async def owner_restore_customer(customer_id: str, user=Depends(require_platform_owner)):
+    cust = await db.customers.find_one({"id": customer_id})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    await db.customers.update_one({"id": customer_id}, {"$unset": {"deleted_at": "", "purge_at": ""}, "$set": {"status": "active"}})
+    return {"ok": True}
+
+
+@api.delete("/owner/customers/{customer_id}/users/{user_id}")
+async def owner_delete_tenant_user(customer_id: str, user_id: str, user=Depends(require_platform_owner)):
+    target = await db.users.find_one({"id": user_id, "tenant_id": customer_id})
+    if not target:
+        raise HTTPException(404, "Bruker ikke funnet")
+    await db.users.delete_one({"id": user_id, "tenant_id": customer_id})
+    return {"ok": True}
+
+
+@api.delete("/owner/customers/{customer_id}/people/{person_id}")
+async def owner_delete_tenant_person(customer_id: str, person_id: str, user=Depends(require_platform_owner)):
+    await db.people.delete_one({"id": person_id, "tenant_id": customer_id})
+    return {"ok": True}
+
+
+@api.delete("/owner/customers/{customer_id}/items/{item_id}")
+async def owner_delete_tenant_item(customer_id: str, item_id: str, user=Depends(require_platform_owner)):
+    await db.items.delete_one({"id": item_id, "tenant_id": customer_id})
+    return {"ok": True}
+
+
 # ---------------- Invitations / Set password ----------------
 @api.get("/auth/invitation/{token}")
 async def check_invitation(token: str):
@@ -1046,16 +1196,18 @@ async def list_teams(request: Request, user=Depends(require_perm("teams", "read"
 
 
 async def _sync_team_people(tid: str, team_id: str, team_doc: dict):
-    """Opprett eller oppdater personer basert på trenerroller på laget."""
+    """Opprett eller oppdater personer basert på trenerroller på laget.
+    Fjerner også team_id fra personer som ikke lenger er trenere på laget."""
     slots = ["head_coach", "team_manager", "trainer1", "trainer2", "trainer3", "trainer4", "trainer5"]
+    current_names = set()
     for slot in slots:
         trainer = team_doc.get(slot) or {}
         name = (trainer.get("name") or "").strip()
         if not name:
             continue
+        current_names.add(name)
         phone = (trainer.get("phone") or "").strip()
         email = (trainer.get("email") or "").strip()
-        # Match by name+phone within same tenant
         query = {"tenant_id": tid, "name": name}
         if phone:
             query["phone"] = phone
@@ -1076,6 +1228,15 @@ async def _sync_team_people(tid: str, team_id: str, team_doc: dict):
                 "phone": phone, "email": email, "team_ids": [team_id],
                 "debt": 0.0, "auto_created_from_team": True, "created_at": now_iso(),
             })
+
+    # Remove team_id from people who were trainers but are no longer in the team
+    former_trainers = db.people.find({
+        "tenant_id": tid, "team_ids": team_id, "auto_created_from_team": True,
+        "name": {"$nin": list(current_names)} if current_names else {"$exists": True}
+    })
+    async for p in former_trainers:
+        new_team_ids = [t for t in (p.get("team_ids") or []) if t != team_id]
+        await db.people.update_one({"id": p["id"]}, {"$set": {"team_ids": new_team_ids}})
 
 
 @api.post("/teams")
@@ -1435,11 +1596,77 @@ async def list_stock_counts(request: Request, user=Depends(require_perm("stock_a
 @api.post("/stock-counts")
 async def start_stock_count(data: StockCountIn, request: Request, user=Depends(require_perm("stock_audit", "write"))):
     tid = await require_feature(request, user, "stock_audit")
+    # Pre-populate lines for all items, sorted by location then name
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(10000)
+
+    def _sort_key(it):
+        return ((it.get("location") or "").lower(), (it.get("name") or "").lower())
+
+    items.sort(key=_sort_key)
+
+    lines = []
+    for it in items:
+        if (it.get("is_clothing") or it.get("is_ball")) and it.get("sizes"):
+            # One line per size, sorted by size's own location then size label
+            sizes = sorted(it["sizes"], key=lambda s: ((s.get("location") or it.get("location") or "").lower(), str(s.get("size") or "")))
+            for s in sizes:
+                lines.append({
+                    "line_id": new_id(), "item_id": it["id"], "item_name": it.get("name", ""),
+                    "size": s.get("size"),
+                    "location": s.get("location") or it.get("location") or "",
+                    "system_quantity": s.get("quantity", 0),
+                    "counted_quantity": None,
+                    "diff": 0, "adjusted": False, "counted_at": None,
+                })
+        else:
+            lines.append({
+                "line_id": new_id(), "item_id": it["id"], "item_name": it.get("name", ""),
+                "size": None,
+                "location": it.get("location") or "",
+                "system_quantity": it.get("total_stock", 0),
+                "counted_quantity": None,
+                "diff": 0, "adjusted": False, "counted_at": None,
+            })
+
     doc = {"id": new_id(), "tenant_id": tid,
            "name": data.name or f"Varetelling {datetime.now().strftime('%Y-%m-%d')}",
-           "status": "open", "created_at": now_iso(), "lines": []}
+           "status": "open", "created_at": now_iso(), "lines": lines}
     await db.stock_counts.insert_one(doc)
     return _clean(doc)
+
+
+@api.put("/stock-counts/{count_id}/lines/{line_id}")
+async def update_count_line(count_id: str, line_id: str, data: StockCountLineIn, request: Request, user=Depends(require_perm("stock_audit", "write"))):
+    tid = await require_feature(request, user, "stock_audit")
+    sc = await db.stock_counts.find_one({"id": count_id, "tenant_id": tid})
+    if not sc:
+        raise HTTPException(404, "Varetelling ikke funnet")
+    for ln in sc.get("lines", []):
+        if ln.get("line_id") == line_id:
+            ln["counted_quantity"] = int(data.counted_quantity)
+            ln["diff"] = int(data.counted_quantity) - int(ln.get("system_quantity") or 0)
+            ln["counted_at"] = now_iso()
+            await db.stock_counts.update_one({"id": count_id, "tenant_id": tid}, {"$set": {"lines": sc["lines"]}})
+            return ln
+    raise HTTPException(404, "Linje ikke funnet")
+
+
+@api.delete("/stock-counts/{count_id}/lines/{line_id}")
+async def delete_count_line(count_id: str, line_id: str, request: Request, user=Depends(require_perm("stock_audit", "write"))):
+    tid = await require_feature(request, user, "stock_audit")
+    sc = await db.stock_counts.find_one({"id": count_id, "tenant_id": tid})
+    if not sc:
+        raise HTTPException(404, "Varetelling ikke funnet")
+    new_lines = [ln for ln in sc.get("lines", []) if ln.get("line_id") != line_id]
+    await db.stock_counts.update_one({"id": count_id, "tenant_id": tid}, {"$set": {"lines": new_lines}})
+    return {"ok": True}
+
+
+@api.delete("/stock-counts/{count_id}")
+async def delete_stock_count(count_id: str, request: Request, user=Depends(require_perm("stock_audit", "admin"))):
+    tid = await require_feature(request, user, "stock_audit")
+    await db.stock_counts.delete_one({"id": count_id, "tenant_id": tid})
+    return {"ok": True}
 
 
 @api.post("/stock-counts/{count_id}/lines")
@@ -1450,11 +1677,13 @@ async def add_count_line(count_id: str, data: StockCountLineIn, request: Request
         raise HTTPException(404, "Vare ikke funnet")
     if (item.get("is_clothing") or item.get("is_ball")) and data.size:
         system = next((s.get("quantity", 0) for s in item.get("sizes", []) if s["size"] == data.size), 0)
+        loc = next((s.get("location") or item.get("location", "") for s in item.get("sizes", []) if s["size"] == data.size), item.get("location", ""))
     else:
         system = item.get("total_stock", 0)
+        loc = item.get("location", "")
     line = {"line_id": new_id(), "item_id": data.item_id, "item_name": item.get("name", ""),
-            "size": data.size, "system_quantity": system, "counted_quantity": data.counted_quantity,
-            "diff": data.counted_quantity - system, "adjusted": False}
+            "size": data.size, "location": loc, "system_quantity": system, "counted_quantity": data.counted_quantity,
+            "diff": data.counted_quantity - system, "adjusted": False, "counted_at": now_iso()}
     await db.stock_counts.update_one({"id": count_id, "tenant_id": tid}, {"$push": {"lines": line}})
     return line
 
@@ -1466,6 +1695,8 @@ async def apply_stock_count(count_id: str, request: Request, user=Depends(requir
     if not sc:
         raise HTTPException(404, "Varetelling ikke funnet")
     for line in sc.get("lines", []):
+        if line.get("counted_quantity") is None:
+            continue  # skip uncounted lines
         item = await db.items.find_one({"id": line["item_id"], "tenant_id": tid})
         if not item:
             continue
