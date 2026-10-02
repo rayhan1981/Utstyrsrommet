@@ -1,36 +1,63 @@
 # UTSTYRSROMMET - Product Requirements Document
 
 ## Original Problem
-Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer på mobil og PC. Håndterer klubber, lag, personer, utstyr, utlån/retur, varetelling, Excel-eksport, brukeradministrasjon med rettigheter og invitasjonsepost. App heter «UTSTYRSROMMET».
+Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer på mobil og PC. Håndterer klubber, lag, personer, utstyr, utlån/retur, varetelling, Excel-eksport, brukeradministrasjon med rettigheter og invitasjonsepost. Multi-tenant SaaS med Stripe-betaling, 3 pakker (Basic/Pro/Deluxe) og plattformeier-impersonering. App heter «UTSTYRSROMMET».
 
 ## Architecture
-- Backend: FastAPI + Motor (MongoDB), JWT auth (12h cookie + Bearer), Resend-integrasjon for invitasjon
+- Backend: FastAPI + Motor (MongoDB), JWT auth (12h cookie + Bearer), Resend-integrasjon
 - Frontend: React 19 + React Router + shadcn/ui + Tailwind, Sonner for toasts
-- Auth: Custom JWT, super admin seeded (raymond.d.hansen@gmail.com), ikke-slettbar
+- Multi-tenancy: `tenant_id` på alle data, platform_owner kan impersonere via `imp_cid`-cookie
+- Stripe Billing: Checkout (mnd/år), add-on seats, 50%→10% kupong på årsabonnement, webhooks
 
 ## Users
-- Super Admin: raymond.d.hansen@gmail.com (opprettet, kan ikke slettes)
-- Admin brukere: full tilgang til alle moduler
+- Platform Owner: raymond.d.hansen@gmail.com (kan ikke slettes, kundenr 000001, eget workspace)
+- Admin per kunde: full tilgang
 - Standard brukere: individuelle rettigheter per modul (none/read/write/admin)
 
-## Implemented (Feb 2026)
-- JWT auth med super-admin seeding, invitasjonsepost via Resend, sett-passord-flyt
-- Rettighetsmatrise per modul (dashboard, teams, people, inventory, loans, stock_audit, users, settings)
-- Lag med lagsnavn-meny, aldersklasse, treningstider (7), kontaktperson, nøkkelansvarlig, hovedtrener/lagleder/trener 1-5
-- Personregister med lagstilknytning, personlig & lags skyldig beløp, utlånshistorikk
-- Utstyr med hovedgruppe/undergruppe, klær med størrelser + draktnummer (default X)
-- Utlån og utlevering med automatisk debt-oppdatering på lag og person, modus toggle, pris on/off ved utlevering
-- Retur med automatisk nullstilling av skyldig beløp + lageroppdatering
-- Varetelling: start, legge til linjer, anvende for å oppdatere systembeholdning
-- Excel-eksport: beholdning + per-lag historikk (xlsx)
-- Klubbinnstillinger med logo-opplasting (data URL, max 2MB)
-- Dashboard med statistikk, lagerverdi, skyldig beløp, lav beholdning, siste aktivitet
-- Responsivt design, grønt sports-tema, Outfit + Plus Jakarta Sans
+## Plans
+- `free`: KUN manuell tildeling av plattformeier – skjult fra /api/plans og signup
+- `basic` 399/mnd: 3 lag, 1 admin
+- `pro` 599/mnd: 10 lag, 3 ekstra brukere, varetelling, Excel-eksport
+- `deluxe` 999/mnd: ubegrenset lag, 5 ekstra brukere + 199,-/mnd pr ekstra, Excel-import, logo
+
+## Implemented
+### Feb 2026
+- JWT auth, invitasjons-epost via Resend, sett-passord-flyt, Terms of Service-akseptasjon
+- Rettighetsmatrise per modul, admin-seeding ikke-slettbar
+- Lag (hovedtrener/lagleder/trener 1-5), Personer (auto-opprettet fra trenerroller)
+- Varer med klær (størrelser + draktnr) og baller (predefinerte størrelser), lokasjon pr str
+- Utlån/utlevering med skyldig beløp (person-utlån → kun person, lag-utlån → kun lag)
+- Retur med automatisk nullstilling + lageroppdatering
+- Varetelling, Excel-eksport (beholdning + per-lag), Excel-import m/mal
+- Stripe Checkout, 14-dagers gratis prøve, mnd/år med 50% første år, add-on seats
+- Plattformeier søk/impersonering via /app/kunder
+- Universell DataTable (søk, sort, filter) på alle lister
+
+### Okt 2026 (denne økten)
+- **Plattformeier kundeadministrasjon** (/app/kunder → «Administrer»): 3-fane modal
+  - Konto & Pakke: endre e-post, navn, telefon, pakke (inkl. «Gratis»), ekstra seter, manuell pris
+  - Brukere: slett brukere hos kunden
+  - Data & Sletting: tellere + soft-delete (12-mnd purge) + gjenopprett
+  - Deaktiver/aktiver: blokkerer innlogging for alle brukere i tenant (Stripe røres ikke)
+  - Plan→«Gratis» kan samtidig kansellere Stripe-abonnement (toggle)
+- **Varetelling-forbedringer**:
+  - Oppstart forhåndsutfyller ALLE varer, sortert på lokasjon → varenavn → størrelse
+  - Hver linje har dato/tid-stempel (`counted_at`) når tall registreres
+  - Inline-input + auto-lagring (blur/Enter), diff beregnes live
+  - Slett enkeltlinjer; slett hele varetelling
+  - `apply` hopper over utalte linjer (counted_quantity=null)
+- **Lån ut-knapp per person-rad**: ett-klikks utlånsdialog forhåndsutfylt med person + hennes lag
+- **Trenerfjerning-sync**: når trener fjernes fra lag → team_id fjernes fra personens team_ids, person beholdes
+- **Grupperings-visning**: «Grupper etter»-dropdown på DataTable (personer kan grupperes på lag med collapsible headere)
+- **`free` plan skjult**: ikke i /api/plans og signup; kun plattformeier kan sette det via PATCH
 
 ## Backlog (P1/P2)
-- Flere klubber: multi-tenant-filtrering per klubb på data
-- Avansert søk/filter i tabeller + paginering
-- Grafisk statistikk (Recharts) på dashboard
-- Historisk logg over endringer per bruker (audit trail)
-- Push-varsel ved innlevering forfalt
-- QR-kode skanning for raskere utlån
+- P1: Excel Import for Teams og People
+- P1: Automatisk fakturakvittering via Resend ved Stripe-betaling
+- P1: CTA-oppgraderingsbanner når kunde når pakkegrenser
+- P2: 14-dagers angrerett for privatkunder i Terms
+- P2: Global shortcut-søk (Ctrl/Cmd+K)
+- P2: Aktivitetslogg for plattformeier (hvem impersonerte hvem)
+- P2: Background purge-task for kunder med `purge_at < now`
+- P3: QR-kode skanning for raskt utlån
+- Refactor: splitt /app/backend/server.py (1778 linjer) i moduler
