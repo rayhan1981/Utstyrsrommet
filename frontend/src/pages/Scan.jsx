@@ -50,13 +50,27 @@ export default function Scan() {
     setScanning(false);
   };
 
-  const handleScan = async (itemId) => {
+  const handleScan = async (decoded) => {
     await stop();
     try {
+      // QR kan være 'item_id' eller 'item_id#size'
+      let itemId = decoded;
+      let scannedSize = "";
+      if (decoded && decoded.includes("#")) {
+        const parts = decoded.split("#", 2);
+        itemId = parts[0]; scannedSize = parts[1] || "";
+      }
       const { data } = await api.get(`/items/${itemId}`);
       setItem(data);
-      setForm((f) => ({ ...f, size: "", jersey_number: "" }));
-      toast.success(`Fant: ${data.name}`);
+      // Forhåndsutfyll størrelse hvis skannet
+      if (scannedSize && (data.is_clothing || data.is_ball)) {
+        const s = (data.sizes || []).find((x) => x.size === scannedSize);
+        setForm((f) => ({ ...f, size: scannedSize, jersey_number: s?.jersey_number || (data.is_ball ? "" : "X") }));
+        toast.success(`Fant: ${data.name} - ${scannedSize}`);
+      } else {
+        setForm((f) => ({ ...f, size: "", jersey_number: "" }));
+        toast.success(`Fant: ${data.name}`);
+      }
     } catch (e) {
       toast.error("Ukjent QR-kode - vare ikke funnet");
     }

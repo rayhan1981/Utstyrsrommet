@@ -351,6 +351,7 @@ class SizeStock(BaseModel):
     jersey_number: str = "X"
     quantity: int = 0
     location: str = ""
+    has_qr: bool = False
 
 
 class ItemIn(BaseModel):
@@ -388,6 +389,10 @@ class ReturnIn(BaseModel):
 
 class ExtendDueDateIn(BaseModel):
     due_in_days: int = 7  # 7 | 14 | 30
+
+
+class GenerateQrIn(BaseModel):
+    sizes: Optional[List[str]] = None  # Hvis None: alle. Hvis tom liste: ingen. Ellers kun valgte.
 
 
 class ClubIn(BaseModel):
@@ -1443,20 +1448,101 @@ async def create_item(data: ItemIn, request: Request, user=Depends(require_perm(
     doc = _prep_item_doc(data.dict())
     # Auto-mark has_qr for new items on Deluxe plan
     plan = await get_tenant_plan(tid)
-    if plan.get("qr_codes") or user.get("role") == "platform_owner":
-        doc["has_qr"] = True
+    is_deluxe = bool(plan.get("qr_codes")) or user.get("role") == "platform_owner"
+    if is_deluxe:
+        if doc.get("is_clothing") or doc.get("is_ball"):
+            for s in doc.get("sizes", []):
+                s["has_qr"] = True
+            doc["has_qr"] = True  # samle-flag: all sizes har QR
+        else:
+            doc["has_qr"] = True
     doc.update({"id": new_id(), "tenant_id": tid, "created_at": now_iso()})
     await db.items.insert_one(doc)
     return _clean(doc)
 
 
 @api.post("/items/{item_id}/generate-qr")
-async def generate_item_qr(item_id: str, request: Request, user=Depends(require_perm("inventory", "write"))):
+async def generate_item_qr(item_id: str, data: GenerateQrIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_feature(request, user, "qr_codes")
-    res = await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"has_qr": True}})
-    if res.matched_count == 0:
+    item = await db.items.find_one({"id": item_id, "tenant_id": tid})
+    if not item:
         raise HTTPException(404, "Vare ikke funnet")
-    return await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
+    if item.get("is_clothing") or item.get("is_ball"):
+        sizes = item.get("sizes", [])
+        chosen = set(data.sizes) if data.sizes is not None else {s["size"] for s in sizes}
+        for s in sizes:
+            if s["size"] in chosen:
+                s["has_qr"] = True
+        item["sizes"] = sizes
+        item["has_qr"] = any(s.get("has_qr") for s in sizes)
+        await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"sizes": sizes, "has_qr": item["has_qr"]}})
+    else:
+        await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"has_qr": True}})
+        item["has_qr"] = True
+    return _clean(item)
+
+
+def _build_qr_png_b64(payload: str, logo_img=None) -> str:
+    """Lager QR-PNG med valgfri logo-overlay og returnerer base64 data-URL."""
+    import qrcode, base64 as _b64
+    from qrcode.constants import ERROR_CORRECT_H
+    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_H, border=1, box_size=10)
+    qr.add_data(payload)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGBA")
+    if logo_img is not None:
+        from PIL import Image
+        qw, qh = qr_img.size
+        lw = int(qw * 0.22); lh = int(qh * 0.22)
+        resized = logo_img.resize((lw, lh), Image.LANCZOS)
+        pad = int(lw * 0.12)
+        bg = Image.new("RGBA", (lw + pad * 2, lh + pad * 2), (255, 255, 255, 255))
+        bg.paste(resized, (pad, pad), resized)
+        qr_img.paste(bg, ((qw - bg.size[0]) // 2, (qh - bg.size[1]) // 2), bg)
+    buf = io.BytesIO()
+    qr_img.save(buf, format="PNG")
+    return "data:image/png;base64," + _b64.b64encode(buf.getvalue()).decode()
+
+
+async def _load_club_logo(tid: str):
+    try:
+        from PIL import Image
+        import base64 as _b64
+        club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1})
+        url = (club or {}).get("logo_url") or ""
+        if url.startswith("data:image"):
+            logo_bytes = _b64.b64decode(url.split(",", 1)[1])
+            return Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
+    except Exception as e:
+        logger.warning(f"Logo-load feilet: {e}")
+    return None
+
+
+@api.get("/items/{item_id}/qr-images")
+async def get_item_qr_images(item_id: str, request: Request, user=Depends(require_perm("inventory", "read"))):
+    """Returnerer alle genererte QR-koder for en vare som data-URLs for Vis QR-dialog."""
+    tid = await require_feature(request, user, "qr_codes")
+    item = await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "Vare ikke funnet")
+    logo = await _load_club_logo(tid)
+    out = []
+    if item.get("is_clothing") or item.get("is_ball"):
+        for s in item.get("sizes", []):
+            if s.get("has_qr"):
+                payload = f"{item['id']}#{s['size']}"
+                out.append({
+                    "label": f"{item['name']} - {s['size']}",
+                    "size": s["size"],
+                    "payload": payload,
+                    "data_url": _build_qr_png_b64(payload, logo),
+                })
+    elif item.get("has_qr"):
+        out.append({
+            "label": item["name"], "size": None, "payload": item["id"],
+            "data_url": _build_qr_png_b64(item["id"], logo),
+        })
+    return {"item": {"id": item["id"], "name": item["name"]}, "qr_codes": out}
 
 
 @api.put("/items/{item_id}")
@@ -1927,22 +2013,20 @@ async def inventory_qr_labels(
     elif scope == "sub_group" and value:
         q["sub_group"] = value
     items = await db.items.find(q, {"_id": 0}).sort([("main_group", 1), ("sub_group", 1), ("name", 1)]).to_list(5000)
-    if not items:
+    # Expand: ett label pr aktiv størrelse (sized), eller én label (sizeless)
+    labels: List[Dict[str, Any]] = []
+    for it in items:
+        if it.get("is_clothing") or it.get("is_ball"):
+            for s in it.get("sizes", []):
+                if s.get("has_qr"):
+                    labels.append({"payload": f"{it['id']}#{s['size']}",
+                                   "name": f"{it['name']} ({s['size']})"})
+        elif it.get("has_qr"):
+            labels.append({"payload": it["id"], "name": it["name"]})
+    if not labels:
         raise HTTPException(404, "Ingen varer med QR-kode funnet for valgt filter")
 
-    # Load club logo (if any) for center overlay
-    club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1})
-    logo_img = None
-    try:
-        from PIL import Image
-        logo_url = (club or {}).get("logo_url") or ""
-        if logo_url.startswith("data:image"):
-            import base64 as _b64
-            logo_bytes = _b64.b64decode(logo_url.split(",", 1)[1])
-            logo_img = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
-    except Exception as e:
-        logger.warning(f"Logo-overlay feilet: {e}")
-        logo_img = None
+    logo_img = await _load_club_logo(tid)
 
     import qrcode
     from qrcode.constants import ERROR_CORRECT_H
@@ -1960,7 +2044,7 @@ async def inventory_qr_labels(
     cfg = size_cfg.get(size, size_cfg["medium"])
     qr_mm = cfg["qr_mm"]
     label_mm = cfg["label_mm"]
-    cell_w = qr_mm + 6   # some horiz spacing
+    cell_w = qr_mm + 6
     cell_h = qr_mm + label_mm + 4
 
     buf = io.BytesIO()
@@ -1973,26 +2057,22 @@ async def inventory_qr_labels(
     rows = max(1, int(usable_h // cell_h))
     per_page = cols * rows
 
-    for i, it in enumerate(items):
+    for i, lab in enumerate(labels):
         page_idx_on_page = i % per_page
         col = page_idx_on_page % cols
         row = page_idx_on_page // cols
-        # top-left of cell (in points)
         x_mm = margin_mm + col * cell_w
         y_mm = (page_h / mm) - margin_mm - row * cell_h - cell_h
 
-        # Build QR with high EC + optional logo overlay
         qr = qrcode.QRCode(error_correction=ERROR_CORRECT_H, border=1, box_size=10)
-        qr.add_data(it["id"])
+        qr.add_data(lab["payload"])
         qr.make(fit=True)
         qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGBA")
         if logo_img is not None:
+            from PIL import Image
             qw, qh = qr_img.size
-            # logo at ~20% of QR size
-            lw = int(qw * 0.22)
-            lh = int(qh * 0.22)
+            lw = int(qw * 0.22); lh = int(qh * 0.22)
             logo_resized = logo_img.resize((lw, lh), Image.LANCZOS)
-            # White padding behind logo
             pad = int(lw * 0.12)
             bg = Image.new("RGBA", (lw + pad * 2, lh + pad * 2), (255, 255, 255, 255))
             bg.paste(logo_resized, (pad, pad), logo_resized)
@@ -2001,10 +2081,10 @@ async def inventory_qr_labels(
         img_buf = io.BytesIO(); qr_img.save(img_buf, format="PNG"); img_buf.seek(0)
         c.drawImage(ImageReader(img_buf), x_mm * mm, (y_mm + label_mm) * mm, qr_mm * mm, qr_mm * mm)
         c.setFont("Helvetica-Bold", cfg["font"])
-        text = (it.get("name", "") or "")[:30]
+        text = (lab["name"] or "")[:40]
         c.drawCentredString((x_mm + qr_mm / 2) * mm, (y_mm + label_mm / 2 - 1) * mm, text)
 
-        if (i + 1) % per_page == 0 and (i + 1) < len(items):
+        if (i + 1) % per_page == 0 and (i + 1) < len(labels):
             c.showPage()
     c.save()
     buf.seek(0)
@@ -2015,10 +2095,20 @@ async def inventory_qr_labels(
 @api.get("/inventory/qr-filters")
 async def inventory_qr_filters(request: Request, user=Depends(require_perm("inventory", "read"))):
     tid = await require_feature(request, user, "qr_codes")
-    items = await db.items.find({"tenant_id": tid, "has_qr": True}, {"_id": 0, "id": 1, "name": 1, "main_group": 1, "sub_group": 1}).to_list(5000)
+    items = await db.items.find({"tenant_id": tid, "has_qr": True}, {"_id": 0}).to_list(5000)
     main_groups = sorted({(i.get("main_group") or "").strip() for i in items if (i.get("main_group") or "").strip()})
     sub_groups = sorted({(i.get("sub_group") or "").strip() for i in items if (i.get("sub_group") or "").strip()})
-    return {"items": items, "main_groups": main_groups, "sub_groups": sub_groups, "total": len(items)}
+    # Count aktive QR-labels (per-size for sized, ellers 1 pr vare)
+    total = 0
+    for it in items:
+        if it.get("is_clothing") or it.get("is_ball"):
+            total += sum(1 for s in it.get("sizes", []) if s.get("has_qr"))
+        else:
+            total += 1
+    return {
+        "items": [{"id": i["id"], "name": i["name"], "main_group": i.get("main_group"), "sub_group": i.get("sub_group")} for i in items],
+        "main_groups": main_groups, "sub_groups": sub_groups, "total": total,
+    }
 
 
 # ---------------- Dashboard ----------------

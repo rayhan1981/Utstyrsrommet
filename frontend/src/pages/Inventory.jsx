@@ -8,11 +8,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet, QrCode } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet, QrCode, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
 import QrExportDialog from "@/components/QrExportDialog";
+import GenerateQrDialog from "@/components/GenerateQrDialog";
+import ViewQrDialog from "@/components/ViewQrDialog";
 
 const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [] };
 
@@ -22,6 +24,8 @@ export default function Inventory() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [genFor, setGenFor] = useState(null);
+  const [viewFor, setViewFor] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
@@ -73,12 +77,12 @@ export default function Inventory() {
       });
   };
 
-  const generateQr = async (item) => {
-    try {
-      await api.post(`/items/${item.id}/generate-qr`);
-      toast.success(`QR-kode generert for ${item.name}`);
-      load();
-    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  const generateQr = (item) => setGenFor(item);
+  const viewQr = (item) => setViewFor(item);
+
+  const anyQr = (i) => {
+    if (i.is_clothing || i.is_ball) return (i.sizes || []).some((s) => s.has_qr);
+    return !!i.has_qr;
   };
 
   const downloadTemplate = () => {
@@ -167,9 +171,16 @@ export default function Inventory() {
           actions={(i) => (
             <>
               {hasFeature("qr_codes") && hasPerm("inventory", "write") && (
-                i.has_qr
-                  ? <span className="inline-flex items-center text-emerald-700 text-xs font-semibold mr-1" title="QR-kode generert"><QrCode className="h-4 w-4" /></span>
-                  : <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}><QrCode className="h-3 w-3 mr-1" />Generer QR</Button>
+                <>
+                  <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}>
+                    <QrCode className="h-3 w-3 mr-1" />Generer QR
+                  </Button>
+                  {anyQr(i) && (
+                    <Button variant="ghost" size="icon" onClick={() => viewQr(i)} title="Vis QR-koder" data-testid={`view-qr-${i.id}`}>
+                      <Eye className="h-4 w-4 text-emerald-700" />
+                    </Button>
+                  )}
+                </>
               )}
               {hasPerm("inventory", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(i)}><Pencil className="h-4 w-4" /></Button>}
               {hasPerm("inventory", "admin") && <Button variant="ghost" size="icon" onClick={() => del(i.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
@@ -271,6 +282,8 @@ export default function Inventory() {
         </DialogContent>
       </Dialog>
       <QrExportDialog open={qrOpen} onOpenChange={setQrOpen} />
+      <GenerateQrDialog open={!!genFor} onOpenChange={(o) => !o && setGenFor(null)} item={genFor} onDone={load} />
+      <ViewQrDialog open={!!viewFor} onOpenChange={(o) => !o && setViewFor(null)} item={viewFor} />
     </div>
   );
 }
