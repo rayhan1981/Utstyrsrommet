@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 7 - Per-size QR codes. Backend: 10/10 pytest cases pass covering auto has_qr-per-size on create, partial sizes=[M,L] generation, null-sizes=all, sizeless ignore sizes, qr-images response shape (payload=id#size, data_url data:image/png;base64,...), sizeless single entry, qr-filters.total per-size counting, qr-labels PDF 200, basic plan 403 on both qr endpoints, tenant isolation. Frontend: Login via /innlogging works, /app/utstyr renders inventory-page with gen-qr-{id} on every row (7 found) and view-qr-{id} on rows with active QR (4 found). GenerateQrDialog opens with gen-qr-all + gen-qr-size-{S/164/...} checkboxes for sized items and gen-qr-submit works end-to-end (row refreshed, view-qr count went 4->5). ViewQrDialog renders view-qr-grid with 2 PNG base64 images (data:image/png;base64, length 18986) + print-qr-btn. Sidebar Skann QR link + /app/skann start-scan-btn present.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7.py",
+    "/app/test_reports/pytest/iteration7.xml"
+  ],
+  "action_items": [
+    "Previous suggestion still open: split server.py (~2324 lines) into routers (qr, invoices, notifications).",
+    "qr-labels still synchronously renders all PNGs - consider background job for large tenants.",
+    "Login route is /innlogging but previous test reports documented /logg-inn. Confirm canonical route and update any seed docs/credentials file if needed (purely informational, auth works)."
+  ],
+  "critical_code_review_comments": [
+    "generate_item_qr uses set(data.sizes) when provided - good; when sizes is None it defaults to ALL sizes (expected). Behavior for empty list [] = 'no sizes selected' = no-op (silently sets has_qr=any() = still True if any had it). Verify this matches UI expectation (not tested but logically consistent).",
+    "qr-filters endpoint still returns full item list (up to 5000) to compute totals and groups - prefer $facet/$group aggregation.",
+    "Item PUT does not re-apply auto has_qr=True on size add (only create does). If an admin adds a new size to an existing clothing item on deluxe, that size won't auto-get has_qr - user must click Generer QR again. Likely intentional but worth confirming with product.",
+    "qr-images uses _build_qr_png_b64 and _load_club_logo once per call; good. For items with 10+ sizes this is still O(N) sync CPU work in request handler - OK for current scale."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all testids + end-to-end sized generation + view-qr-grid images verified)"},
+  "test_credentials": "raymond.d.hansen@gmail.com / Snowboard1! (platform_owner, deluxe tenant 000001). Login route is /innlogging.",
+  "seed_data_creation": "test_iteration7.py provisions TEST_It7_* basic tenant and upgrades a copy to deluxe via /owner/customers/{id} PATCH. Clothing items TEST_Drakt_* and sizeless TEST_Kjegle_* created for individual tests. Soft-deleted on module teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Per-size QR fully working. SizeStock has has_qr field, GenerateQrIn accepts optional sizes list (None=all). qr-images returns {item, qr_codes:[{label,size,payload,data_url}]} with payload = id for sizeless, id#size for sized. qr-filters.total counts per-size entries + sizeless. qr-labels PDF emits one label per active size. Frontend testids: gen-qr-{id}, view-qr-{id}, gen-qr-all, gen-qr-size-{S/M/L/jerseynr}, gen-qr-submit, view-qr-grid, print-qr-btn. Login URL = /innlogging.",
+  "rca of the issue": "No bugs found this iteration."
+}

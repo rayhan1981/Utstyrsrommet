@@ -4,62 +4,54 @@
 Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer på mobil og PC. Multi-tenant SaaS med Stripe-betaling, 3 pakker (Basic/Pro/Deluxe), plattformeier-impersonering, QR-skanning, varsler og faktura-generering. App heter «UTSTYRSROMMET».
 
 ## Architecture
-- Backend: FastAPI + Motor (MongoDB), JWT (12h cookie + Bearer), Resend, reportlab (PDF), qrcode + PIL (QR gen + logo overlay)
-- Frontend: React 19 + React Router + shadcn/ui + Tailwind, Sonner, html5-qrcode (mobil kamera-skanning)
-- Multi-tenancy: `tenant_id` på alle data, platform_owner kan impersonere via `imp_cid`-cookie
-- Stripe Billing: Checkout (mnd/år), add-on seats, 50% kupong første år, webhooks
+- Backend: FastAPI + Motor (MongoDB), JWT, Resend/Emergent email, reportlab (PDF), qrcode + PIL (QR + logo overlay)
+- Frontend: React 19 + shadcn/ui + Tailwind, Sonner, html5-qrcode
+- Multi-tenancy: `tenant_id` på alle data, platform_owner kan impersonere
+- Stripe Billing: Checkout, add-on seats, 50% kupong første år, webhooks
 
 ## Users
-- Platform Owner: raymond.d.hansen@gmail.com (ikke slettbar, kundenr 000001, eget deluxe-workspace)
+- Platform Owner: raymond.d.hansen@gmail.com (ikke slettbar, deluxe-workspace)
 - Admin per kunde: full tilgang
-- Standard brukere: individuelle rettigheter per modul (none/read/write/admin)
+- Standard brukere: rettigheter per modul (none/read/write/admin)
 
 ## Plans
-- `free`: KUN manuell tildeling av plattformeier – skjult fra /api/plans og signup
+- `free`: KUN manuell tildeling av plattformeier – skjult fra /plans og signup
 - `basic` 399/mnd / `pro` 599/mnd / `deluxe` 999/mnd
-- **QR-koder og QR-skanning er Deluxe-eksklusivt**
+- **QR-koder og QR-skanning: Deluxe-eksklusivt**
 
 ## Implemented
 ### Feb 2026
-- JWT auth, invitasjons-epost via Resend, Terms of Service
-- Rettighetsmatrise per modul, admin-seeding ikke-slettbar
-- Lag/Personer/Varer/Utlån/Retur/Varetelling/Excel-eksport+import
-- Stripe Checkout + add-on seats + plattformeier impersonering
-- Universell DataTable (søk, sort, filter)
+- JWT auth, Resend invitasjon, ToS, rettighetsmatrise, lag/personer/varer/utlån/varetelling, Excel inn/ut, Stripe, universell DataTable
 
-### Okt 2026 – Kundeadmin + varetelling
+### Okt 2026
 - Plattformeier kundeadmin (3-fane modal, soft-delete m/ 12-mnd purge)
-- Varetelling forhåndsutfylt + inline-input + dato/tid pr linje
+- Varetelling forhåndsutfylt m/ dato pr linje
 - Grupperings-visning på DataTable
-- Loan-target styring (Person vs Lag)
-- Hurtig Lån ut-knapp på Personer og Lag
-- Lag-detaljvisning med personer + historikk
+- Loan-target (Person/Lag), hurtig Lån ut, Lag-detalj
 - Trenerfjerning fjerner team_id fra personens team_ids
-- Brukeradministrasjon: online/offline + siste pålogging + login-historikk
+- Brukere: online/offline, siste pålogging, login-historikk
+- Varsler: forfallsdato (7/14/30), bjelle m/teller, påtrengende popup m/ Forleng frist
+- Faktura: valgbare linjer, PDF, email, bank/KID
 
-### Okt 2026 – Varsler + Faktura
-- Forfallsdato (7/14/30 dager) på utlån, bjelle-ikon m/teller
-- Påtrengende popup for forfalte utlån m/ «Forleng frist»
-- Faktura-generering: valgbare linjer, PDF (reportlab), send via email
-- Klubbinnstillinger: bankkontonr + KID-prefix
+### Okt 2026 – QR-koder (Deluxe)
+- `qr_codes` feature på deluxe. Basic/pro: 403. «Skann QR» nav + /app/skann gated.
+- **Per-størrelse QR**: SizeStock.has_qr. For klær/ball får hver størrelse sin egen unike QR-kode (payload `item_id#size`). Scanner parser format og forhåndsutfyller str.
+- **Generer QR-dialog**: for sized-varer kommer dialog med «Alle»-checkbox + str-sjekkbokser; velg hvilke str du vil generere. Sizeless-varer: direkte generering.
+- **Vis QR-dialog**: øye-ikon vises når varen har ≥1 aktiv QR. Åpner grid med alle genererte QR-bilder (base64 data-URL) + «Skriv ut»-knapp (åpner printbar HTML).
+- **Auto-QR ved opprettelse**: nye varer på Deluxe får has_qr=true (sizeless: item-level, sized: hver str + aggregert item-level).
+- **QR-eksport-dialog**: scope (alle/vare/hovedgruppe/undergruppe) + størrelse (2/6/10 cm). PDF genereres med én etikett pr aktiv størrelse (ikke én pr vare). Klubblogo bakes i QR-senter med PIL.
+- Endpoints: `POST /items/{id}/generate-qr {sizes?}`, `GET /items/{id}/qr-images`, `GET /inventory/qr-filters`, `GET /inventory/qr-labels?scope&value&size`
 
-### Okt 2026 – QR-koder (Deluxe) [denne økten]
-- **Deluxe-eksklusivt**: `qr_codes: true` i deluxe-plan, 403 for basic/pro, nav + routes gated
-- **Auto-QR ved opprettelse**: nye varer får `has_qr=true` på Deluxe
-- **Generer QR per vare**: knapp per rad for eksisterende varer (deluxe + inventory:write). Grønt QR-ikon når aktiv.
-- **QR-eksport-dialog**: scope (alle/vare/hovedgruppe/undergruppe) + størrelse (small 2cm/medium 6cm/large 10cm)
-- **Logo-overlay i QR-senter**: klubblogo pastes automatisk i senter m/ error correction H, varenavn alltid under
-- Endpoints: `POST /items/{id}/generate-qr`, `GET /inventory/qr-filters`, `GET /inventory/qr-labels?scope&value&size`
-
-## Backlog (P1/P2)
+## Backlog
 - P1: Excel Import for Teams og People
 - P1: Automatisk fakturakvittering ved Stripe-betaling
-- P1: CTA-oppgraderingsbanner når kunde når pakkegrenser (inkl. QR-tilgang)
+- P1: CTA-oppgraderingsbanner (gir Deluxe-oppfordring når basic/pro-bruker treffer QR-vegg)
 - P1: E-postpåminnelse 3 dager før utlåns-forfall
-- P2: KID-nummer med MOD10/MOD11 kontrollsiffer
-- P2: Faktura-PDF til GridFS (nå base64 i doc)
-- P2: QR-labels bakgrunnsjobb for store beholdninger (nå sync)
-- P2: TTL-index på `login_history`
+- P1: Bulk-generer QR for alle eksisterende varer uten `has_qr`
+- P2: KID med MOD10/MOD11 kontrollsiffer
+- P2: Faktura-PDF til GridFS
+- P2: QR-labels bakgrunnsjobb for store beholdninger
+- P2: TTL-index på login_history
 - P2: Background purge-task for `purge_at < now`
 - P2: Global hurtigsøk Ctrl+K
-- Refactor: splitt /app/backend/server.py (~2234 linjer) i routers (invoices, notifications, loans, qr)
+- Refactor: splitt /app/backend/server.py i routers
