@@ -2,10 +2,11 @@ import React, { useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Users as UsersIcon, UserCircle, Package, ArrowLeftRight,
-  ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2,
+  ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2, QrCode,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
+import NotificationCenter from "@/components/NotificationCenter";
 
 const BASE_NAV = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard, module: "dashboard", feature: null },
@@ -13,6 +14,7 @@ const BASE_NAV = [
   { to: "/app/personer", label: "Personer", icon: UserCircle, module: "people", feature: null },
   { to: "/app/utstyr", label: "Utstyr", icon: Package, module: "inventory", feature: null },
   { to: "/app/utlan", label: "Utlån & Retur", icon: ArrowLeftRight, module: "loans", feature: null },
+  { to: "/app/skann", label: "Skann QR", icon: QrCode, module: "loans", feature: null },
   { to: "/app/varetelling", label: "Varetelling", icon: ClipboardCheck, module: "stock_audit", feature: "stock_audit" },
   { to: "/app/brukere", label: "Brukere", icon: ShieldCheck, module: "users", adminOnly: true, feature: null },
   { to: "/app/innstillinger", label: "Innstillinger", icon: Settings, module: "settings", feature: "settings" },
@@ -105,6 +107,9 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 min-w-0">
+        <div className="h-12 border-b border-slate-200 bg-white flex items-center justify-end px-4">
+          <NotificationCenter />
+        </div>
         {impersonating && (
           <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between text-sm">
             <div className="flex items-center gap-2"><Eye className="h-4 w-4" /><span><strong>Imitasjonsmodus:</strong> Du jobber som <strong>{customer?.club_name}</strong> ({customer?.customer_number})</span></div>

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
@@ -61,6 +61,16 @@ export default function Inventory() {
       });
   };
 
+  const downloadQrLabels = () => {
+    const token = localStorage.getItem("utr_token");
+    fetch(`${BASE}/api/inventory/qr-labels`, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => r.blob())
+      .then((b) => {
+        const u = URL.createObjectURL(b);
+        const a = document.createElement("a"); a.href = u; a.download = "qr-etiketter.pdf"; a.click(); URL.revokeObjectURL(u);
+      });
+  };
+
   const downloadTemplate = () => {
     const token = localStorage.getItem("utr_token");
     fetch(`${BASE}/api/items/import/template`, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} })
@@ -105,6 +115,7 @@ export default function Inventory() {
             </label>
           )}
           <Button variant="outline" onClick={exportInv} data-testid="export-inventory-btn"><Download className="h-4 w-4 mr-2" />Eksporter Excel</Button>
+          <Button variant="outline" onClick={downloadQrLabels} data-testid="qr-labels-btn"><QrCode className="h-4 w-4 mr-2" />QR-etiketter</Button>
           {hasPerm("inventory", "write") && <Button onClick={openNew} data-testid="new-item-btn" className="bg-emerald-900 hover:bg-emerald-800"><Plus className="h-4 w-4 mr-2" />Nytt utstyr</Button>}
         </div>
       </div>

@@ -14,16 +14,20 @@ export default function Settings() {
   const [clubs, setClubs] = useState([]);
   const [newName, setNewName] = useState("");
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: "", org_number: "" });
+  const [form, setForm] = useState({ name: "", org_number: "", bank_account: "", kid_prefix: "" });
 
   const load = () => api.get("/clubs").then((r) => setClubs(r.data));
   useEffect(() => { load(); }, []);
 
-  const openEdit = (c) => { setEditing(c); setForm({ name: c.name, org_number: c.org_number || "" }); };
+  const openEdit = (c) => { setEditing(c); setForm({ name: c.name, org_number: c.org_number || "", bank_account: c.bank_account || "", kid_prefix: c.kid_prefix || "" }); };
 
   const saveEdit = async () => {
     try {
-      await api.put(`/clubs/${editing.id}`, { name: form.name, org_number: form.org_number, logo_url: editing.logo_url || "" });
+      await api.put(`/clubs/${editing.id}`, {
+        name: form.name, org_number: form.org_number,
+        bank_account: form.bank_account, kid_prefix: form.kid_prefix,
+        logo_url: editing.logo_url || "",
+      });
       toast.success("Klubb oppdatert"); setEditing(null); load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
@@ -104,6 +108,8 @@ export default function Settings() {
           <div className="space-y-3">
             <div><Label>Klubbnavn</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="edit-club-name" /></div>
             <div><Label>Organisasjonsnummer</Label><Input value={form.org_number} onChange={(e) => setForm({ ...form, org_number: e.target.value })} data-testid="edit-club-org" /></div>
+            <div><Label>Bankkontonummer (brukes på faktura)</Label><Input value={form.bank_account} onChange={(e) => setForm({ ...form, bank_account: e.target.value })} placeholder="1234.56.78901" data-testid="edit-club-bank" /></div>
+            <div><Label>KID-prefix (valgfritt)</Label><Input value={form.kid_prefix} onChange={(e) => setForm({ ...form, kid_prefix: e.target.value })} data-testid="edit-club-kid" /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>Avbryt</Button>

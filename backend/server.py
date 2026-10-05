@@ -255,6 +255,23 @@ async def send_invitation_email(to: str, name: str, token: str):
         return None
 
 
+async def _send_email_with_attachment(to: str, subject: str, body_text: str, filename: str, pdf_b64: str):
+    """Send email via Emergent-managed email service with PDF attachment."""
+    if not EMAIL_KEY:
+        raise RuntimeError("E-posttjeneste ikke konfigurert")
+    html = f'<pre style="font-family:Arial,sans-serif;font-size:14px;white-space:pre-wrap">{body_text}</pre>'
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                         headers={"X-Email-Key": EMAIL_KEY},
+                         json={
+                             "to": [to], "subject": subject, "html": html,
+                             "from_name": EMAIL_FROM_NAME,
+                             "attachments": [{"filename": filename, "content": pdf_b64, "type": "application/pdf"}],
+                         })
+    r.raise_for_status()
+    return r.json().get("id")
+
+
 # ---------------- Models ----------------
 class LoginIn(BaseModel):
     email: EmailStr
@@ -357,6 +374,7 @@ class LoanIn(BaseModel):
     person_id: Optional[str] = None
     mode: str = "loan"  # 'loan' or 'handout'
     loan_target: Optional[str] = None  # 'team' | 'person' - overstyrer hvem gjelden havner på
+    due_in_days: int = 30  # 7 | 14 | 30
     charge_price: bool = True
     notes: Optional[str] = ""
 
@@ -366,10 +384,34 @@ class ReturnIn(BaseModel):
     received_by_person_id: Optional[str] = None
 
 
+class ExtendDueDateIn(BaseModel):
+    due_in_days: int = 7  # 7 | 14 | 30
+
+
 class ClubIn(BaseModel):
     name: str
     org_number: str = ""
     logo_url: str = ""
+    bank_account: str = ""
+    kid_prefix: str = ""
+
+
+class InvoiceLineIn(BaseModel):
+    loan_id: str
+    amount: float
+    description: str
+
+
+class InvoiceIn(BaseModel):
+    person_id: Optional[str] = None
+    team_id: Optional[str] = None
+    loan_ids: List[str]
+    due_in_days: int = 14
+    notes: str = ""
+
+
+class InvoiceSendIn(BaseModel):
+    email: Optional[EmailStr] = None
 
 
 class StockCountIn(BaseModel):
@@ -1567,6 +1609,9 @@ async def create_loan(data: LoanIn, request: Request, user=Depends(require_perm(
         "loan_target": data.loan_target or ("team" if (data.team_id and not data.person_id) else "person" if data.person_id else None),
         "unit_price": price, "amount_owed": charge, "status": "borrowed",
         "loan_date": now_iso(), "picked_up_by": data.person_id,
+        "due_in_days": int(data.due_in_days),
+        "due_date": (datetime.now(timezone.utc) + timedelta(days=int(data.due_in_days))).isoformat(),
+        "overdue_dismissed_at": None,
         "return_date": None, "received_by_person_id": None, "notes": data.notes,
     }
     await db.loans.insert_one(loan_doc)
@@ -1619,6 +1664,270 @@ async def return_loan(loan_id: str, data: ReturnIn, request: Request, user=Depen
                              "received_by_person_id": data.received_by_person_id, "amount_owed": 0})
         await db.loans.insert_one(returned_doc)
         return {"ok": True, "status": "partial", "amount_owed": new_owed}
+
+
+@api.post("/loans/{loan_id}/extend")
+async def extend_loan_due_date(loan_id: str, data: ExtendDueDateIn, request: Request, user=Depends(require_perm("loans", "write"))):
+    tid = await require_tenant(request, user)
+    loan = await db.loans.find_one({"id": loan_id, "tenant_id": tid})
+    if not loan:
+        raise HTTPException(404, "Utlån ikke funnet")
+    days = int(data.due_in_days)
+    if days not in (7, 14, 30):
+        raise HTTPException(400, "Forfallsdato må være 7, 14 eller 30 dager")
+    new_due = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    await db.loans.update_one({"id": loan_id, "tenant_id": tid}, {"$set": {
+        "due_in_days": days, "due_date": new_due, "overdue_dismissed_at": None,
+    }, "$push": {"due_date_history": {"extended_at": now_iso(), "new_due_date": new_due, "by": user["id"]}}})
+    return {"ok": True, "due_date": new_due}
+
+
+@api.get("/notifications")
+async def list_notifications(request: Request, user=Depends(get_current_user)):
+    tid = await resolve_tenant_id(request, user)
+    if not tid:
+        return {"overdue": [], "unseen_count": 0}
+    now_dt = datetime.now(timezone.utc).isoformat()
+    overdue = await db.loans.find({
+        "tenant_id": tid, "status": "borrowed", "due_date": {"$lt": now_dt},
+    }, {"_id": 0}).sort("due_date", 1).to_list(500)
+    # last dismissal time pr user+loan
+    unseen = []
+    for ln in overdue:
+        dis = ln.get("overdue_dismissed_at")
+        if not dis or dis < ln.get("due_date", ""):
+            unseen.append(ln)
+    return {"overdue": overdue, "unseen": unseen, "unseen_count": len(unseen)}
+
+
+@api.post("/notifications/dismiss")
+async def dismiss_notifications(request: Request, user=Depends(get_current_user)):
+    tid = await resolve_tenant_id(request, user)
+    now_dt = datetime.now(timezone.utc).isoformat()
+    await db.loans.update_many({"tenant_id": tid, "status": "borrowed", "due_date": {"$lt": now_dt}},
+                               {"$set": {"overdue_dismissed_at": now_iso()}})
+    return {"ok": True}
+
+
+# ---------------- Invoices ----------------
+@api.get("/invoices")
+async def list_invoices(request: Request, user=Depends(require_perm("loans", "read"))):
+    tid = await require_tenant(request, user)
+    return await db.invoices.find({"tenant_id": tid}, {"_id": 0, "pdf_data": 0}).sort("created_at", -1).to_list(500)
+
+
+async def _next_invoice_number(tid: str) -> str:
+    count = await db.invoices.count_documents({"tenant_id": tid})
+    return f"{datetime.now().year}{count + 1:04d}"
+
+
+def _build_invoice_pdf(invoice: dict, club: Optional[dict], recipient: dict) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    y = h - 20 * mm
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(20 * mm, y, "FAKTURA")
+    c.setFont("Helvetica", 9)
+    c.drawRightString(w - 20 * mm, y, f"Fakturanr: {invoice['invoice_number']}")
+    y -= 6 * mm
+    c.drawRightString(w - 20 * mm, y, f"Dato: {datetime.fromisoformat(invoice['created_at']).strftime('%d.%m.%Y')}")
+    y -= 5 * mm
+    c.drawRightString(w - 20 * mm, y, f"Forfall: {datetime.fromisoformat(invoice['due_date']).strftime('%d.%m.%Y')}")
+
+    # Issuer (club)
+    y_i = h - 20 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(20 * mm, y_i - 10 * mm, (club or {}).get("name", "Klubb"))
+    c.setFont("Helvetica", 9)
+    y_i -= 15 * mm
+    if club and club.get("org_number"):
+        c.drawString(20 * mm, y_i, f"Org.nr: {club['org_number']}")
+        y_i -= 4 * mm
+    if club and club.get("bank_account"):
+        c.drawString(20 * mm, y_i, f"Konto: {club['bank_account']}")
+
+    # Recipient
+    y -= 15 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(20 * mm, y, "Til:")
+    c.setFont("Helvetica", 10)
+    y -= 5 * mm
+    c.drawString(20 * mm, y, recipient.get("name", ""))
+    if recipient.get("email"):
+        y -= 4 * mm
+        c.drawString(20 * mm, y, recipient["email"])
+
+    # Table
+    y -= 12 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(20 * mm, y, "Beskrivelse")
+    c.drawRightString(w - 20 * mm, y, "Beløp (NOK)")
+    y -= 2 * mm
+    c.line(20 * mm, y, w - 20 * mm, y)
+    y -= 5 * mm
+    c.setFont("Helvetica", 10)
+    for line in invoice["lines"]:
+        c.drawString(20 * mm, y, line["description"][:80])
+        c.drawRightString(w - 20 * mm, y, f"{line['amount']:,.2f}".replace(",", " "))
+        y -= 5 * mm
+        if y < 40 * mm:
+            c.showPage(); y = h - 20 * mm
+    y -= 3 * mm
+    c.line(20 * mm, y, w - 20 * mm, y)
+    y -= 6 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(20 * mm, y, "Totalt å betale")
+    c.drawRightString(w - 20 * mm, y, f"NOK {invoice['total']:,.2f}".replace(",", " "))
+
+    if invoice.get("kid"):
+        y -= 10 * mm
+        c.setFont("Helvetica", 9)
+        c.drawString(20 * mm, y, f"KID: {invoice['kid']}")
+    if invoice.get("notes"):
+        y -= 8 * mm
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(20 * mm, y, f"Notat: {invoice['notes'][:120]}")
+    c.save()
+    return buf.getvalue()
+
+
+@api.post("/invoices")
+async def create_invoice(data: InvoiceIn, request: Request, user=Depends(require_perm("loans", "write"))):
+    tid = await require_tenant(request, user)
+    if not data.loan_ids:
+        raise HTTPException(400, "Ingen linjer valgt")
+    loans = await db.loans.find({"id": {"$in": data.loan_ids}, "tenant_id": tid}, {"_id": 0}).to_list(1000)
+    if not loans:
+        raise HTTPException(404, "Fant ingen utlån")
+
+    lines = []
+    total = 0.0
+    for l in loans:
+        amt = float(l.get("amount_owed") or 0)
+        if amt <= 0:
+            continue
+        desc = f"{l.get('item_name','')}"
+        if l.get("size"):
+            desc += f" ({l['size']})"
+        desc += f" x {l.get('quantity', 1)} - utlånt {datetime.fromisoformat(l['loan_date']).strftime('%d.%m.%Y')}"
+        lines.append({"loan_id": l["id"], "amount": round(amt, 2), "description": desc})
+        total += amt
+
+    if not lines:
+        raise HTTPException(400, "Alle valgte linjer har 0 i skyldig beløp")
+
+    # Resolve recipient
+    recipient = {"name": "", "email": None}
+    if data.person_id:
+        p = await db.people.find_one({"id": data.person_id, "tenant_id": tid})
+        if p:
+            recipient = {"name": p.get("name", ""), "email": p.get("email")}
+    elif data.team_id:
+        t = await db.teams.find_one({"id": data.team_id, "tenant_id": tid})
+        if t:
+            recipient = {"name": t.get("team_name", ""), "email": t.get("email")}
+
+    cust = await db.customers.find_one({"id": tid}, {"_id": 0})
+    club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0})
+
+    inv_number = await _next_invoice_number(tid)
+    kid = f"{(cust or {}).get('customer_number', '0')}{inv_number}"
+    due_date = (datetime.now(timezone.utc) + timedelta(days=int(data.due_in_days))).isoformat()
+    invoice = {
+        "id": new_id(), "tenant_id": tid,
+        "invoice_number": inv_number, "kid": kid,
+        "person_id": data.person_id, "team_id": data.team_id,
+        "recipient_name": recipient["name"], "recipient_email": recipient["email"],
+        "lines": lines, "total": round(total, 2),
+        "created_at": now_iso(), "due_date": due_date,
+        "status": "unpaid", "notes": data.notes,
+        "sent_at": None, "paid_at": None,
+    }
+    pdf_bytes = _build_invoice_pdf(invoice, club, recipient)
+    # Store PDF as base64 for retrieval
+    import base64
+    invoice["pdf_data"] = base64.b64encode(pdf_bytes).decode()
+    await db.invoices.insert_one(invoice)
+    inv_out = {k: v for k, v in invoice.items() if k not in ("_id", "pdf_data")}
+    return inv_out
+
+
+@api.get("/invoices/{invoice_id}/pdf")
+async def get_invoice_pdf(invoice_id: str, request: Request, user=Depends(require_perm("loans", "read"))):
+    tid = await require_tenant(request, user)
+    inv = await db.invoices.find_one({"id": invoice_id, "tenant_id": tid})
+    if not inv:
+        raise HTTPException(404, "Faktura ikke funnet")
+    import base64
+    pdf_bytes = base64.b64decode(inv["pdf_data"])
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="faktura-{inv["invoice_number"]}.pdf"'})
+
+
+@api.post("/invoices/{invoice_id}/send")
+async def send_invoice_email(invoice_id: str, data: InvoiceSendIn, request: Request, user=Depends(require_perm("loans", "write"))):
+    tid = await require_tenant(request, user)
+    inv = await db.invoices.find_one({"id": invoice_id, "tenant_id": tid})
+    if not inv:
+        raise HTTPException(404, "Faktura ikke funnet")
+    to_email = data.email or inv.get("recipient_email")
+    if not to_email:
+        raise HTTPException(400, "Mangler mottakers e-postadresse")
+    import base64
+    pdf_b64 = inv["pdf_data"]
+    try:
+        await _send_email_with_attachment(
+            to_email,
+            f"Faktura {inv['invoice_number']} - NOK {inv['total']:.2f}",
+            f"Hei {inv.get('recipient_name', '')},\n\nVedlagt følger faktura nr {inv['invoice_number']} på NOK {inv['total']:.2f}.\nForfall: {datetime.fromisoformat(inv['due_date']).strftime('%d.%m.%Y')}\nKID: {inv.get('kid', '')}\n\nMvh,\nUTSTYRSROMMET",
+            f"faktura-{inv['invoice_number']}.pdf", pdf_b64,
+        )
+    except Exception as e:
+        logger.error(f"Faktura-sending feilet: {e}")
+        raise HTTPException(500, f"Kunne ikke sende faktura: {e}")
+    await db.invoices.update_one({"id": invoice_id, "tenant_id": tid}, {"$set": {"sent_at": now_iso(), "status": "sent"}})
+    return {"ok": True}
+
+
+# ---------------- QR Labels ----------------
+@api.get("/inventory/qr-labels")
+async def inventory_qr_labels(request: Request, user=Depends(require_perm("inventory", "read"))):
+    tid = await require_tenant(request, user)
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).sort("name", 1).to_list(1000)
+    import qrcode
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.lib.utils import ImageReader
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    cols, rows = 3, 7
+    cw, ch = w / cols, (h - 20 * mm) / rows
+    i = 0
+    for it in items:
+        col = i % cols
+        row = (i // cols) % rows
+        x = col * cw + 5 * mm
+        y = h - 10 * mm - (row + 1) * ch
+        img = qrcode.make(it["id"])
+        img_buf = io.BytesIO(); img.save(img_buf, format="PNG"); img_buf.seek(0)
+        c.drawImage(ImageReader(img_buf), x, y + 10 * mm, 40 * mm, 40 * mm)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x, y + 7 * mm, (it.get("name", "")[:28]))
+        c.setFont("Helvetica", 7)
+        c.drawString(x, y + 3 * mm, f"Lokasjon: {it.get('location', '-')}")
+        i += 1
+        if i % (cols * rows) == 0 and i < len(items):
+            c.showPage()
+    c.save()
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": 'attachment; filename="qr-etiketter.pdf"'})
 
 
 # ---------------- Dashboard ----------------

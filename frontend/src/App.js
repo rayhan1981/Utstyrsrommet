@@ -19,6 +19,7 @@ import Settings from "@/pages/Settings";
 import Subscription from "@/pages/Subscription";
 import SubscriptionSuccess from "@/pages/SubscriptionSuccess";
 import OwnerPanel from "@/pages/OwnerPanel";
+import Scan from "@/pages/Scan";
 import Terms from "@/pages/Terms";
 import { Toaster } from "sonner";
 
@@ -44,6 +45,7 @@ function App() {
             <Route path="innstillinger" element={<ProtectedRoute module="settings" feature="settings"><Settings /></ProtectedRoute>} />
             <Route path="abonnement" element={<Subscription />} />
             <Route path="kunder" element={<ProtectedRoute ownerOnly><OwnerPanel /></ProtectedRoute>} />
+            <Route path="skann" element={<ProtectedRoute module="loans"><Scan /></ProtectedRoute>} />
           </Route>
           <Route path="/eier" element={<Navigate to="/app/kunder" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />

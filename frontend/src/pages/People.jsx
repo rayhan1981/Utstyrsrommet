@@ -7,10 +7,11 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Pencil, Trash2, Plus, Eye, HandCoins } from "lucide-react";
+import { Pencil, Trash2, Plus, Eye, HandCoins, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
+import InvoiceDialog from "@/components/InvoiceDialog";
 
 export default function People() {
   const { hasPerm } = useAuth();
@@ -23,6 +24,7 @@ export default function People() {
   const [detail, setDetail] = useState(null);
   const [loanFor, setLoanFor] = useState(null);
   const [loanForm, setLoanForm] = useState({ item_id: "", quantity: 1, team_id: "none", size: "", jersey_number: "", notes: "" });
+  const [invoiceFor, setInvoiceFor] = useState(null);
 
   const load = async () => {
     const [p, t, i] = await Promise.all([api.get("/people"), api.get("/teams"), api.get("/items")]);
@@ -160,7 +162,14 @@ export default function People() {
       <Dialog open={!!detail} onOpenChange={() => setDetail(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{detail?.person?.name}</DialogTitle>
+            <DialogTitle className="flex items-center justify-between gap-2">
+              <span>{detail?.person?.name}</span>
+              {detail?.person?.debt > 0 && (
+                <Button size="sm" variant="outline" onClick={() => setInvoiceFor({ id: detail.person.id, name: detail.person.name })} data-testid="person-invoice-btn">
+                  <FileText className="h-3 w-3 mr-1" />Lag faktura
+                </Button>
+              )}
+            </DialogTitle>
             <DialogDescription>Personlig oversikt, lag og utlånshistorikk</DialogDescription>
           </DialogHeader>
           {detail && (
@@ -267,6 +276,12 @@ export default function People() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <InvoiceDialog
+        open={!!invoiceFor}
+        onOpenChange={(o) => !o && setInvoiceFor(null)}
+        personId={invoiceFor?.id}
+        recipientName={invoiceFor?.name}
+      />
     </div>
   );
 }

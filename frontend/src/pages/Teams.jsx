@@ -7,10 +7,11 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Pencil, Trash2, Plus, Download, Eye, HandCoins } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, Eye, HandCoins, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
+import InvoiceDialog from "@/components/InvoiceDialog";
 
 const EMPTY_TRAINER = { name: "", email: "", phone: "", years_engaged: "" };
 const EMPTY_TEAM = {
@@ -50,6 +51,7 @@ export default function Teams() {
   const [detail, setDetail] = useState(null);
   const [loanFor, setLoanFor] = useState(null);
   const [loanForm, setLoanForm] = useState({ item_id: "", quantity: 1, size: "", jersey_number: "", notes: "" });
+  const [invoiceFor, setInvoiceFor] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
@@ -245,7 +247,14 @@ export default function Teams() {
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{detail?.team?.team_name} {detail?.team?.age_class && `(${detail.team.age_class})`}</DialogTitle>
+            <DialogTitle className="flex items-center justify-between gap-2">
+              <span>{detail?.team?.team_name} {detail?.team?.age_class && `(${detail.team.age_class})`}</span>
+              {detail?.team?.debt > 0 && (
+                <Button size="sm" variant="outline" onClick={() => setInvoiceFor({ id: detail.team.id, name: detail.team.team_name })} data-testid="team-invoice-btn">
+                  <FileText className="h-3 w-3 mr-1" />Lag faktura
+                </Button>
+              )}
+            </DialogTitle>
             <DialogDescription>
               Skyldig beløp: <span className={detail?.team?.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(detail?.team?.debt)}</span>
             </DialogDescription>
@@ -332,6 +341,13 @@ export default function Teams() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <InvoiceDialog
+        open={!!invoiceFor}
+        onOpenChange={(o) => !o && setInvoiceFor(null)}
+        teamId={invoiceFor?.id}
+        recipientName={invoiceFor?.name}
+      />
     </div>
   );
 }

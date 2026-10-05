@@ -28,7 +28,7 @@ export default function Loans() {
   const [form, setForm] = useState({
     mode: "loan", charge_price: true, item_id: "", quantity: 1,
     team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "",
-    loan_target: "person",
+    loan_target: "person", due_in_days: 30,
   });
 
   const load = async () => {
@@ -53,7 +53,7 @@ export default function Loans() {
       };
       await api.post("/loans", payload);
       toast.success(form.mode === "loan" ? "Utlån registrert" : "Utlevering registrert");
-      setOpen(false); setForm({ mode: "loan", charge_price: true, item_id: "", quantity: 1, team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "", loan_target: "person" });
+      setOpen(false); setForm({ mode: "loan", charge_price: true, item_id: "", quantity: 1, team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "", loan_target: "person", due_in_days: 30 });
       load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
@@ -82,6 +82,15 @@ export default function Loans() {
     { key: "mode", label: "Type", filter: "select",
       options: [{value:"loan",label:"Utlån"},{value:"handout",label:"Utlevert"}],
       render: (l) => l.mode === "handout" ? "Utlevert" : "Utlånt" },
+    { key: "loan_target", label: "Belastes", filter: "select",
+      options: [{value:"person",label:"Person"},{value:"team",label:"Lag"}],
+      render: (l) => l.loan_target === "team" ? <span className="text-xs">Lag</span> : <span className="text-xs">Person</span> },
+    { key: "due_date", label: "Forfall", filter: "text", render: (l) => {
+        if (!l.due_date) return "-";
+        const d = new Date(l.due_date);
+        const overdue = l.status === "borrowed" && d < new Date();
+        return <span className={overdue ? "text-red-700 font-semibold" : ""}>{d.toLocaleDateString("nb-NO")}</span>;
+    } },
     { key: "amount_owed", label: "Skyldig", filter: "number", render: (l) => <span className={l.amount_owed > 0 ? "text-red-700 font-semibold" : ""}>{nok(l.amount_owed)}</span> },
   ];
 
@@ -192,7 +201,16 @@ export default function Loans() {
               </div>
             )}
 
-            <div><Label>Antall</Label><Input type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} data-testid="loan-qty-input" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Antall</Label><Input type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} data-testid="loan-qty-input" /></div>
+              <div>
+                <Label>Forfallsfrist</Label>
+                <Select value={String(form.due_in_days)} onValueChange={(v) => setForm({ ...form, due_in_days: parseInt(v) })}>
+                  <SelectTrigger data-testid="loan-due-select"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="7">7 dager</SelectItem><SelectItem value="14">14 dager</SelectItem><SelectItem value="30">30 dager</SelectItem></SelectContent>
+                </Select>
+              </div>
+            </div>
 
             <div>
               <Label>Lag</Label>
