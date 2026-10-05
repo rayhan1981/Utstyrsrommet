@@ -13,9 +13,6 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
 import QrExportDialog from "@/components/QrExportDialog";
-import { toast } from "sonner";
-import { useAuth } from "@/context/AuthContext";
-import DataTable from "@/components/DataTable";
 
 const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [] };
 
@@ -25,7 +22,6 @@ export default function Inventory() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
-  const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
