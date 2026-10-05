@@ -45,7 +45,7 @@ function App() {
             <Route path="innstillinger" element={<ProtectedRoute module="settings" feature="settings"><Settings /></ProtectedRoute>} />
             <Route path="abonnement" element={<Subscription />} />
             <Route path="kunder" element={<ProtectedRoute ownerOnly><OwnerPanel /></ProtectedRoute>} />
-            <Route path="skann" element={<ProtectedRoute module="loans"><Scan /></ProtectedRoute>} />
+            <Route path="skann" element={<ProtectedRoute module="loans" feature="qr_codes"><Scan /></ProtectedRoute>} />
           </Route>
           <Route path="/eier" element={<Navigate to="/app/kunder" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />

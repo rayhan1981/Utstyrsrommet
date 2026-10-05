@@ -14,7 +14,7 @@ const BASE_NAV = [
   { to: "/app/personer", label: "Personer", icon: UserCircle, module: "people", feature: null },
   { to: "/app/utstyr", label: "Utstyr", icon: Package, module: "inventory", feature: null },
   { to: "/app/utlan", label: "Utlån & Retur", icon: ArrowLeftRight, module: "loans", feature: null },
-  { to: "/app/skann", label: "Skann QR", icon: QrCode, module: "loans", feature: null },
+  { to: "/app/skann", label: "Skann QR", icon: QrCode, module: "loans", feature: "qr_codes" },
   { to: "/app/varetelling", label: "Varetelling", icon: ClipboardCheck, module: "stock_audit", feature: "stock_audit" },
   { to: "/app/brukere", label: "Brukere", icon: ShieldCheck, module: "users", adminOnly: true, feature: null },
   { to: "/app/innstillinger", label: "Innstillinger", icon: Settings, module: "settings", feature: "settings" },

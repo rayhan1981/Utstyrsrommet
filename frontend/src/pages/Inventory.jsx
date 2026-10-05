@@ -12,13 +12,19 @@ import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet, QrC
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
+import QrExportDialog from "@/components/QrExportDialog";
+import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
+import DataTable from "@/components/DataTable";
 
 const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [] };
 
 export default function Inventory() {
-  const { hasPerm } = useAuth();
+  const { hasPerm, hasFeature } = useAuth();
   const [items, setItems] = useState([]);
   const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
@@ -71,6 +77,14 @@ export default function Inventory() {
       });
   };
 
+  const generateQr = async (item) => {
+    try {
+      await api.post(`/items/${item.id}/generate-qr`);
+      toast.success(`QR-kode generert for ${item.name}`);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   const downloadTemplate = () => {
     const token = localStorage.getItem("utr_token");
     fetch(`${BASE}/api/items/import/template`, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} })
@@ -115,7 +129,9 @@ export default function Inventory() {
             </label>
           )}
           <Button variant="outline" onClick={exportInv} data-testid="export-inventory-btn"><Download className="h-4 w-4 mr-2" />Eksporter Excel</Button>
-          <Button variant="outline" onClick={downloadQrLabels} data-testid="qr-labels-btn"><QrCode className="h-4 w-4 mr-2" />QR-etiketter</Button>
+          {hasFeature("qr_codes") && (
+            <Button variant="outline" onClick={() => setQrOpen(true)} data-testid="qr-labels-btn"><QrCode className="h-4 w-4 mr-2" />Eksporter QR</Button>
+          )}
           {hasPerm("inventory", "write") && <Button onClick={openNew} data-testid="new-item-btn" className="bg-emerald-900 hover:bg-emerald-800"><Plus className="h-4 w-4 mr-2" />Nytt utstyr</Button>}
         </div>
       </div>
@@ -154,6 +170,11 @@ export default function Inventory() {
           ]}
           actions={(i) => (
             <>
+              {hasFeature("qr_codes") && hasPerm("inventory", "write") && (
+                i.has_qr
+                  ? <span className="inline-flex items-center text-emerald-700 text-xs font-semibold mr-1" title="QR-kode generert"><QrCode className="h-4 w-4" /></span>
+                  : <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}><QrCode className="h-3 w-3 mr-1" />Generer QR</Button>
+              )}
               {hasPerm("inventory", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(i)}><Pencil className="h-4 w-4" /></Button>}
               {hasPerm("inventory", "admin") && <Button variant="ghost" size="icon" onClick={() => del(i.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
             </>
@@ -253,6 +274,7 @@ export default function Inventory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <QrExportDialog open={qrOpen} onOpenChange={setQrOpen} />
     </div>
   );
 }

@@ -77,7 +77,8 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "max_teams": None, "max_users": 5,
         "stock_audit": True, "excel_export": True, "excel_import": True,
         "logo_upload": True, "settings": True, "allow_user_addon": True,
-        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "Prioritert support"],
+        "qr_codes": True,
+        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "QR-koder for utstyr", "Prioritert support"],
     },
 }
 
@@ -363,6 +364,7 @@ class ItemIn(BaseModel):
     is_clothing: bool = False
     is_ball: bool = False
     sizes: List[SizeStock] = Field(default_factory=list)
+    has_qr: bool = False
 
 
 class LoanIn(BaseModel):
@@ -1439,9 +1441,22 @@ async def list_items(request: Request, user=Depends(require_perm("inventory", "r
 async def create_item(data: ItemIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_tenant(request, user)
     doc = _prep_item_doc(data.dict())
+    # Auto-mark has_qr for new items on Deluxe plan
+    plan = await get_tenant_plan(tid)
+    if plan.get("qr_codes") or user.get("role") == "platform_owner":
+        doc["has_qr"] = True
     doc.update({"id": new_id(), "tenant_id": tid, "created_at": now_iso()})
     await db.items.insert_one(doc)
     return _clean(doc)
+
+
+@api.post("/items/{item_id}/generate-qr")
+async def generate_item_qr(item_id: str, request: Request, user=Depends(require_perm("inventory", "write"))):
+    tid = await require_feature(request, user, "qr_codes")
+    res = await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"has_qr": True}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Vare ikke funnet")
+    return await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
 
 
 @api.put("/items/{item_id}")
@@ -1895,39 +1910,115 @@ async def send_invoice_email(invoice_id: str, data: InvoiceSendIn, request: Requ
 
 # ---------------- QR Labels ----------------
 @api.get("/inventory/qr-labels")
-async def inventory_qr_labels(request: Request, user=Depends(require_perm("inventory", "read"))):
-    tid = await require_tenant(request, user)
-    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).sort("name", 1).to_list(1000)
+async def inventory_qr_labels(
+    request: Request,
+    scope: str = "all",      # 'all' | 'item' | 'main_group' | 'sub_group'
+    value: str = "",         # when scope != 'all'
+    size: str = "medium",    # 'small' (2cm) | 'medium' (6cm) | 'large' (10cm)
+    user=Depends(require_perm("inventory", "read"))
+):
+    tid = await require_feature(request, user, "qr_codes")
+    # Build filter: only items that have QR enabled
+    q: Dict[str, Any] = {"tenant_id": tid, "has_qr": True}
+    if scope == "item" and value:
+        q["id"] = value
+    elif scope == "main_group" and value:
+        q["main_group"] = value
+    elif scope == "sub_group" and value:
+        q["sub_group"] = value
+    items = await db.items.find(q, {"_id": 0}).sort([("main_group", 1), ("sub_group", 1), ("name", 1)]).to_list(5000)
+    if not items:
+        raise HTTPException(404, "Ingen varer med QR-kode funnet for valgt filter")
+
+    # Load club logo (if any) for center overlay
+    club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1})
+    logo_img = None
+    try:
+        from PIL import Image
+        logo_url = (club or {}).get("logo_url") or ""
+        if logo_url.startswith("data:image"):
+            import base64 as _b64
+            logo_bytes = _b64.b64decode(logo_url.split(",", 1)[1])
+            logo_img = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
+    except Exception as e:
+        logger.warning(f"Logo-overlay feilet: {e}")
+        logo_img = None
+
     import qrcode
+    from qrcode.constants import ERROR_CORRECT_H
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas as pdf_canvas
     from reportlab.lib.utils import ImageReader
+
+    # Grid config per size
+    size_cfg = {
+        "small":  {"qr_mm": 20, "label_mm": 6, "font": 7},
+        "medium": {"qr_mm": 60, "label_mm": 12, "font": 11},
+        "large":  {"qr_mm": 100, "label_mm": 16, "font": 14},
+    }
+    cfg = size_cfg.get(size, size_cfg["medium"])
+    qr_mm = cfg["qr_mm"]
+    label_mm = cfg["label_mm"]
+    cell_w = qr_mm + 6   # some horiz spacing
+    cell_h = qr_mm + label_mm + 4
+
     buf = io.BytesIO()
     c = pdf_canvas.Canvas(buf, pagesize=A4)
-    w, h = A4
-    cols, rows = 3, 7
-    cw, ch = w / cols, (h - 20 * mm) / rows
-    i = 0
-    for it in items:
-        col = i % cols
-        row = (i // cols) % rows
-        x = col * cw + 5 * mm
-        y = h - 10 * mm - (row + 1) * ch
-        img = qrcode.make(it["id"])
-        img_buf = io.BytesIO(); img.save(img_buf, format="PNG"); img_buf.seek(0)
-        c.drawImage(ImageReader(img_buf), x, y + 10 * mm, 40 * mm, 40 * mm)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x, y + 7 * mm, (it.get("name", "")[:28]))
-        c.setFont("Helvetica", 7)
-        c.drawString(x, y + 3 * mm, f"Lokasjon: {it.get('location', '-')}")
-        i += 1
-        if i % (cols * rows) == 0 and i < len(items):
+    page_w, page_h = A4
+    margin_mm = 10
+    usable_w = (page_w / mm) - 2 * margin_mm
+    usable_h = (page_h / mm) - 2 * margin_mm
+    cols = max(1, int(usable_w // cell_w))
+    rows = max(1, int(usable_h // cell_h))
+    per_page = cols * rows
+
+    for i, it in enumerate(items):
+        page_idx_on_page = i % per_page
+        col = page_idx_on_page % cols
+        row = page_idx_on_page // cols
+        # top-left of cell (in points)
+        x_mm = margin_mm + col * cell_w
+        y_mm = (page_h / mm) - margin_mm - row * cell_h - cell_h
+
+        # Build QR with high EC + optional logo overlay
+        qr = qrcode.QRCode(error_correction=ERROR_CORRECT_H, border=1, box_size=10)
+        qr.add_data(it["id"])
+        qr.make(fit=True)
+        qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGBA")
+        if logo_img is not None:
+            qw, qh = qr_img.size
+            # logo at ~20% of QR size
+            lw = int(qw * 0.22)
+            lh = int(qh * 0.22)
+            logo_resized = logo_img.resize((lw, lh), Image.LANCZOS)
+            # White padding behind logo
+            pad = int(lw * 0.12)
+            bg = Image.new("RGBA", (lw + pad * 2, lh + pad * 2), (255, 255, 255, 255))
+            bg.paste(logo_resized, (pad, pad), logo_resized)
+            qr_img.paste(bg, ((qw - bg.size[0]) // 2, (qh - bg.size[1]) // 2), bg)
+
+        img_buf = io.BytesIO(); qr_img.save(img_buf, format="PNG"); img_buf.seek(0)
+        c.drawImage(ImageReader(img_buf), x_mm * mm, (y_mm + label_mm) * mm, qr_mm * mm, qr_mm * mm)
+        c.setFont("Helvetica-Bold", cfg["font"])
+        text = (it.get("name", "") or "")[:30]
+        c.drawCentredString((x_mm + qr_mm / 2) * mm, (y_mm + label_mm / 2 - 1) * mm, text)
+
+        if (i + 1) % per_page == 0 and (i + 1) < len(items):
             c.showPage()
     c.save()
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="qr-etiketter.pdf"'})
+
+
+@api.get("/inventory/qr-filters")
+async def inventory_qr_filters(request: Request, user=Depends(require_perm("inventory", "read"))):
+    tid = await require_feature(request, user, "qr_codes")
+    items = await db.items.find({"tenant_id": tid, "has_qr": True}, {"_id": 0, "id": 1, "name": 1, "main_group": 1, "sub_group": 1}).to_list(5000)
+    main_groups = sorted({(i.get("main_group") or "").strip() for i in items if (i.get("main_group") or "").strip()})
+    sub_groups = sorted({(i.get("sub_group") or "").strip() for i in items if (i.get("sub_group") or "").strip()})
+    return {"items": items, "main_groups": main_groups, "sub_groups": sub_groups, "total": len(items)}
 
 
 # ---------------- Dashboard ----------------
