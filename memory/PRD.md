@@ -49,11 +49,19 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
   - Logo-fil fra bruker lastet opp som `/public/logo.png`, brukes i sidemeny og signup
 - Testing: 8/8 backend-tester grønne + full E2E (signup → welcome → trial-banner → Dashboard trial-kort → Subscription select-pro deferred → trial expire → 402 på write + 200 på read).
 
+### Nov 2026 – Trial-admin UI, Stripe-kvittering, Trial-påminnelser
+- **Backend**: 
+  - `send_trial_reminder_email()` dag 5 (2 dager igjen) og dag 7 (siste dag), idempotent via `trial_reminders_sent`-liste på kundedokumentet
+  - `send_payment_receipt_email()` kalles i Stripe webhook ved `invoice.payment_succeeded` (inkluderer beløp, periode, hosted invoice-link)
+  - Nytt cron-endpoint `POST /api/cron/trial-reminders` (auth: `Bearer WEBHOOK_CRON_SECRET`, idempotent via `X-Webhook-Id` + `cron_runs`-collection, acks 2xx + `asyncio.create_task`)
+  - Fikset `TrialBanner` null-crash når brukeren ikke er i trial-status
+- **Frontend**: OwnerPanel kundeadmin-modal har ny «Forleng prøveperiode»-seksjon m/ +3/+7/+14-dagers knapper (synlig kun for kunder i trial-status)
+- **Cron**: `.emergent/crons.yml` kjører daglig 09:00 Europe/Oslo
+- Testing: cron 401/200 OK, extend-trial API verifisert (13.10 → 20.10), E2E screenshot av OwnerPanel med nye knapper OK
+
 ## Backlog
 - P1: Excel Import for Teams og People
-- P1: Automatisk fakturakvittering ved Stripe-betaling
 - P1: E-postpåminnelse 3 dager før utlåns-forfall
-- P1: Admin-UI for extend-trial i OwnerPanel (endpoint finnes, UI mangler)
 - P2: Cache subscription-status for å unngå find_one+update_one på hver auth request
 - P2: KID med MOD10/MOD11 kontrollsiffer
 - P2: Faktura-PDF til GridFS

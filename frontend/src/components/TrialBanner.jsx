@@ -19,6 +19,8 @@ export default function TrialBanner() {
     return null;
   }, [status, daysLeft]);
 
+  if (!content) return null;
+
   if (content.tone === "amber" && daysLeft <= 0) {
     content.label = "Siste dag av prøveperioden";
   }

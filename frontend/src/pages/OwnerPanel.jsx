@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Search, LogIn, Pencil, Trash2, Settings, UserX, UserCheck, RotateCcw } from "lucide-react";
+import { Search, LogIn, Pencil, Trash2, Settings, UserX, UserCheck, RotateCcw, CalendarPlus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const PLAN_OPTIONS = [
@@ -108,6 +108,18 @@ export default function OwnerPanel() {
     try {
       await api.post(`/owner/customers/${detail.customer.id}/restore`);
       toast.success("Kundekonto gjenopprettet");
+      await reloadDetail();
+      await refresh();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const extendTrial = async (days) => {
+    if (!detail?.customer?.id) return;
+    if (!window.confirm(`Forleng prøveperioden med ${days} dager?`)) return;
+    try {
+      const { data } = await api.post(`/owner/customers/${detail.customer.id}/extend-trial`, { days });
+      const newEnd = new Date(data.trial_end_date).toLocaleDateString("nb-NO");
+      toast.success(`Prøveperioden forlenget til ${newEnd}`);
       await reloadDetail();
       await refresh();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
@@ -210,6 +222,23 @@ export default function OwnerPanel() {
                     <Switch checked={cancelStripe} onCheckedChange={setCancelStripe} data-testid="cancel-stripe-switch" />
                     <span>Kanseller Stripe-abonnement samtidig (ved endring til Gratis eller nedgradering)</span>
                   </label>
+                )}
+
+                {detail.customer.status === "trial" && (
+                  <div className="border border-amber-200 bg-amber-50 rounded-md p-3 space-y-2" data-testid="extend-trial-section">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                      <CalendarPlus className="h-4 w-4" />
+                      Forleng prøveperiode
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      Utløper: {(detail.customer.trial_end_date || detail.customer.trial_ends_at) ? new Date(detail.customer.trial_end_date || detail.customer.trial_ends_at).toLocaleString("nb-NO") : "–"}
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button size="sm" variant="outline" onClick={() => extendTrial(3)} data-testid="extend-trial-3">+3 dager</Button>
+                      <Button size="sm" variant="outline" onClick={() => extendTrial(7)} data-testid="extend-trial-7">+7 dager</Button>
+                      <Button size="sm" variant="outline" onClick={() => extendTrial(14)} data-testid="extend-trial-14">+14 dager</Button>
+                    </div>
+                  </div>
                 )}
 
                 <div className="flex gap-2 pt-2 flex-wrap">

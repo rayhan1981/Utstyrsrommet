@@ -8,6 +8,7 @@ import os
 import io
 import re
 import uuid
+import asyncio
 import logging
 import secrets as pysecrets
 from datetime import datetime, timezone, timedelta
@@ -39,6 +40,7 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+WEBHOOK_CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET", "")
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -309,6 +311,81 @@ async def send_invitation_email(to: str, name: str, token: str):
         return r.json().get("id")
     except Exception as e:
         logger.error(f"E-post feilet: {e}")
+        return None
+
+
+async def send_trial_reminder_email(to: str, club_name: str, days_left: int):
+    """Send trial expiration reminder (day 5 = 2 days left, day 7 = last day)."""
+    if not EMAIL_KEY:
+        return None
+    link = f"{FRONTEND_URL}/abonnement"
+    if days_left <= 0:
+        headline = "Prøveperioden din utløper i dag"
+        intro = f"Hei {club_name}! I dag er siste dag av den gratis Deluxe-prøveperioden hos <strong>{EMAIL_FROM_NAME}</strong>."
+        urgency = "Velg en pakke nå for å unngå at kontoen settes i les-kun-modus i morgen."
+        subject = f"Siste dag: {EMAIL_FROM_NAME}-prøveperioden utløper i dag"
+    else:
+        headline = f"{days_left} dager igjen av prøveperioden"
+        intro = f"Hei {club_name}! Du har <strong>{days_left} dager</strong> igjen av den gratis Deluxe-prøveperioden hos <strong>{EMAIL_FROM_NAME}</strong>."
+        urgency = "Velg en pakke før perioden utløper, så fortsetter alt sømløst uten tap av data."
+        subject = f"{days_left} dager igjen av din {EMAIL_FROM_NAME}-prøveperiode"
+    html = (
+        f'<table width="100%" style="background:#f8fafc;padding:24px;font-family:Arial,sans-serif">'
+        f'<tr><td align="center"><table width="560" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:32px">'
+        f'<tr><td><h1 style="color:#064E3B;margin:0 0 16px 0">{headline}</h1>'
+        f'<p>{intro}</p><p>{urgency}</p>'
+        f'<p style="text-align:center;margin:28px 0"><a href="{link}" style="background:#064E3B;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:600">Velg pakke nå</a></p>'
+        f'<p style="color:#475569;font-size:13px">Priser: Basic 399/mnd, Pro 599/mnd, Deluxe 999/mnd. Ingen bindingstid.</p>'
+        f'<p style="color:#94a3b8;font-size:12px;margin-top:24px">Sendt av {EMAIL_FROM_NAME}. Vi ber aldri om passord eller kortinfo per e-post.</p>'
+        f'</td></tr></table></td></tr></table>'
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                             headers={"X-Email-Key": EMAIL_KEY},
+                             json={"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME})
+        r.raise_for_status()
+        return r.json().get("id")
+    except Exception as e:
+        logger.error(f"Trial reminder-epost feilet: {e}")
+        return None
+
+
+async def send_payment_receipt_email(to: str, club_name: str, amount_nok: float, plan_label: str, invoice_url: Optional[str] = None, period: Optional[str] = None):
+    """Send receipt after successful Stripe payment."""
+    if not EMAIL_KEY:
+        return None
+    amount_str = f"{amount_nok:,.2f}".replace(",", " ").replace(".", ",")
+    period_html = f'<p><strong>Periode:</strong> {period}</p>' if period else ''
+    link_html = (
+        f'<p style="text-align:center;margin:24px 0"><a href="{invoice_url}" style="background:#064E3B;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:600">Se faktura (PDF)</a></p>'
+        if invoice_url and invoice_url.startswith("https://") else ''
+    )
+    html = (
+        f'<table width="100%" style="background:#f8fafc;padding:24px;font-family:Arial,sans-serif">'
+        f'<tr><td align="center"><table width="560" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:32px">'
+        f'<tr><td><h1 style="color:#064E3B;margin:0 0 16px 0">Takk for betalingen!</h1>'
+        f'<p>Hei {club_name},</p>'
+        f'<p>Vi har mottatt din betaling for <strong>{EMAIL_FROM_NAME}</strong>.</p>'
+        f'<table width="100%" style="background:#f1f5f9;border-radius:6px;padding:16px;margin:16px 0">'
+        f'<tr><td><p style="margin:4px 0"><strong>Pakke:</strong> {plan_label}</p>'
+        f'<p style="margin:4px 0"><strong>Beløp:</strong> {amount_str} NOK</p>'
+        f'{period_html}'
+        f'</td></tr></table>'
+        f'{link_html}'
+        f'<p style="color:#475569;font-size:13px">Dette er din offisielle kvittering. Oppbevar den for regnskapsformål.</p>'
+        f'<p style="color:#94a3b8;font-size:12px;margin-top:24px">Sendt av {EMAIL_FROM_NAME}. Spørsmål? Svar på denne e-posten eller kontakt support@utstyrsrommet.no.</p>'
+        f'</td></tr></table></td></tr></table>'
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                             headers={"X-Email-Key": EMAIL_KEY},
+                             json={"to": [to], "subject": f"Kvittering – {EMAIL_FROM_NAME} ({plan_label})", "html": html, "from_name": EMAIL_FROM_NAME})
+        r.raise_for_status()
+        return r.json().get("id")
+    except Exception as e:
+        logger.error(f"Kvittering-epost feilet: {e}")
         return None
 
 
@@ -693,6 +770,75 @@ async def me(request: Request, user=Depends(get_current_user)):
     }
 
 
+# ---------------- Cron: Trial reminder emails ----------------
+async def _run_trial_reminders():
+    """Send trial expiration reminders. Day 5 (2 days left) and day 7 (last day).
+    Idempotent via `trial_reminders_sent` set on the customer document."""
+    now = datetime.now(timezone.utc)
+    cursor = db.customers.find({
+        "is_owner_workspace": {"$ne": True},
+        "status": "trial",
+        "deleted_at": None,
+    })
+    sent_count = 0
+    async for cust in cursor:
+        end_iso = cust.get("trial_end_date") or cust.get("trial_ends_at")
+        if not end_iso:
+            continue
+        try:
+            end_dt = datetime.fromisoformat(end_iso)
+        except Exception:
+            continue
+        days_left = (end_dt.date() - now.date()).days
+        if days_left not in (0, 2):
+            continue
+        tag = "day7" if days_left == 0 else "day5"
+        already = cust.get("trial_reminders_sent") or []
+        if tag in already:
+            continue
+        email = cust.get("owner_email")
+        if not email:
+            continue
+        res = await send_trial_reminder_email(
+            to=email,
+            club_name=cust.get("club_name") or cust.get("owner_name") or "kunde",
+            days_left=max(days_left, 0),
+        )
+        if res is not None:
+            await db.customers.update_one(
+                {"id": cust["id"]},
+                {"$addToSet": {"trial_reminders_sent": tag},
+                 "$set": {f"trial_reminder_{tag}_sent_at": now.isoformat()}},
+            )
+            sent_count += 1
+    logger.info(f"Trial reminders: sent {sent_count} emails")
+    return sent_count
+
+
+@api.post("/cron/trial-reminders")
+async def cron_trial_reminders(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    auth = request.headers.get("authorization", "")
+    if not WEBHOOK_CRON_SECRET or not auth.startswith("Bearer "):
+        raise HTTPException(401, "Unauthorized")
+    token = auth.split(" ", 1)[1].strip()
+    if not pysecrets.compare_digest(token, WEBHOOK_CRON_SECRET):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    run_id = request.headers.get("x-webhook-id") or (body.get("run_id") if isinstance(body, dict) else None) or new_id()
+    # Idempotency: skip if we've already processed this run_id
+    existing = await db.cron_runs.find_one({"run_id": run_id})
+    if existing:
+        return {"status": "duplicate", "run_id": run_id}
+    await db.cron_runs.insert_one({"run_id": run_id, "job": "trial-reminders", "received_at": now_iso()})
+    # Hand off actual work
+    asyncio.create_task(_run_trial_reminders())
+    return {"status": "accepted", "run_id": run_id}
+
+
 # ---------------- Trial admin (platform owner) ----------------
 @api.post("/owner/customers/{customer_id}/extend-trial")
 async def extend_trial(customer_id: str, data: ExtendTrialIn, user=Depends(require_platform_owner)):
@@ -1030,7 +1176,39 @@ async def stripe_webhook(request: Request):
                     "stripe_customer_id": obj.get("customer"),
                 }})
     elif t == "invoice.payment_succeeded":
-        # Swap 50% coupon → 10% loyalty on yearly renewals
+        # Send receipt email + swap 50% coupon → 10% loyalty on yearly renewals
+        try:
+            cust_id_stripe = obj.get("customer")
+            cust_doc = await db.customers.find_one({"stripe_customer_id": cust_id_stripe}) if cust_id_stripe else None
+            if cust_doc and cust_doc.get("owner_email"):
+                amount_paid = (obj.get("amount_paid") or 0) / 100.0
+                currency = (obj.get("currency") or "nok").upper()
+                plan_label = PLANS.get(cust_doc.get("plan", ""), {}).get("name", cust_doc.get("plan", "Abonnement"))
+                billing_cycle = cust_doc.get("billing_cycle", "monthly")
+                plan_label = f"{plan_label} ({'årlig' if billing_cycle == 'yearly' else 'månedlig'})"
+                invoice_url = obj.get("hosted_invoice_url") or obj.get("invoice_pdf")
+                lines = (obj.get("lines") or {}).get("data") or []
+                period = None
+                if lines:
+                    p = lines[0].get("period") or {}
+                    if p.get("start") and p.get("end"):
+                        try:
+                            s = datetime.fromtimestamp(p["start"], tz=timezone.utc).strftime("%d.%m.%Y")
+                            e = datetime.fromtimestamp(p["end"], tz=timezone.utc).strftime("%d.%m.%Y")
+                            period = f"{s} – {e}"
+                        except Exception:
+                            period = None
+                if amount_paid > 0 and currency == "NOK":
+                    await send_payment_receipt_email(
+                        to=cust_doc["owner_email"],
+                        club_name=cust_doc.get("club_name") or cust_doc.get("owner_name") or "kunde",
+                        amount_nok=amount_paid,
+                        plan_label=plan_label,
+                        invoice_url=invoice_url,
+                        period=period,
+                    )
+        except Exception as e:
+            logger.error(f"Kvittering-epost feilet i webhook: {e}")
         try:
             sub_id = obj.get("subscription")
             if sub_id and obj.get("billing_reason") == "subscription_cycle":
