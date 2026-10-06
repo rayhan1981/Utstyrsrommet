@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 body {
   margin: 0;
@@ -26,19 +26,19 @@ h1, h2, h3, h4, h5, h6, .font-display {
     --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
-    --primary: 160 84% 17%;
+    --primary: 0 72% 42%;
     --primary-foreground: 0 0% 100%;
     --secondary: 210 40% 96%;
     --secondary-foreground: 222 47% 11%;
     --muted: 210 40% 96%;
     --muted-foreground: 215 16% 47%;
-    --accent: 160 84% 39%;
+    --accent: 0 72% 51%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
     --border: 214 32% 91%;
     --input: 214 32% 91%;
-    --ring: 160 84% 17%;
+    --ring: 0 72% 42%;
     --radius: 0.5rem;
   }
 }
@@ -48,13 +48,62 @@ h1, h2, h3, h4, h5, h6, .font-display {
   body { @apply bg-background text-foreground; }
 }
 
+/* UTSTYRSROMMET brand – inspired by logo (black / crimson / chrome silver) */
 .brand-gradient {
-  background: linear-gradient(135deg, #064E3B 0%, #059669 100%);
+  background:
+    radial-gradient(ellipse at top left, rgba(220,38,38,0.35) 0%, transparent 55%),
+    radial-gradient(ellipse at bottom right, rgba(220,38,38,0.25) 0%, transparent 60%),
+    linear-gradient(135deg, #0a0a0a 0%, #1a0a0d 55%, #0a0a0a 100%);
+}
+
+.brand-gradient-strong {
+  background: linear-gradient(135deg, #0a0a0a 0%, #450a0a 50%, #991b1b 100%);
+}
+
+.chrome-text {
+  background: linear-gradient(180deg, #ffffff 0%, #d4d4d8 45%, #a1a1aa 55%, #ffffff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.2);
+}
+
+.red-gloss-text {
+  background: linear-gradient(180deg, #fecaca 0%, #ef4444 40%, #991b1b 60%, #fca5a5 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Luxury dark surface used on landing/auth cards */
+.lux-dark {
+  background: linear-gradient(180deg, rgba(23,23,23,0.95) 0%, rgba(10,10,10,0.95) 100%);
+  border: 1px solid rgba(220,38,38,0.25);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.04) inset,
+    0 0 40px rgba(220,38,38,0.08),
+    0 20px 50px -20px rgba(0,0,0,0.6);
+}
+
+.lux-ring:hover {
+  border-color: rgba(220,38,38,0.55);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.04) inset,
+    0 0 60px rgba(220,38,38,0.18),
+    0 25px 60px -20px rgba(0,0,0,0.7);
 }
 
 .sidebar-link {
-  @apply flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-700 hover:bg-emerald-50 hover:text-emerald-900 transition-colors text-sm font-medium;
+  @apply flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-700 hover:bg-red-50 hover:text-red-800 transition-colors text-sm font-medium;
 }
 .sidebar-link.active {
-  @apply bg-emerald-900 text-white hover:bg-emerald-900 hover:text-white;
+  @apply bg-red-700 text-white hover:bg-red-700 hover:text-white;
+}
+
+/* Subtle silver hairline divider for luxury sections */
+.chrome-hr {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(220,38,38,0.5) 50%, transparent 100%);
 }

@@ -43,7 +43,7 @@ export default function SetPassword() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
       <Card className="w-full max-w-md p-8">
-        <div className="font-display text-2xl font-extrabold text-emerald-900 mb-1">Velkommen!</div>
+        <div className="font-display text-2xl font-extrabold text-red-900 mb-1">Velkommen!</div>
         <p className="text-sm text-slate-600 mb-6">Opprett ditt passord for Utstyrsrommet</p>
         {err && <div className="text-red-600 text-sm mb-4">{err}</div>}
         {info && (
@@ -60,7 +60,7 @@ export default function SetPassword() {
               <Label>Bekreft passord</Label>
               <Input type="password" data-testid="set-pw-2" required value={pw2} onChange={(e) => setPw2(e.target.value)} />
             </div>
-            <Button type="submit" data-testid="set-pw-submit" disabled={loading} className="w-full bg-emerald-900 hover:bg-emerald-800">
+            <Button type="submit" data-testid="set-pw-submit" disabled={loading} className="w-full bg-red-900 hover:bg-red-800">
               {loading ? "Lagrer…" : "Opprett passord og logg inn"}
             </Button>
           </form>

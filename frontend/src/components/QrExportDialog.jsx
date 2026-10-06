@@ -108,11 +108,11 @@ export default function QrExportDialog({ open, onOpenChange }) {
                   key={s.k}
                   type="button"
                   onClick={() => setSize(s.k)}
-                  className={`py-3 px-2 rounded-md text-xs transition border ${size === s.k ? "bg-emerald-900 text-white border-emerald-900" : "bg-white border-slate-200 hover:border-emerald-700"}`}
+                  className={`py-3 px-2 rounded-md text-xs transition border ${size === s.k ? "bg-red-900 text-white border-red-900" : "bg-white border-slate-200 hover:border-red-700"}`}
                   data-testid={`qr-size-${s.k}`}
                 >
                   <div className="font-semibold">{s.label}</div>
-                  <div className={size === s.k ? "text-emerald-100" : "text-slate-500"}>{s.desc}</div>
+                  <div className={size === s.k ? "text-red-100" : "text-slate-500"}>{s.desc}</div>
                 </button>
               ))}
             </div>
@@ -122,7 +122,7 @@ export default function QrExportDialog({ open, onOpenChange }) {
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Avbryt</Button>
-          <Button onClick={download} disabled={!canDownload} className="bg-emerald-900 hover:bg-emerald-800" data-testid="qr-download-btn">
+          <Button onClick={download} disabled={!canDownload} className="bg-red-900 hover:bg-red-800" data-testid="qr-download-btn">
             <Download className="h-4 w-4 mr-2" />Last ned PDF
           </Button>
         </DialogFooter>

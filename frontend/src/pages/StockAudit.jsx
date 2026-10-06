@@ -79,7 +79,7 @@ export default function StockAudit() {
           <p className="text-slate-600 text-sm mt-1">Alle varer forhåndsutfylt – sortert på lokasjon og varenavn</p>
         </div>
         {hasPerm("stock_audit", "write") && (
-          <Button onClick={start} data-testid="start-count-btn" className="bg-emerald-900 hover:bg-emerald-800">
+          <Button onClick={start} data-testid="start-count-btn" className="bg-red-900 hover:bg-red-800">
             <Plus className="h-4 w-4 mr-2" />Start ny varetelling
           </Button>
         )}
@@ -90,7 +90,7 @@ export default function StockAudit() {
         <div className="divide-y divide-slate-100">
           {counts.length === 0 && <div className="text-sm text-slate-500 py-3">Ingen varetellinger ennå.</div>}
           {counts.map((c) => (
-            <div key={c.id} className={`w-full flex items-center justify-between py-3 text-sm px-2 rounded ${active?.id === c.id ? "bg-emerald-50" : "hover:bg-slate-50"}`}>
+            <div key={c.id} className={`w-full flex items-center justify-between py-3 text-sm px-2 rounded ${active?.id === c.id ? "bg-red-50" : "hover:bg-slate-50"}`}>
               <button onClick={() => setActive(c)} className="flex-1 text-left" data-testid={`count-row-${c.id}`}>
                 <div className="font-semibold">{c.name}</div>
                 <div className="text-xs text-slate-500">
@@ -99,7 +99,7 @@ export default function StockAudit() {
                 </div>
               </button>
               <div className="flex items-center gap-2">
-                <span className={`text-xs font-semibold px-2 py-1 rounded ${c.status === "applied" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                <span className={`text-xs font-semibold px-2 py-1 rounded ${c.status === "applied" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
                   {c.status === "applied" ? "Anvendt" : "Åpen"}
                 </span>
                 {hasPerm("stock_audit", "admin") && (
@@ -121,7 +121,7 @@ export default function StockAudit() {
             <div className="flex gap-2">
               <Input placeholder="Søk vare, lokasjon, str…" value={filter} onChange={(e) => setFilter(e.target.value)} className="max-w-xs" data-testid="count-filter" />
               {active.status === "open" && hasPerm("stock_audit", "write") && (
-                <Button onClick={apply} data-testid="apply-count-btn" className="bg-emerald-900 hover:bg-emerald-800"><Check className="h-4 w-4 mr-1" />Anvend og juster beholdning</Button>
+                <Button onClick={apply} data-testid="apply-count-btn" className="bg-red-900 hover:bg-red-800"><Check className="h-4 w-4 mr-1" />Anvend og juster beholdning</Button>
               )}
             </div>
           </div>
@@ -161,7 +161,7 @@ export default function StockAudit() {
                           />
                         ) : (counted ?? "-")}
                       </TableCell>
-                      <TableCell className={`text-right font-semibold ${diff == null ? "text-slate-400" : diff === 0 ? "" : diff > 0 ? "text-emerald-700" : "text-red-700"}`}>
+                      <TableCell className={`text-right font-semibold ${diff == null ? "text-slate-400" : diff === 0 ? "" : diff > 0 ? "text-red-700" : "text-red-700"}`}>
                         {diff == null ? "-" : (diff > 0 ? `+${diff}` : diff)}
                       </TableCell>
                       <TableCell className="text-xs text-slate-500">

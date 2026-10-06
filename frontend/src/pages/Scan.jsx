@@ -111,7 +111,7 @@ export default function Scan() {
         <Card className="p-4 space-y-3">
           <div id="qr-reader" className="rounded-md overflow-hidden" style={{ minHeight: scanning ? 280 : 0 }}></div>
           {!scanning ? (
-            <Button onClick={start} className="w-full bg-emerald-900 hover:bg-emerald-800" data-testid="start-scan-btn">
+            <Button onClick={start} className="w-full bg-red-900 hover:bg-red-800" data-testid="start-scan-btn">
               <Camera className="h-5 w-5 mr-2" />Start kamera-skanning
             </Button>
           ) : (
@@ -123,19 +123,19 @@ export default function Scan() {
 
       {item && (
         <Card className="p-4 space-y-3" data-testid="scan-loan-form">
-          <div className="flex items-center gap-3 bg-emerald-50 rounded-md p-3">
-            <CheckCircle2 className="h-6 w-6 text-emerald-700" />
+          <div className="flex items-center gap-3 bg-red-50 rounded-md p-3">
+            <CheckCircle2 className="h-6 w-6 text-red-700" />
             <div>
               <div className="font-bold">{item.name}</div>
               <div className="text-xs text-slate-600">{nok(item.price)} · lager: {item.total_stock} · {item.location || "ingen lokasjon"}</div>
             </div>
           </div>
 
-          <div className="border border-slate-200 rounded-md p-3 bg-emerald-50/50">
+          <div className="border border-slate-200 rounded-md p-3 bg-red-50/50">
             <Label className="text-sm font-semibold">Skyldig beløp går til</Label>
             <div className="grid grid-cols-2 gap-2 mt-2">
-              <button type="button" onClick={() => setForm({ ...form, loan_target: "person" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "person" ? "bg-emerald-900 text-white" : "bg-white border border-slate-200"}`} data-testid="scan-target-person">Person</button>
-              <button type="button" onClick={() => setForm({ ...form, loan_target: "team" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "team" ? "bg-emerald-900 text-white" : "bg-white border border-slate-200"}`} data-testid="scan-target-team">Lag</button>
+              <button type="button" onClick={() => setForm({ ...form, loan_target: "person" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "person" ? "bg-red-900 text-white" : "bg-white border border-slate-200"}`} data-testid="scan-target-person">Person</button>
+              <button type="button" onClick={() => setForm({ ...form, loan_target: "team" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "team" ? "bg-red-900 text-white" : "bg-white border border-slate-200"}`} data-testid="scan-target-team">Lag</button>
             </div>
           </div>
 
@@ -188,7 +188,7 @@ export default function Scan() {
 
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setItem(null)} className="flex-1" data-testid="scan-cancel-btn">Avbryt / Skann ny</Button>
-            <Button onClick={register} className="flex-1 bg-emerald-900 hover:bg-emerald-800" data-testid="scan-register-btn">Registrer utlån</Button>
+            <Button onClick={register} className="flex-1 bg-red-900 hover:bg-red-800" data-testid="scan-register-btn">Registrer utlån</Button>
           </div>
         </Card>
       )}

@@ -1,11 +1,10 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { formatError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card } from "@/components/ui/card";
 import { toast, Toaster } from "sonner";
 
 export default function Login() {
@@ -30,51 +29,42 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex">
-      <div className="hidden lg:flex lg:w-1/2 brand-gradient items-center justify-center p-12">
-        <div className="text-white max-w-md">
-          <div className="font-display text-5xl font-extrabold leading-tight mb-4">
-            UTSTYRS<br />ROMMET
-          </div>
-          <p className="text-emerald-100 text-lg leading-relaxed">
-            Komplett lagerstyring og administrasjon for idrettsklubber. Hold styr på utstyr, lag og utlån - alt på ett sted.
-          </p>
-          <div className="mt-10 grid grid-cols-2 gap-4 text-sm">
-            <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/20">
-              <div className="font-semibold">Automatisk</div>
-              <div className="text-emerald-100 text-xs mt-1">Skyldig beløp beregnes</div>
+    <div className="min-h-screen bg-[#0a0a0a] text-white relative overflow-hidden">
+      <div className="fixed inset-0 pointer-events-none" aria-hidden="true"
+           style={{ background: "radial-gradient(1200px 700px at 50% -10%, rgba(220,38,38,0.18) 0%, transparent 60%), radial-gradient(900px 500px at 10% 110%, rgba(220,38,38,0.12) 0%, transparent 60%)" }} />
+      <div className="relative z-10 min-h-screen flex items-center justify-center p-6">
+        <div className="w-full max-w-md">
+          <Link to="/" className="flex items-center gap-3 justify-center mb-8">
+            <img src="/logo.png" alt="UTSTYRSROMMET" className="h-16 w-16 object-contain" style={{ filter: "drop-shadow(0 0 12px rgba(220,38,38,0.4))" }} />
+            <div className="font-display text-2xl font-black tracking-tight">
+              <span className="chrome-text">UTSTYRS</span><span className="red-gloss-text">ROMMET</span>
             </div>
-            <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/20">
-              <div className="font-semibold">Excel-eksport</div>
-              <div className="text-emerald-100 text-xs mt-1">Alt per lag eller totalt</div>
-            </div>
+          </Link>
+          <div className="lux-dark rounded-2xl p-8">
+            <h1 className="font-display text-3xl font-black mb-1">Logg inn</h1>
+            <p className="text-sm text-zinc-400 mb-6">Tilgang til klubbens lagerstyring</p>
+            <form onSubmit={submit} className="space-y-4">
+              <div>
+                <Label htmlFor="email" className="text-zinc-300">E-post</Label>
+                <Input id="email" data-testid="login-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+                       className="bg-black/40 border-white/10 text-white placeholder:text-zinc-600 focus-visible:border-red-500/60 focus-visible:ring-red-500/20" />
+              </div>
+              <div>
+                <Label htmlFor="password" className="text-zinc-300">Passord</Label>
+                <Input id="password" data-testid="login-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)}
+                       className="bg-black/40 border-white/10 text-white placeholder:text-zinc-600 focus-visible:border-red-500/60 focus-visible:ring-red-500/20" />
+              </div>
+              <Button type="submit" data-testid="login-submit" disabled={loading} className="w-full bg-red-600 hover:bg-red-500 text-white font-semibold">
+                {loading ? "Logger inn…" : "Logg inn"}
+              </Button>
+            </form>
+            <p className="text-xs text-zinc-500 text-center mt-6">
+              Har du ikke konto? <Link to="/registrer" className="text-red-400 font-semibold hover:text-red-300">Start gratis</Link>
+            </p>
           </div>
         </div>
       </div>
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6">
-        <Card className="w-full max-w-md p-8 border-slate-200 shadow-sm">
-          <div className="lg:hidden text-center mb-6">
-            <img src="/logo.png" alt="UTSTYRSROMMET" className="h-16 w-auto mx-auto mb-2" />
-            <div className="font-display text-2xl font-extrabold text-emerald-900">UTSTYRSROMMET</div>
-          </div>
-          <h1 className="font-display text-2xl font-bold mb-1">Logg inn</h1>
-          <p className="text-sm text-slate-600 mb-6">Tilgang til klubbens lagerstyring</p>
-          <form onSubmit={submit} className="space-y-4">
-            <div>
-              <Label htmlFor="email">E-post</Label>
-              <Input id="email" data-testid="login-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-            </div>
-            <div>
-              <Label htmlFor="password">Passord</Label>
-              <Input id="password" data-testid="login-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-            </div>
-            <Button type="submit" data-testid="login-submit" disabled={loading} className="w-full bg-emerald-900 hover:bg-emerald-800">
-              {loading ? "Logger inn…" : "Logg inn"}
-            </Button>
-          </form>
-        </Card>
-      </div>
-      <Toaster richColors position="top-right" />
+      <Toaster richColors position="top-right" theme="dark" />
     </div>
   );
 }

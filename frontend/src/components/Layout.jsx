@@ -46,8 +46,13 @@ export default function Layout() {
       </button>
 
       <aside className={`fixed lg:static inset-y-0 left-0 w-64 bg-white border-r border-slate-200 z-40 flex flex-col transform transition-transform ${open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
-        <div className="h-16 flex items-center px-5 border-b border-slate-200 brand-gradient">
-          <Link to="/app" className="font-display text-white text-xl font-extrabold tracking-tight">UTSTYRS<span className="text-emerald-200">ROMMET</span></Link>
+        <div className="h-16 flex items-center px-4 border-b border-white/10 brand-gradient">
+          <Link to="/app" className="flex items-center gap-2.5">
+            <img src="/logo.png" alt="UTSTYRSROMMET" className="h-10 w-10 object-contain shrink-0" style={{ filter: "drop-shadow(0 0 8px rgba(220,38,38,0.4))" }} />
+            <div className="font-display text-white text-lg font-black tracking-tight leading-none">
+              <span className="chrome-text">UTSTYRS</span><span className="red-gloss-text">ROMMET</span>
+            </div>
+          </Link>
         </div>
         {customer && (
           <div className={`px-4 py-3 border-b border-slate-200 ${isOwner && !impersonating ? "bg-amber-50" : "bg-slate-50"}`}>
@@ -57,7 +62,7 @@ export default function Layout() {
             </div>
             <div className="font-semibold text-sm truncate">{customer.club_name}</div>
             <div className="text-xs text-slate-500 mt-0.5">Kundenr: <span className="font-mono font-semibold">{customer.customer_number}</span></div>
-            {plan && <div className="mt-1 inline-block text-xs font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">{plan.name}</div>}
+            {plan && <div className="mt-1 inline-block text-xs font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-800">{plan.name}</div>}
           </div>
         )}
         <nav className="p-3 space-y-1 overflow-y-auto flex-1" onClick={() => setOpen(false)}>
@@ -100,8 +105,8 @@ export default function Layout() {
             <div className="font-semibold text-slate-700">Hansen Logistikk</div>
             <div>Designet og utviklet av Raymond Dalgård Hansen</div>
             <div>Versjon 1.00 · 2026</div>
-            <div><a href="mailto:kontakt@utstyrsrommet.no" className="hover:text-emerald-800">kontakt@utstyrsrommet.no</a></div>
-            <div><a href="mailto:support@utstyrsrommet.no" className="hover:text-emerald-800">support@utstyrsrommet.no</a></div>
+            <div><a href="mailto:kontakt@utstyrsrommet.no" className="hover:text-red-800">kontakt@utstyrsrommet.no</a></div>
+            <div><a href="mailto:support@utstyrsrommet.no" className="hover:text-red-800">support@utstyrsrommet.no</a></div>
             <div>Tlf. 90 96 70 88</div>
             <div className="pt-1 text-slate-400">© 2026 - 2036 Hansen Logistikk</div>
           </div>

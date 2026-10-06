@@ -94,7 +94,7 @@ export default function NotificationCenter() {
           </DialogHeader>
           <List items={data.unseen} />
           <DialogFooter>
-            <Button className="bg-emerald-900 hover:bg-emerald-800" onClick={dismiss} data-testid="notif-confirm-btn">Bekreft og lukk</Button>
+            <Button className="bg-red-900 hover:bg-red-800" onClick={dismiss} data-testid="notif-confirm-btn">Bekreft og lukk</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -118,7 +118,7 @@ export default function NotificationCenter() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExtendFor(null)}>Avbryt</Button>
-            <Button onClick={extend} className="bg-emerald-900 hover:bg-emerald-800" data-testid="confirm-extend-btn">Sett ny frist</Button>
+            <Button onClick={extend} className="bg-red-900 hover:bg-red-800" data-testid="confirm-extend-btn">Sett ny frist</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

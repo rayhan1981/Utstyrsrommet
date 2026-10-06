@@ -59,6 +59,20 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Cron**: `.emergent/crons.yml` kjører daglig 09:00 Europe/Oslo
 - Testing: cron 401/200 OK, extend-trial API verifisert (13.10 → 20.10), E2E screenshot av OwnerPanel med nye knapper OK
 
+### Nov 2026 – Luxury dark theme + bilder på varer
+- **Nytt tema**: Logo (locker-shield svart/rød/sølv-krom) implementert overalt. Globalt bytte emerald → red i hele frontend. Nye utility-klasser: `brand-gradient` (sort m/rød glow), `chrome-text`, `red-gloss-text`, `lux-dark`, `lux-ring`, `chrome-hr`.
+- **Landing redesign**: Fullt mørkt tema med radial red glow. «Start 14 dager gratis» og «Start Gratis» (header + hero) fjernet. Prøveversjon lagt til som 4. plan-kort ved siden av Basic/Pro/Deluxe, med «7 DAGER GRATIS»-badge.
+- **Login + Signup**: Full dark luxury theme m/ logo + chrome-krom + red gloss. Dark Toaster.
+- **Layout (sidebar)**: Logo (shield) + chrome/red-gloss tekst som brand-mark.
+- **Bilder på varer**:
+  - Backend: `ItemIn.image_url` + `SizeStock.image_url` (base64 data URL i Mongo)
+  - Frontend: `compressImage()` helper (canvas 900px / JPEG 0.82)
+  - Dialog: Hovedbilde-seksjon m/ 96x96 preview + «Legg til / Bytt / Fjern»
+  - Dialog: Bilde-knapp pr str-linje (40x40 preview-flate, både klær og baller)
+  - DataTable: Ny thumbnail-kolonne først (12x12 fallback-ikon når tom)
+  - Mini-thumbs ved siden av hver størrelse-linje i tabell-visning
+- Testing: Backend API verifisert (POST/GET/DELETE med base64-bilder både på item og size), landing + login + inventory screenshot OK, cron fortsatt grønn
+
 ## Backlog
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall

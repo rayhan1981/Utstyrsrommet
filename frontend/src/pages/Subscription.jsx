@@ -114,7 +114,7 @@ export default function Subscription() {
               <div className="text-xs uppercase font-semibold text-slate-500">Nåværende pakke</div>
               <div className="font-display text-2xl font-bold mt-1">{currentPlan?.name} <span className="text-sm font-normal text-slate-500">· kr {currentPlan?.price}/mnd {customer.billing_cycle === "yearly" && "(faktureres årlig)"}</span></div>
               <div className="mt-2 flex items-center gap-2 flex-wrap">
-                <span className={`text-xs font-semibold px-2 py-1 rounded ${customer.status === "active" ? "bg-emerald-100 text-emerald-800" : customer.status === "trial" ? "bg-blue-100 text-blue-800" : customer.status === "canceling" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>
+                <span className={`text-xs font-semibold px-2 py-1 rounded ${customer.status === "active" ? "bg-red-100 text-red-800" : customer.status === "trial" ? "bg-blue-100 text-blue-800" : customer.status === "canceling" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>
                   {statusLabel[customer.status] || customer.status}
                 </span>
                 {customer.status === "trial" && <span className="text-sm text-slate-600">{trialDays} dager igjen</span>}
@@ -122,14 +122,14 @@ export default function Subscription() {
               </div>
               <div className="text-sm text-slate-500 mt-2">Kundenummer: <span className="font-mono font-semibold text-slate-800">{customer.customer_number}</span></div>
               {customer.status === "trial" && customer.selected_plan && (
-                <div className="mt-2 text-sm bg-emerald-50 border border-emerald-200 rounded-md p-2 inline-block">
+                <div className="mt-2 text-sm bg-red-50 border border-red-200 rounded-md p-2 inline-block">
                   <strong>Valgt abonnement:</strong> {PLANS_LABEL[customer.selected_plan] || customer.selected_plan} – aktiveres når prøveperioden avsluttes
                 </div>
               )}
             </div>
             <div className="flex gap-2 flex-wrap">
               {(customer.status === "trial" || customer.status === "past_due") && !isOwnerWs && (
-                <Button className="bg-emerald-900 hover:bg-emerald-800" onClick={() => { setAcceptTerms(true); checkout(customer.plan); }} disabled={loading === customer.plan} data-testid="activate-billing-btn">
+                <Button className="bg-red-900 hover:bg-red-800" onClick={() => { setAcceptTerms(true); checkout(customer.plan); }} disabled={loading === customer.plan} data-testid="activate-billing-btn">
                   <CreditCard className="h-4 w-4 mr-2" />{customer.status === "trial" ? "Legg til kort" : "Oppdater kort"}
                 </Button>
               )}
@@ -149,7 +149,7 @@ export default function Subscription() {
           <div className="flex items-start justify-between flex-wrap gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <UserPlus className="h-5 w-5 text-emerald-700" />
+                <UserPlus className="h-5 w-5 text-red-700" />
                 <h3 className="font-display text-lg font-bold">Bruker-seter</h3>
               </div>
               <p className="text-sm text-slate-600 mt-1">Inkludert i {currentPlan?.name}: <strong>{inclSeats} brukere</strong>. Du har kjøpt <strong>{extraSeats} ekstra</strong>. Totalt: <strong>{totalSeats} brukere</strong>.</p>
@@ -170,36 +170,36 @@ export default function Subscription() {
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-display text-lg font-bold">Bytt pakke</h3>
             <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs">
-              <button type="button" onClick={() => setCycle("monthly")} className={`px-3 py-1.5 rounded ${cycle === "monthly" ? "bg-emerald-900 text-white" : "text-slate-600"}`} data-testid="cycle-monthly">Månedlig</button>
-              <button type="button" onClick={() => setCycle("yearly")} className={`px-3 py-1.5 rounded ${cycle === "yearly" ? "bg-emerald-900 text-white" : "text-slate-600"}`} data-testid="cycle-yearly">Årlig · spar 50% første år</button>
+              <button type="button" onClick={() => setCycle("monthly")} className={`px-3 py-1.5 rounded ${cycle === "monthly" ? "bg-red-900 text-white" : "text-slate-600"}`} data-testid="cycle-monthly">Månedlig</button>
+              <button type="button" onClick={() => setCycle("yearly")} className={`px-3 py-1.5 rounded ${cycle === "yearly" ? "bg-red-900 text-white" : "text-slate-600"}`} data-testid="cycle-yearly">Årlig · spar 50% første år</button>
             </div>
           </div>
           <label className="flex items-start gap-2 text-xs mb-3 cursor-pointer">
             <Checkbox checked={acceptTerms} onCheckedChange={setAcceptTerms} data-testid="sub-accept-terms" />
-            <span>Jeg godtar <Link to="/vilkar" target="_blank" className="text-emerald-800 underline">bruksvilkårene</Link> inkludert oppsigelsestid på 3 måneder for hovedabonnementet.</span>
+            <span>Jeg godtar <Link to="/vilkar" target="_blank" className="text-red-800 underline">bruksvilkårene</Link> inkludert oppsigelsestid på 3 måneder for hovedabonnementet.</span>
           </label>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {plans.map((p) => {
               const isCurrent = customer?.plan === p.key && customer?.billing_cycle === cycle;
               return (
-                <Card key={p.key} className={`p-5 ${isCurrent ? "border-emerald-700 border-2" : ""}`}>
-                  {isCurrent && <div className="text-xs font-bold text-emerald-800 uppercase mb-1">Din pakke</div>}
+                <Card key={p.key} className={`p-5 ${isCurrent ? "border-red-700 border-2" : ""}`}>
+                  {isCurrent && <div className="text-xs font-bold text-red-800 uppercase mb-1">Din pakke</div>}
                   <h4 className="font-display text-xl font-bold">{p.name}</h4>
                   {cycle === "monthly" ? (
-                    <div className="font-display text-2xl font-extrabold text-emerald-900 my-2">kr {p.price}<span className="text-sm font-normal text-slate-500">/mnd</span></div>
+                    <div className="font-display text-2xl font-extrabold text-red-900 my-2">kr {p.price}<span className="text-sm font-normal text-slate-500">/mnd</span></div>
                   ) : (
                     <>
-                      <div className="font-display text-2xl font-extrabold text-emerald-900 mt-2">kr {yearlyFirst(p)}<span className="text-sm font-normal text-slate-500">/år</span></div>
+                      <div className="font-display text-2xl font-extrabold text-red-900 mt-2">kr {yearlyFirst(p)}<span className="text-sm font-normal text-slate-500">/år</span></div>
                       <div className="text-xs text-slate-500 mb-2">Første år (-50%). Deretter kr {yearlyLoyal(p)}/år (-10%)</div>
                     </>
                   )}
                   <ul className="space-y-1 text-xs">
-                    {p.features.map((f) => <li key={f} className="flex gap-1.5"><Check className="h-3 w-3 text-emerald-700 shrink-0 mt-0.5" />{f}</li>)}
+                    {p.features.map((f) => <li key={f} className="flex gap-1.5"><Check className="h-3 w-3 text-red-700 shrink-0 mt-0.5" />{f}</li>)}
                   </ul>
                   {customer?.subscription_status === "trial" ? (
                     <>
                       <Button
-                        className={`w-full mt-4 ${p.key === "pro" ? "bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold" : "bg-emerald-900 hover:bg-emerald-800"}`}
+                        className={`w-full mt-4 ${p.key === "pro" ? "bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold" : "bg-red-900 hover:bg-red-800"}`}
                         disabled={customer?.selected_plan === p.key}
                         onClick={() => selectDeferred(p.key)}
                         data-testid={`select-${p.key}`}
@@ -223,7 +223,7 @@ export default function Subscription() {
       {invoices.length > 0 && (
         <Card className="p-5" data-testid="invoices-card">
           <div className="flex items-center gap-2 mb-3">
-            <FileText className="h-5 w-5 text-emerald-700" />
+            <FileText className="h-5 w-5 text-red-700" />
             <h3 className="font-display text-lg font-bold">Faktura-historikk</h3>
           </div>
           <div className="divide-y divide-slate-100">
@@ -254,12 +254,12 @@ export default function Subscription() {
             <div className="bg-slate-50 border border-slate-200 rounded p-3 text-sm">
               <div className="flex justify-between"><span>Antall:</span><strong>{seatQty}</strong></div>
               <div className="flex justify-between"><span>Pris pr sete:</span><span>199,-/mnd</span></div>
-              <div className="flex justify-between border-t border-slate-200 mt-2 pt-2 font-bold text-emerald-900"><span>Totalt pr måned:</span><span>kr {seatQty * 199},-</span></div>
+              <div className="flex justify-between border-t border-slate-200 mt-2 pt-2 font-bold text-red-900"><span>Totalt pr måned:</span><span>kr {seatQty * 199},-</span></div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSeatsOpen(false)}>Avbryt</Button>
-            <Button onClick={buySeats} disabled={loading === "seats"} className="bg-emerald-900 hover:bg-emerald-800" data-testid="confirm-seats-btn">{loading === "seats" ? "Åpner Stripe…" : "Fortsett til betaling"}</Button>
+            <Button onClick={buySeats} disabled={loading === "seats"} className="bg-red-900 hover:bg-red-800" data-testid="confirm-seats-btn">{loading === "seats" ? "Åpner Stripe…" : "Fortsett til betaling"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

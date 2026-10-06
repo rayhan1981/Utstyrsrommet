@@ -148,7 +148,7 @@ export default function OwnerPanel() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <Input className="pl-9" placeholder="Søk kundenr, klubbnavn, eier, epost, telefon…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="owner-search-input" />
           </div>
-          <Button type="submit" className="bg-emerald-900 hover:bg-emerald-800" data-testid="owner-search-btn">Søk</Button>
+          <Button type="submit" className="bg-red-900 hover:bg-red-800" data-testid="owner-search-btn">Søk</Button>
           {results.length > 0 && <Button type="button" variant="outline" onClick={() => { setQ(""); setResults([]); }}>Nullstill</Button>}
         </form>
       </Card>
@@ -167,15 +167,15 @@ export default function OwnerPanel() {
                 <TableCell className="font-semibold">{c.club_name}{c.deleted_at && <span className="ml-2 text-xs text-red-700">(slettet)</span>}</TableCell>
                 <TableCell>{c.owner_name}</TableCell>
                 <TableCell className="text-sm">{c.owner_email}</TableCell>
-                <TableCell><span className="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800 uppercase">{c.plan}</span></TableCell>
+                <TableCell><span className="text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-800 uppercase">{c.plan}</span></TableCell>
                 <TableCell>
-                  <span className={`text-xs font-semibold px-2 py-1 rounded ${c.status === "inactive" ? "bg-red-100 text-red-800" : c.status === "trial" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                  <span className={`text-xs font-semibold px-2 py-1 rounded ${c.status === "inactive" ? "bg-red-100 text-red-800" : c.status === "trial" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>
                     {c.status}
                   </span>
                 </TableCell>
                 <TableCell className="text-right space-x-1">
                   <Button size="sm" variant="outline" onClick={() => openDetail(c)} data-testid={`manage-${c.customer_number}`}><Settings className="h-3 w-3 mr-1" />Administrer</Button>
-                  <Button size="sm" className="bg-emerald-900 hover:bg-emerald-800" onClick={() => doImpersonate(c)} data-testid={`impersonate-${c.customer_number}`}><LogIn className="h-3 w-3 mr-1" />Logg inn som</Button>
+                  <Button size="sm" className="bg-red-900 hover:bg-red-800" onClick={() => doImpersonate(c)} data-testid={`impersonate-${c.customer_number}`}><LogIn className="h-3 w-3 mr-1" />Logg inn som</Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -242,7 +242,7 @@ export default function OwnerPanel() {
                 )}
 
                 <div className="flex gap-2 pt-2 flex-wrap">
-                  <Button onClick={saveForm} className="bg-emerald-900 hover:bg-emerald-800" data-testid="save-cust-btn"><Pencil className="h-4 w-4 mr-1" />Lagre endringer</Button>
+                  <Button onClick={saveForm} className="bg-red-900 hover:bg-red-800" data-testid="save-cust-btn"><Pencil className="h-4 w-4 mr-1" />Lagre endringer</Button>
                   {detail.customer.status === "inactive" ? (
                     <Button variant="outline" onClick={() => setStatus("active")} data-testid="activate-cust-btn"><UserCheck className="h-4 w-4 mr-1" />Aktiver konto</Button>
                   ) : (

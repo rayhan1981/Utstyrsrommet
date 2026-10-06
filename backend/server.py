@@ -65,7 +65,7 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "max_teams": 3, "max_users": 0,  # no extra users beyond admin
         "stock_audit": False, "excel_export": False, "excel_import": False,
         "logo_upload": False, "settings": False,
-        "features": ["Dashboard", "Inntil 3 lag", "Personer", "Utstyr", "Utlån & Retur", "1 admin-bruker", "14 dagers gratis prøve"],
+        "features": ["Dashboard", "Inntil 3 lag", "Personer", "Utstyr", "Utlån & Retur", "1 admin-bruker"],
     },
     "pro": {
         "key": "pro", "name": "Klubb Pro", "price": 599, "lookup_key": "utr_pro_monthly",
@@ -489,6 +489,7 @@ class SizeStock(BaseModel):
     quantity: int = 0
     location: str = ""
     has_qr: bool = False
+    image_url: Optional[str] = None
 
 
 class ItemIn(BaseModel):
@@ -503,6 +504,7 @@ class ItemIn(BaseModel):
     is_ball: bool = False
     sizes: List[SizeStock] = Field(default_factory=list)
     has_qr: bool = False
+    image_url: Optional[str] = None
 
 
 class LoanIn(BaseModel):

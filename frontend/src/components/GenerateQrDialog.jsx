@@ -68,7 +68,7 @@ export default function GenerateQrDialog({ open, onOpenChange, item, onDone }) {
                   <Checkbox checked={selectedSizes.includes(s.size)} onCheckedChange={() => toggle(s.size)} data-testid={`gen-qr-size-${s.size}`} />
                   <span className="font-mono">{s.size}</span>
                   <span className="text-slate-500 text-xs">(lager: {s.quantity})</span>
-                  {s.has_qr && <span className="ml-auto text-emerald-700 text-xs">✓ allerede generert</span>}
+                  {s.has_qr && <span className="ml-auto text-red-700 text-xs">✓ allerede generert</span>}
                 </label>
               ))}
             </div>
@@ -81,7 +81,7 @@ export default function GenerateQrDialog({ open, onOpenChange, item, onDone }) {
           <Button variant="outline" onClick={() => onOpenChange(false)}>Avbryt</Button>
           <Button
             onClick={submit}
-            className="bg-emerald-900 hover:bg-emerald-800"
+            className="bg-red-900 hover:bg-red-800"
             disabled={sized && selectedSizes.length === 0}
             data-testid="gen-qr-submit"
           >

@@ -27,7 +27,7 @@ function TrainerFields({ label, value, onChange }) {
   const v = value || EMPTY_TRAINER;
   return (
     <div className="border border-slate-200 rounded-md p-3 space-y-2">
-      <div className="font-semibold text-sm text-emerald-900">{label}</div>
+      <div className="font-semibold text-sm text-red-900">{label}</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <Input placeholder="Navn" value={v.name} onChange={(e) => onChange({ ...v, name: e.target.value })} />
         <Input placeholder="Telefon" value={v.phone} onChange={(e) => onChange({ ...v, phone: e.target.value })} />
@@ -136,7 +136,7 @@ export default function Teams() {
           <p className="text-slate-600 text-sm mt-1">Administrer lag, trenere og lagledere</p>
         </div>
         {hasPerm("teams", "write") && (
-          <Button onClick={openNew} data-testid="new-team-btn" className="bg-emerald-900 hover:bg-emerald-800">
+          <Button onClick={openNew} data-testid="new-team-btn" className="bg-red-900 hover:bg-red-800">
             <Plus className="h-4 w-4 mr-2" /> Nytt lag
           </Button>
         )}
@@ -239,7 +239,7 @@ export default function Teams() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Avbryt</Button>
-            <Button onClick={save} data-testid="save-team-btn" className="bg-emerald-900 hover:bg-emerald-800">Lagre</Button>
+            <Button onClick={save} data-testid="save-team-btn" className="bg-red-900 hover:bg-red-800">Lagre</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -287,7 +287,7 @@ export default function Teams() {
                           <td className="p-2 text-xs">{new Date(l.loan_date).toLocaleDateString("nb-NO")}</td>
                           <td className="p-2">{l.item_name}{l.size ? ` (${l.size})` : ""}</td>
                           <td className="p-2">{l.quantity}</td>
-                          <td className="p-2"><span className={`text-xs font-semibold px-2 py-1 rounded ${l.status === "returned" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{l.status === "returned" ? "Returnert" : "Utlånt"}</span></td>
+                          <td className="p-2"><span className={`text-xs font-semibold px-2 py-1 rounded ${l.status === "returned" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{l.status === "returned" ? "Returnert" : "Utlånt"}</span></td>
                           <td className={`p-2 text-right ${l.amount_owed > 0 ? "text-red-700 font-semibold" : ""}`}>{nok(l.amount_owed)}</td>
                         </tr>
                       ))}
@@ -337,7 +337,7 @@ export default function Teams() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLoanFor(null)}>Avbryt</Button>
-            <Button onClick={submitQuickLoan} className="bg-emerald-900 hover:bg-emerald-800" data-testid="submit-quick-loan-team">Lån ut</Button>
+            <Button onClick={submitQuickLoan} className="bg-red-900 hover:bg-red-800" data-testid="submit-quick-loan-team">Lån ut</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

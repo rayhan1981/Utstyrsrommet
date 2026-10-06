@@ -27,7 +27,7 @@ export default function TrialBanner() {
   const toneCls = {
     red: "bg-red-50 border-red-200 text-red-800",
     amber: "bg-amber-50 border-amber-200 text-amber-800",
-    emerald: "bg-emerald-50 border-emerald-200 text-emerald-800",
+    emerald: "bg-red-50 border-red-200 text-red-800",
   }[content.tone];
   const Icon = content.icon;
 

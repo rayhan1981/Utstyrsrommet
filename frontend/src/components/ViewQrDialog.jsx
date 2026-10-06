@@ -65,7 +65,7 @@ export default function ViewQrDialog({ open, onOpenChange, item }) {
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Lukk</Button>
           {codes.length > 0 && (
-            <Button onClick={printAll} className="bg-emerald-900 hover:bg-emerald-800" data-testid="print-qr-btn">
+            <Button onClick={printAll} className="bg-red-900 hover:bg-red-800" data-testid="print-qr-btn">
               <Printer className="h-4 w-4 mr-2" />Skriv ut
             </Button>
           )}

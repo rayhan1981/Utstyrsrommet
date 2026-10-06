@@ -64,7 +64,7 @@ export default function Settings() {
         <h3 className="font-display text-lg font-bold mb-3">Legg til ny klubb</h3>
         <div className="flex gap-2">
           <Input placeholder="Klubbnavn" value={newName} onChange={(e) => setNewName(e.target.value)} data-testid="new-club-name" />
-          <Button onClick={create} className="bg-emerald-900 hover:bg-emerald-800" data-testid="create-club-btn"><Plus className="h-4 w-4 mr-2" />Opprett</Button>
+          <Button onClick={create} className="bg-red-900 hover:bg-red-800" data-testid="create-club-btn"><Plus className="h-4 w-4 mr-2" />Opprett</Button>
         </div>
       </Card>
 
@@ -79,7 +79,7 @@ export default function Settings() {
               <div className="flex-1 min-w-0">
                 <h4 className="font-display font-bold text-lg truncate">{c.name}</h4>
                 <p className="text-xs text-slate-500 mt-0.5">Org.nr: {c.org_number || "ikke satt"}</p>
-                <label className="inline-flex items-center gap-2 text-xs text-emerald-800 font-semibold mt-2 cursor-pointer hover:underline">
+                <label className="inline-flex items-center gap-2 text-xs text-red-800 font-semibold mt-2 cursor-pointer hover:underline">
                   <Upload className="h-3 w-3" /> Last opp logo
                   <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(c.id, e.target.files[0])} />
                 </label>
@@ -113,7 +113,7 @@ export default function Settings() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>Avbryt</Button>
-            <Button onClick={saveEdit} className="bg-emerald-900 hover:bg-emerald-800" data-testid="save-club-btn">Lagre</Button>
+            <Button onClick={saveEdit} className="bg-red-900 hover:bg-red-800" data-testid="save-club-btn">Lagre</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

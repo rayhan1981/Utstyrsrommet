@@ -130,7 +130,7 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" data-testid="dt-filter-btn">
-                <Filter className="h-4 w-4 mr-2" />Filter {activeFilterCount > 0 && <span className="ml-1.5 bg-emerald-900 text-white rounded-full px-1.5 text-xs">{activeFilterCount}</span>}
+                <Filter className="h-4 w-4 mr-2" />Filter {activeFilterCount > 0 && <span className="ml-1.5 bg-red-900 text-white rounded-full px-1.5 text-xs">{activeFilterCount}</span>}
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-80 max-h-[70vh] overflow-y-auto">
@@ -189,7 +189,7 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
               {columns.map((c) => (
                 <TableHead key={c.key} className={c.className}>
                   {c.sortable !== false ? (
-                    <button type="button" onClick={() => toggleSort(c.key)} className="inline-flex items-center gap-1 hover:text-emerald-800" data-testid={`dt-sort-${c.key}`}>
+                    <button type="button" onClick={() => toggleSort(c.key)} className="inline-flex items-center gap-1 hover:text-red-800" data-testid={`dt-sort-${c.key}`}>
                       {c.label}
                       {sort?.key === c.key ? (sort.dir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-50" />}
                     </button>

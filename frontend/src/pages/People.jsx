@@ -96,7 +96,7 @@ export default function People() {
           <p className="text-slate-600 text-sm mt-1">Enkeltpersoner knyttet til ett eller flere lag</p>
         </div>
         {hasPerm("people", "write") && (
-          <Button onClick={openNew} data-testid="new-person-btn" className="bg-emerald-900 hover:bg-emerald-800">
+          <Button onClick={openNew} data-testid="new-person-btn" className="bg-red-900 hover:bg-red-800">
             <Plus className="h-4 w-4 mr-2" /> Ny person
           </Button>
         )}
@@ -116,7 +116,7 @@ export default function People() {
               groupLabel: (val) => val ? (teams.find(t => t.id === val)?.team_name || "(Ukjent lag)") : "(Uten lag)",
               render: (p) => <span className="text-xs">{(p.team_ids || []).map(id => teams.find(t => t.id === id)?.team_name).filter(Boolean).join(", ") || "-"}</span> },
             { key: "debt", label: "Skyldig", filter: "number", accessor: (p) => p.debt || 0, render: (p) => <span className={p.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(p.debt)}</span> },
-            { key: "auto_created_from_team", label: "Fra lag?", filter: "boolean", accessor: (p) => !!p.auto_created_from_team, render: (p) => p.auto_created_from_team ? <span className="text-xs text-emerald-700">Auto</span> : "-" },
+            { key: "auto_created_from_team", label: "Fra lag?", filter: "boolean", accessor: (p) => !!p.auto_created_from_team, render: (p) => p.auto_created_from_team ? <span className="text-xs text-red-700">Auto</span> : "-" },
           ]}
           actions={(p) => (
             <>
@@ -154,7 +154,7 @@ export default function People() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Avbryt</Button>
-            <Button onClick={save} data-testid="save-person-btn" className="bg-emerald-900 hover:bg-emerald-800">Lagre</Button>
+            <Button onClick={save} data-testid="save-person-btn" className="bg-red-900 hover:bg-red-800">Lagre</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -272,7 +272,7 @@ export default function People() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLoanFor(null)}>Avbryt</Button>
-            <Button onClick={submitQuickLoan} className="bg-emerald-900 hover:bg-emerald-800" data-testid="submit-quick-loan">Lån ut</Button>
+            <Button onClick={submitQuickLoan} className="bg-red-900 hover:bg-red-800" data-testid="submit-quick-loan">Lån ut</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

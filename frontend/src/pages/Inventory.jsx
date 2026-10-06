@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Trash2, Plus, Download, Search, X, Upload, FileSpreadsheet, QrCode, Eye } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, X, Upload, FileSpreadsheet, QrCode, Eye, ImagePlus, ImageOff, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
@@ -16,8 +16,9 @@ import QrExportDialog from "@/components/QrExportDialog";
 import GenerateQrDialog from "@/components/GenerateQrDialog";
 import ViewQrDialog from "@/components/ViewQrDialog";
 import UpgradeCTA from "@/components/UpgradeCTA";
+import { compressImage } from "@/lib/imageUtils";
 
-const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [] };
+const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null };
 
 export default function Inventory() {
   const { hasPerm, hasFeature } = useAuth();
@@ -53,10 +54,26 @@ export default function Inventory() {
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
-  const addSize = () => setForm({ ...form, sizes: [...form.sizes, { size: "", jersey_number: "X", quantity: 0, location: "" }] });
+  const addSize = () => setForm({ ...form, sizes: [...form.sizes, { size: "", jersey_number: "X", quantity: 0, location: "", image_url: null }] });
   const removeSize = (idx) => setForm({ ...form, sizes: form.sizes.filter((_, i) => i !== idx) });
   const updSize = (idx, key, val) => {
     const arr = [...form.sizes]; arr[idx] = { ...arr[idx], [key]: val }; setForm({ ...form, sizes: arr });
+  };
+
+  const handleMainImage = async (file) => {
+    try {
+      const url = await compressImage(file);
+      setForm((f) => ({ ...f, image_url: url }));
+      toast.success("Hovedbilde lastet opp");
+    } catch (e) { toast.error("Kunne ikke lese bildet"); }
+  };
+
+  const handleSizeImage = async (idx, file) => {
+    try {
+      const url = await compressImage(file);
+      updSize(idx, "image_url", url);
+      toast.success("Bilde lagt til størrelsen");
+    } catch (e) { toast.error("Kunne ikke lese bildet"); }
   };
 
   const exportInv = () => {
@@ -147,7 +164,7 @@ export default function Inventory() {
               )}
             </>
           )}
-          {hasPerm("inventory", "write") && <Button onClick={openNew} data-testid="new-item-btn" className="bg-emerald-900 hover:bg-emerald-800"><Plus className="h-4 w-4 mr-2" />Nytt utstyr</Button>}
+          {hasPerm("inventory", "write") && <Button onClick={openNew} data-testid="new-item-btn" className="bg-red-900 hover:bg-red-800"><Plus className="h-4 w-4 mr-2" />Nytt utstyr</Button>}
         </div>
       </div>
 
@@ -157,16 +174,26 @@ export default function Inventory() {
           emptyLabel="Ingen varer."
           searchPlaceholder="Søk vare, kategori, lokasjon…"
           columns={[
+            { key: "image", label: "", render: (i) => (
+                <div className="h-12 w-12 rounded-md overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+                  {i.image_url ? (
+                    <img src={i.image_url} alt={i.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <ImageIcon className="h-5 w-5 text-slate-300" />
+                  )}
+                </div>
+            ) },
             { key: "name", label: "Varenavn", filter: "text", render: (i) => (
                 <div>
                   <div className="font-semibold">{i.name}</div>
                   {(i.is_clothing || i.is_ball) && (
                     <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
                       {i.sizes?.map((s, idx) => (
-                        <div key={idx}>
+                        <div key={idx} className="flex items-center gap-1.5">
+                          {s.image_url && <img src={s.image_url} alt="" className="h-5 w-5 rounded object-cover border border-slate-200" />}
                           <span className="font-mono">{s.size}: {s.quantity}</span>
                           {i.is_clothing && s.jersey_number && s.jersey_number !== "X" && <span className="ml-1 text-slate-700">#{s.jersey_number}</span>}
-                          {s.location && <span className="ml-2 text-emerald-700">@ {s.location}</span>}
+                          {s.location && <span className="ml-2 text-red-700">@ {s.location}</span>}
                         </div>
                       ))}
                     </div>
@@ -192,7 +219,7 @@ export default function Inventory() {
                   </Button>
                   {anyQr(i) && (
                     <Button variant="ghost" size="icon" onClick={() => viewQr(i)} title="Vis QR-koder" data-testid={`view-qr-${i.id}`}>
-                      <Eye className="h-4 w-4 text-emerald-700" />
+                      <Eye className="h-4 w-4 text-red-700" />
                     </Button>
                   )}
                 </>
@@ -211,6 +238,34 @@ export default function Inventory() {
             <DialogDescription>Legg til varen med kategori, pris, beholdning og lokasjon.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            <div className="flex items-start gap-4 border border-slate-200 rounded-md p-3 bg-slate-50">
+              <div className="h-24 w-24 rounded-md overflow-hidden bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                {form.image_url ? (
+                  <img src={form.image_url} alt="Hovedbilde" className="h-full w-full object-cover" data-testid="main-image-preview" />
+                ) : (
+                  <ImageIcon className="h-8 w-8 text-slate-300" />
+                )}
+              </div>
+              <div className="flex-1">
+                <Label className="text-sm font-semibold">Hovedbilde</Label>
+                <p className="text-xs text-slate-500 mb-2">Vises i varetabellen og detaljvisning.</p>
+                <div className="flex gap-2">
+                  <label className="inline-flex">
+                    <Button type="button" variant="outline" size="sm" asChild data-testid="upload-main-image-btn">
+                      <span className="cursor-pointer">
+                        <ImagePlus className="h-4 w-4 mr-1" />{form.image_url ? "Bytt bilde" : "Legg til bilde"}
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleMainImage(e.target.files[0])} />
+                      </span>
+                    </Button>
+                  </label>
+                  {form.image_url && (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, image_url: null })} data-testid="remove-main-image-btn">
+                      <ImageOff className="h-4 w-4 mr-1" />Fjern
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><Label>Varenavn</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
               <div><Label>Kategori</Label><Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></div>
@@ -246,11 +301,22 @@ export default function Inventory() {
                 </div>
                 <div className="space-y-2">
                   {form.sizes.map((s, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                      <Input className="col-span-2" placeholder="Str" value={s.size} onChange={(e) => updSize(idx, "size", e.target.value)} />
-                      <Input className="col-span-3" placeholder="Draktnr (X)" value={s.jersey_number} onChange={(e) => updSize(idx, "jersey_number", e.target.value || "X")} />
-                      <Input className="col-span-2" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
-                      <Input className="col-span-4" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
+                    <div key={idx} className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
+                      <label className="inline-flex shrink-0 cursor-pointer">
+                        <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`size-image-btn-${idx}`}>
+                          {s.image_url ? (
+                            <img src={s.image_url} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <ImagePlus className="h-4 w-4 text-slate-400" />
+                          )}
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                        </span>
+                      </label>
+                      <Input className="w-20 shrink-0" placeholder="Str" value={s.size} onChange={(e) => updSize(idx, "size", e.target.value)} />
+                      <Input className="w-24 shrink-0" placeholder="Draktnr" value={s.jersey_number} onChange={(e) => updSize(idx, "jersey_number", e.target.value || "X")} />
+                      <Input className="w-24 shrink-0" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
+                      <Input className="flex-1 min-w-[140px]" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
+                      {s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
                       <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)}><X className="h-4 w-4 text-red-600" /></Button>
                     </div>
                   ))}
@@ -270,8 +336,18 @@ export default function Inventory() {
                   {form.sizes.map((s, idx) => {
                     const used = form.sizes.map((x, i) => i !== idx ? x.size : null).filter(Boolean);
                     return (
-                      <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                        <div className="col-span-4">
+                      <div key={idx} className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
+                        <label className="inline-flex shrink-0 cursor-pointer">
+                          <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`ball-size-image-btn-${idx}`}>
+                            {s.image_url ? (
+                              <img src={s.image_url} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <ImagePlus className="h-4 w-4 text-slate-400" />
+                            )}
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                          </span>
+                        </label>
+                        <div className="w-40 shrink-0">
                           <Select value={s.size} onValueChange={(v) => updSize(idx, "size", v)}>
                             <SelectTrigger data-testid={`ball-size-select-${idx}`}><SelectValue placeholder="Velg størrelse" /></SelectTrigger>
                             <SelectContent>
@@ -279,8 +355,9 @@ export default function Inventory() {
                             </SelectContent>
                           </Select>
                         </div>
-                        <Input className="col-span-2" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
-                        <Input className="col-span-5" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
+                        <Input className="w-24 shrink-0" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
+                        <Input className="flex-1 min-w-[140px]" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
+                        {s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
                         <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)}><X className="h-4 w-4 text-red-600" /></Button>
                       </div>
                     );
@@ -292,7 +369,7 @@ export default function Inventory() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Avbryt</Button>
-            <Button onClick={save} data-testid="save-item-btn" className="bg-emerald-900 hover:bg-emerald-800">Lagre</Button>
+            <Button onClick={save} data-testid="save-item-btn" className="bg-red-900 hover:bg-red-800">Lagre</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

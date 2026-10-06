@@ -109,7 +109,7 @@ export default function InvoiceDialog({ open, onOpenChange, personId, teamId, re
               </Table>
             </div>
 
-            <div className="flex items-center justify-between bg-emerald-50 rounded-md p-3">
+            <div className="flex items-center justify-between bg-red-50 rounded-md p-3">
               <span className="text-sm">Valgt: {chosenIds.length} linje{chosenIds.length === 1 ? "" : "r"}</span>
               <span className="font-display font-bold text-lg">{nok(chosenTotal)}</span>
             </div>
@@ -131,19 +131,19 @@ export default function InvoiceDialog({ open, onOpenChange, personId, teamId, re
 
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>Avbryt</Button>
-              <Button onClick={generate} className="bg-emerald-900 hover:bg-emerald-800" disabled={chosenIds.length === 0} data-testid="generate-invoice-btn">
+              <Button onClick={generate} className="bg-red-900 hover:bg-red-800" disabled={chosenIds.length === 0} data-testid="generate-invoice-btn">
                 Generer faktura (PDF)
               </Button>
             </DialogFooter>
           </>
         ) : (
           <div className="space-y-4">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-md p-4">
+            <div className="bg-red-50 border border-red-200 rounded-md p-4">
               <div className="font-bold">Faktura {generated.invoice_number} opprettet</div>
               <div className="text-sm text-slate-600 mt-1">Beløp: <strong>{nok(generated.total)}</strong> · KID: <span className="font-mono">{generated.kid}</span></div>
             </div>
             <div className="flex gap-2">
-              <Button onClick={download} className="flex-1 bg-emerald-900 hover:bg-emerald-800" data-testid="download-invoice-btn"><Download className="h-4 w-4 mr-2" />Last ned PDF</Button>
+              <Button onClick={download} className="flex-1 bg-red-900 hover:bg-red-800" data-testid="download-invoice-btn"><Download className="h-4 w-4 mr-2" />Last ned PDF</Button>
             </div>
             <div className="border border-slate-200 rounded-md p-3 space-y-2">
               <Label>Send faktura på e-post</Label>

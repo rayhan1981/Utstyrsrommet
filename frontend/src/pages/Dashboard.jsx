@@ -53,12 +53,12 @@ export default function Dashboard() {
         <Card className="p-5 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-display text-lg font-bold">Økonomisk oversikt</h3>
-            <TrendingUp className="h-5 w-5 text-emerald-700" />
+            <TrendingUp className="h-5 w-5 text-red-700" />
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div className="border border-slate-200 rounded-md p-4">
               <div className="text-xs uppercase font-semibold text-slate-500">Lagerverdi</div>
-              <div className="font-display text-xl font-bold text-emerald-900 mt-1">{nok(stats.stock_value)}</div>
+              <div className="font-display text-xl font-bold text-red-900 mt-1">{nok(stats.stock_value)}</div>
             </div>
             <div className="border border-slate-200 rounded-md p-4">
               <div className="text-xs uppercase font-semibold text-slate-500">Lag skylder</div>
@@ -103,7 +103,7 @@ export default function Dashboard() {
                   <div className="font-semibold text-sm">{l.item_name} × {l.quantity}</div>
                   <div className="text-xs text-slate-500">{new Date(l.loan_date).toLocaleString("nb-NO")}</div>
                 </div>
-                <span className={`text-xs font-semibold px-2 py-1 rounded ${l.status === "returned" ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"}`}>
+                <span className={`text-xs font-semibold px-2 py-1 rounded ${l.status === "returned" ? "bg-red-100 text-red-800" : "bg-blue-100 text-blue-800"}`}>
                   {l.status === "returned" ? "Returnert" : "Utlånt"}
                 </span>
               </div>

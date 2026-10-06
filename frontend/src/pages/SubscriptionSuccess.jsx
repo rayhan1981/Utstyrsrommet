@@ -27,10 +27,10 @@ export default function SubscriptionSuccess() {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
       <Card className="max-w-md p-8 text-center">
-        <CheckCircle2 className="h-16 w-16 text-emerald-600 mx-auto mb-4" />
+        <CheckCircle2 className="h-16 w-16 text-red-600 mx-auto mb-4" />
         <h1 className="font-display text-2xl font-extrabold">Takk for abonnementet!</h1>
         <p className="text-slate-600 text-sm mt-2">Betalingen er bekreftet og pakken er aktivert.</p>
-        <Button className="mt-6 bg-emerald-900 hover:bg-emerald-800" onClick={() => nav("/app")}>Åpne appen</Button>
+        <Button className="mt-6 bg-red-900 hover:bg-red-800" onClick={() => nav("/app")}>Åpne appen</Button>
       </Card>
     </div>
   );

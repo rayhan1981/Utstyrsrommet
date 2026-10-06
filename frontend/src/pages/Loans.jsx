@@ -102,7 +102,7 @@ export default function Loans() {
           <p className="text-slate-600 text-sm mt-1">Registrer utlån, utlevering og håndter innlevering</p>
         </div>
         {hasPerm("loans", "write") && (
-          <Button onClick={() => setOpen(true)} data-testid="new-loan-btn" className="bg-emerald-900 hover:bg-emerald-800">
+          <Button onClick={() => setOpen(true)} data-testid="new-loan-btn" className="bg-red-900 hover:bg-red-800">
             <Plus className="h-4 w-4 mr-2" />Nytt utlån / utlevering
           </Button>
         )}
@@ -166,11 +166,11 @@ export default function Loans() {
               </label>
             )}
 
-            <div className="border border-slate-200 rounded-md p-3 bg-emerald-50/50">
+            <div className="border border-slate-200 rounded-md p-3 bg-red-50/50">
               <Label className="text-sm font-semibold">Skyldig beløp går til</Label>
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <button type="button" onClick={() => setForm({ ...form, loan_target: "person" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "person" ? "bg-emerald-900 text-white" : "bg-white border border-slate-200 hover:border-emerald-700"}`} data-testid="target-person-btn">Person</button>
-                <button type="button" onClick={() => setForm({ ...form, loan_target: "team" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "team" ? "bg-emerald-900 text-white" : "bg-white border border-slate-200 hover:border-emerald-700"}`} data-testid="target-team-btn">Lag</button>
+                <button type="button" onClick={() => setForm({ ...form, loan_target: "person" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "person" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="target-person-btn">Person</button>
+                <button type="button" onClick={() => setForm({ ...form, loan_target: "team" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "team" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="target-team-btn">Lag</button>
               </div>
               <p className="text-xs text-slate-600 mt-1.5">{form.loan_target === "team" ? "Gjelden belastes LAGET, ikke personen." : "Gjelden belastes PERSONEN som henter."}</p>
             </div>
@@ -238,7 +238,7 @@ export default function Loans() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Avbryt</Button>
-            <Button onClick={save} data-testid="save-loan-btn" className="bg-emerald-900 hover:bg-emerald-800">Registrer</Button>
+            <Button onClick={save} data-testid="save-loan-btn" className="bg-red-900 hover:bg-red-800">Registrer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -261,7 +261,7 @@ export default function Loans() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReturnFor(null)}>Avbryt</Button>
-            <Button onClick={doReturn} data-testid="confirm-return-btn" className="bg-emerald-900 hover:bg-emerald-800">Bekreft retur</Button>
+            <Button onClick={doReturn} data-testid="confirm-return-btn" className="bg-red-900 hover:bg-red-800">Bekreft retur</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
