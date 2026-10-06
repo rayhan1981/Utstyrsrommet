@@ -100,7 +100,8 @@ export default function Layout() {
             <div className="font-semibold text-slate-700">Hansen Logistikk</div>
             <div>Designet og utviklet av Raymond Dalgård Hansen</div>
             <div>Versjon 1.00 · 2026</div>
-            <div><a href="mailto:hansenlogistikk@gmail.com" className="hover:text-emerald-800">hansenlogistikk@gmail.com</a></div>
+            <div><a href="mailto:kontakt@utstyrsrommet.no" className="hover:text-emerald-800">kontakt@utstyrsrommet.no</a></div>
+            <div><a href="mailto:support@utstyrsrommet.no" className="hover:text-emerald-800">support@utstyrsrommet.no</a></div>
             <div>Tlf. 90 96 70 88</div>
             <div className="pt-1 text-slate-400">© 2026 - 2036 Hansen Logistikk</div>
           </div>

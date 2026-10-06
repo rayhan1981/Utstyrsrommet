@@ -27,7 +27,7 @@ export default function Terms() {
             <ul className="list-disc pl-5 space-y-1">
               <li>Kunden må oppgi korrekte opplysninger ved registrering.</li>
               <li>Kunden er ansvarlig for all aktivitet som skjer under egen konto og egne tilleggsbrukere.</li>
-              <li>Innloggingsinformasjon skal holdes konfidensiell. Mistanke om misbruk skal varsles umiddelbart til <a href="mailto:hansenlogistikk@gmail.com" className="text-emerald-800 underline">hansenlogistikk@gmail.com</a>.</li>
+              <li>Innloggingsinformasjon skal holdes konfidensiell. Mistanke om misbruk skal varsles umiddelbart til <a href="mailto:support@utstyrsrommet.no" className="text-emerald-800 underline">support@utstyrsrommet.no</a>.</li>
             </ul>
           </section>
 
@@ -82,7 +82,7 @@ export default function Terms() {
 
           <section>
             <h2 className="font-display text-xl font-bold">12. Kontakt</h2>
-            <p>Hansen Logistikk<br />Kontaktperson: Raymond Dalgård Hansen<br />E-post: <a href="mailto:hansenlogistikk@gmail.com" className="text-emerald-800 underline">hansenlogistikk@gmail.com</a><br />Telefon: 90 96 70 88</p>
+            <p>Hansen Logistikk<br />Kontaktperson: Raymond Dalgård Hansen<br />Generell kontakt: <a href="mailto:kontakt@utstyrsrommet.no" className="text-emerald-800 underline">kontakt@utstyrsrommet.no</a><br />Support: <a href="mailto:support@utstyrsrommet.no" className="text-emerald-800 underline">support@utstyrsrommet.no</a><br />Admin/eier: <a href="mailto:Raymond@utstyrsrommet.no" className="text-emerald-800 underline">Raymond@utstyrsrommet.no</a><br />Telefon: 90 96 70 88</p>
           </section>
         </div>
 
