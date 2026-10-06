@@ -81,6 +81,7 @@ export default function Landing() {
 
       <footer className="bg-slate-900 text-slate-400 py-8">
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between flex-wrap gap-4">
+          <img src="/logo.png" alt="UTSTYRSROMMET" className="h-8 w-auto" />
           <div className="font-display text-white font-bold">UTSTYRSROMMET</div>
           <div className="text-sm">© 2026 Utstyrsrommet · Lagerstyring for idrettsklubber</div>
           <Link to="/innlogging" className="text-sm hover:text-white">Logg inn →</Link>

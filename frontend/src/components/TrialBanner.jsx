@@ -19,7 +19,9 @@ export default function TrialBanner() {
     return null;
   }, [status, daysLeft]);
 
-  if (!content) return null;
+  if (content.tone === "amber" && daysLeft <= 0) {
+    content.label = "Siste dag av prøveperioden";
+  }
   const toneCls = {
     red: "bg-red-50 border-red-200 text-red-800",
     amber: "bg-amber-50 border-amber-200 text-amber-800",

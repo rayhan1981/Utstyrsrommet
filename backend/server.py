@@ -234,8 +234,10 @@ async def _sync_subscription_status(tid: str) -> dict:
 
 
 async def _is_write_allowed(tid: str) -> bool:
-    """Returnerer False hvis kunden er i expired/cancelled → read-only."""
+    """Returnerer False hvis kunden er i expired/cancelled → read-only. Owner-workspace alltid tillatt."""
     cust = await _sync_subscription_status(tid)
+    if cust.get("is_owner_workspace"):
+        return True
     status = cust.get("subscription_status") or cust.get("status", "trial")
     return status not in ("expired", "cancelled")
 

@@ -54,7 +54,8 @@ export default function Login() {
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6">
         <Card className="w-full max-w-md p-8 border-slate-200 shadow-sm">
           <div className="lg:hidden text-center mb-6">
-            <div className="font-display text-3xl font-extrabold text-emerald-900">UTSTYRSROMMET</div>
+            <img src="/logo.png" alt="UTSTYRSROMMET" className="h-16 w-auto mx-auto mb-2" />
+            <div className="font-display text-2xl font-extrabold text-emerald-900">UTSTYRSROMMET</div>
           </div>
           <h1 className="font-display text-2xl font-bold mb-1">Logg inn</h1>
           <p className="text-sm text-slate-600 mb-6">Tilgang til klubbens lagerstyring</p>
