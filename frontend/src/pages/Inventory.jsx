@@ -15,6 +15,7 @@ import DataTable from "@/components/DataTable";
 import QrExportDialog from "@/components/QrExportDialog";
 import GenerateQrDialog from "@/components/GenerateQrDialog";
 import ViewQrDialog from "@/components/ViewQrDialog";
+import UpgradeCTA from "@/components/UpgradeCTA";
 
 const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [] };
 
@@ -80,6 +81,15 @@ export default function Inventory() {
   const generateQr = (item) => setGenFor(item);
   const viewQr = (item) => setViewFor(item);
 
+  const bulkGenerateQr = async () => {
+    if (!window.confirm("Aktiver QR-koder for ALLE varer og størrelser som ikke har det ennå?")) return;
+    try {
+      const { data } = await api.post("/items/bulk-generate-qr");
+      toast.success(`QR aktivert: ${data.items_updated} varer, ${data.sizes_updated} størrelser`);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   const anyQr = (i) => {
     if (i.is_clothing || i.is_ball) return (i.sizes || []).some((s) => s.has_qr);
     return !!i.has_qr;
@@ -130,7 +140,12 @@ export default function Inventory() {
           )}
           <Button variant="outline" onClick={exportInv} data-testid="export-inventory-btn"><Download className="h-4 w-4 mr-2" />Eksporter Excel</Button>
           {hasFeature("qr_codes") && (
-            <Button variant="outline" onClick={() => setQrOpen(true)} data-testid="qr-labels-btn"><QrCode className="h-4 w-4 mr-2" />Eksporter QR</Button>
+            <>
+              <Button variant="outline" onClick={() => setQrOpen(true)} data-testid="qr-labels-btn"><QrCode className="h-4 w-4 mr-2" />Eksporter QR</Button>
+              {hasPerm("inventory", "write") && (
+                <Button variant="outline" onClick={bulkGenerateQr} data-testid="bulk-qr-btn"><QrCode className="h-4 w-4 mr-2" />Generer QR for alle</Button>
+              )}
+            </>
           )}
           {hasPerm("inventory", "write") && <Button onClick={openNew} data-testid="new-item-btn" className="bg-emerald-900 hover:bg-emerald-800"><Plus className="h-4 w-4 mr-2" />Nytt utstyr</Button>}
         </div>
@@ -284,6 +299,10 @@ export default function Inventory() {
       <QrExportDialog open={qrOpen} onOpenChange={setQrOpen} />
       <GenerateQrDialog open={!!genFor} onOpenChange={(o) => !o && setGenFor(null)} item={genFor} onDone={load} />
       <ViewQrDialog open={!!viewFor} onOpenChange={(o) => !o && setViewFor(null)} item={viewFor} />
+
+      {!hasFeature("qr_codes") && hasPerm("inventory", "read") && (
+        <UpgradeCTA feature="qr_codes" inline />
+      )}
     </div>
   );
 }

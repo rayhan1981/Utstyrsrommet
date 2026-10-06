@@ -1,6 +1,7 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import UpgradeCTA from "@/components/UpgradeCTA";
 
 export default function ProtectedRoute({ children, module, level = "read", feature, ownerOnly, needsTenant = true }) {
   const { user, loading, hasPerm, hasFeature, tenantId } = useAuth();
@@ -17,7 +18,7 @@ export default function ProtectedRoute({ children, module, level = "read", featu
     return <div className="p-8 text-center"><h2 className="text-xl font-semibold">Ingen tilgang</h2><p className="text-slate-600 text-sm mt-1">Du har ikke rettigheter til denne siden.</p></div>;
   }
   if (feature && !hasFeature(feature)) {
-    return <div className="p-8 text-center"><h2 className="text-xl font-semibold">Krever oppgradering</h2><p className="text-slate-600 text-sm mt-1">Denne funksjonen er ikke med i din pakke. Oppgrader på Abonnement-siden.</p></div>;
+    return <UpgradeCTA feature={feature} />;
   }
   return children;
 }

@@ -1461,6 +1461,35 @@ async def create_item(data: ItemIn, request: Request, user=Depends(require_perm(
     return _clean(doc)
 
 
+@api.post("/items/bulk-generate-qr")
+async def bulk_generate_qr(request: Request, user=Depends(require_perm("inventory", "write"))):
+    """Aktiver QR for ALLE varer og størrelser som ikke har det ennå. Kun deluxe."""
+    tid = await require_feature(request, user, "qr_codes")
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(10000)
+    items_updated = 0
+    sizes_updated = 0
+    for it in items:
+        changed = False
+        if it.get("is_clothing") or it.get("is_ball"):
+            sizes = it.get("sizes", [])
+            for s in sizes:
+                if not s.get("has_qr"):
+                    s["has_qr"] = True
+                    sizes_updated += 1
+                    changed = True
+            if changed or (not it.get("has_qr") and sizes):
+                await db.items.update_one(
+                    {"id": it["id"], "tenant_id": tid},
+                    {"$set": {"sizes": sizes, "has_qr": any(s.get("has_qr") for s in sizes)}}
+                )
+                items_updated += 1
+        else:
+            if not it.get("has_qr"):
+                await db.items.update_one({"id": it["id"], "tenant_id": tid}, {"$set": {"has_qr": True}})
+                items_updated += 1
+    return {"ok": True, "items_updated": items_updated, "sizes_updated": sizes_updated}
+
+
 @api.post("/items/{item_id}/generate-qr")
 async def generate_item_qr(item_id: str, data: GenerateQrIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_feature(request, user, "qr_codes")
