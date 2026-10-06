@@ -191,7 +191,53 @@ async def get_tenant_plan(tenant_id: str) -> Dict[str, Any]:
     cust = await db.customers.find_one({"id": tenant_id})
     if not cust:
         raise HTTPException(status_code=404, detail="Kunde ikke funnet")
+    # Aktiv prøveperiode = full Deluxe
+    if cust.get("subscription_status") == "trial":
+        end = cust.get("trial_end_date") or cust.get("trial_ends_at")
+        if end and datetime.fromisoformat(end) > datetime.now(timezone.utc):
+            return PLANS["deluxe"]
     return PLANS.get(cust.get("plan", "basic"), PLANS["basic"])
+
+
+def _trial_days_left(cust: dict) -> int:
+    end = cust.get("trial_end_date") or cust.get("trial_ends_at")
+    if not end:
+        return 0
+    try:
+        delta = datetime.fromisoformat(end) - datetime.now(timezone.utc)
+        return max(0, int(delta.total_seconds() // 86400) + (1 if delta.total_seconds() % 86400 > 0 else 0))
+    except Exception:
+        return 0
+
+
+async def _sync_subscription_status(tid: str) -> dict:
+    """Oppdater kundens subscription_status basert på trial-sluttdato."""
+    cust = await db.customers.find_one({"id": tid}, {"_id": 0})
+    if not cust:
+        return {}
+    status = cust.get("subscription_status") or cust.get("status", "trial")
+    if status == "trial":
+        end = cust.get("trial_end_date") or cust.get("trial_ends_at")
+        if end and datetime.fromisoformat(end) < datetime.now(timezone.utc):
+            # Trial utløpt – om bruker valgte abonnement, aktiver det. Ellers → expired
+            selected = cust.get("selected_plan")
+            if selected and selected in PLANS and selected != "free":
+                await db.customers.update_one({"id": tid}, {"$set": {
+                    "subscription_status": "active", "plan": selected,
+                    "subscription_start_date": now_iso(),
+                }})
+                cust["subscription_status"] = "active"; cust["plan"] = selected
+            else:
+                await db.customers.update_one({"id": tid}, {"$set": {"subscription_status": "expired"}})
+                cust["subscription_status"] = "expired"
+    return cust
+
+
+async def _is_write_allowed(tid: str) -> bool:
+    """Returnerer False hvis kunden er i expired/cancelled → read-only."""
+    cust = await _sync_subscription_status(tid)
+    status = cust.get("subscription_status") or cust.get("status", "trial")
+    return status not in ("expired", "cancelled")
 
 
 async def require_feature(request: Request, user: dict, feature: str) -> str:
@@ -208,7 +254,15 @@ def require_perm(module: str, level: str = "read"):
     order = {"none": 0, "read": 1, "write": 2, "admin": 3}
 
     async def dep(request: Request, user=Depends(get_current_user)) -> dict:
-        if user.get("role") in ("admin", "platform_owner"):
+        # Platform owner alltid full tilgang
+        if user.get("role") == "platform_owner":
+            return user
+        # For write/admin: sjekk om abonnement tillater skriv
+        if order.get(level, 1) >= 2:
+            tid = user.get("tenant_id")
+            if tid and not await _is_write_allowed(tid):
+                raise HTTPException(status_code=402, detail="Aktivt abonnement kreves. Prøveperioden din er avsluttet.")
+        if user.get("role") == "admin":
             return user
         perms = user.get("permissions", {})
         if order.get(perms.get(module, "none"), 0) < order.get(level, 1):
@@ -290,8 +344,12 @@ class SignupIn(BaseModel):
     owner_email: EmailStr
     owner_phone: str = ""
     password: str
-    plan: str = "basic"
+    plan: Optional[str] = None  # Valgfritt – prøveperiode trenger ikke pakke
     accept_terms: bool = False
+
+
+class ExtendTrialIn(BaseModel):
+    days: int = 7
 
 
 class UserCreateIn(BaseModel):
@@ -605,9 +663,17 @@ async def me(request: Request, user=Depends(get_current_user)):
     tid = await resolve_tenant_id(request, user)
     customer = None
     plan = None
+    trial_days_left = 0
     if tid:
-        customer = await db.customers.find_one({"id": tid}, {"_id": 0})
-        plan = PLANS.get(customer.get("plan", "basic")) if customer else None
+        # Sync status før vi returnerer
+        customer = await _sync_subscription_status(tid)
+        if customer:
+            # Effektiv plan: deluxe under trial
+            if customer.get("subscription_status") == "trial":
+                plan = PLANS["deluxe"]
+            else:
+                plan = PLANS.get(customer.get("plan", "basic"))
+            trial_days_left = _trial_days_left(customer) if customer.get("subscription_status") == "trial" else 0
     imp_cookie = request.cookies.get("imp_cid")
     impersonating = bool(
         user.get("role") == "platform_owner"
@@ -620,15 +686,44 @@ async def me(request: Request, user=Depends(get_current_user)):
         "tenant_id": tid,
         "customer": customer,
         "plan": plan,
+        "trial_days_left": trial_days_left,
         "impersonating": impersonating,
     }
+
+
+# ---------------- Trial admin (platform owner) ----------------
+@api.post("/owner/customers/{customer_id}/extend-trial")
+async def extend_trial(customer_id: str, data: ExtendTrialIn, user=Depends(require_platform_owner)):
+    cust = await db.customers.find_one({"id": customer_id})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    base = cust.get("trial_end_date") or cust.get("trial_ends_at") or now_iso()
+    base_dt = datetime.fromisoformat(base)
+    new_end = max(base_dt, datetime.now(timezone.utc)) + timedelta(days=int(data.days))
+    await db.customers.update_one({"id": customer_id}, {"$set": {
+        "subscription_status": "trial", "status": "trial",
+        "trial_end_date": new_end.isoformat(), "trial_ends_at": new_end.isoformat(),
+    }})
+    return {"ok": True, "trial_end_date": new_end.isoformat()}
+
+
+# ---------------- Trial: select plan during trial (deferred activation) ----------------
+class SelectPlanIn(BaseModel):
+    plan: str
+
+
+@api.post("/subscription/select-plan")
+async def select_plan(data: SelectPlanIn, request: Request, user=Depends(require_admin)):
+    tid = await require_tenant(request, user)
+    if data.plan not in PLANS or data.plan == "free":
+        raise HTTPException(400, "Ugyldig pakke")
+    await db.customers.update_one({"id": tid}, {"$set": {"selected_plan": data.plan}})
+    return {"ok": True, "selected_plan": data.plan}
 
 
 # ---------------- Signup ----------------
 @api.post("/signup")
 async def signup(data: SignupIn, response: Response):
-    if data.plan not in PLANS or data.plan == "free":
-        raise HTTPException(400, "Ugyldig pakke")
     if not data.accept_terms:
         raise HTTPException(400, "Du må godta bruksvilkårene for å opprette konto")
     if len(data.password) < 6:
@@ -639,7 +734,8 @@ async def signup(data: SignupIn, response: Response):
 
     customer_number = await _generate_customer_number()
     tenant_id = new_id()
-    trial_ends = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+    now = datetime.now(timezone.utc)
+    trial_end = (now + timedelta(days=7))
 
     customer_doc = {
         "id": tenant_id,
@@ -648,9 +744,14 @@ async def signup(data: SignupIn, response: Response):
         "owner_name": data.owner_name,
         "owner_email": email,
         "owner_phone": data.owner_phone,
-        "plan": data.plan,
+        "plan": "deluxe",  # funksjonelt deluxe under trial
         "status": "trial",
-        "trial_ends_at": trial_ends,
+        "subscription_status": "trial",
+        "trial_start_date": now.isoformat(),
+        "trial_end_date": trial_end.isoformat(),
+        "trial_ends_at": trial_end.isoformat(),  # beholdes for Stripe-trial-mapping
+        "selected_plan": None,
+        "subscription_start_date": None,
         "stripe_customer_id": None,
         "stripe_subscription_id": None,
         "seats_subscription_id": None,

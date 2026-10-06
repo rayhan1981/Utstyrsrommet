@@ -7,6 +7,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import NotificationCenter from "@/components/NotificationCenter";
+import TrialBanner from "@/components/TrialBanner";
 
 const BASE_NAV = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard, module: "dashboard", feature: null },
@@ -107,7 +108,8 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 min-w-0">
-        <div className="h-12 border-b border-slate-200 bg-white flex items-center justify-end px-4">
+        <div className="h-12 border-b border-slate-200 bg-white flex items-center justify-end px-4 gap-3">
+          <TrialBanner />
           <NotificationCenter />
         </div>
         {impersonating && (

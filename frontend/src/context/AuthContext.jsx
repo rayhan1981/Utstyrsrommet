@@ -59,8 +59,11 @@ export function AuthProvider({ children }) {
   const hasPerm = (module, level = "read") => {
     if (!user) return false;
     if (user.role === "platform_owner") return true;
-    if (user.role === "admin") return true;
+    // Expired-subscription blokkerer write/admin for alle untatt platform_owner
+    const status = customer?.subscription_status || customer?.status;
     const order = { none: 0, read: 1, write: 2, admin: 3 };
+    if ((order[level] || 0) >= 2 && (status === "expired" || status === "cancelled")) return false;
+    if (user.role === "admin") return true;
     return (order[user.permissions?.[module] || "none"] || 0) >= (order[level] || 0);
   };
 

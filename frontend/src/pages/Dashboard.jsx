@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Card } from "@/components/ui/card";
 import { Package, ArrowLeftRight, Users as UsersIcon, UserCircle, TrendingUp, AlertTriangle } from "lucide-react";
+import TrialDashboardCard from "@/components/TrialDashboardCard";
 
 function Stat({ icon: Icon, label, value, color = "emerald", testid }) {
   return (
@@ -38,6 +39,8 @@ export default function Dashboard() {
           {customer?.status === "trial" && <span className="ml-2 inline-block text-xs font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-800">Prøveperiode</span>}
         </p>
       </div>
+
+      <TrialDashboardCard />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat icon={Package} label="Varer" value={stats.total_items} testid="stat-items" />

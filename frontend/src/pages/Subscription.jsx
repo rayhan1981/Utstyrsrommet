@@ -11,6 +11,8 @@ import { toast } from "sonner";
 import { Check, CreditCard, UserPlus, FileText, Download, AlertTriangle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 
+const PLANS_LABEL = { basic: "Klubb Basic", pro: "Klubb Pro", deluxe: "Klubb Deluxe" };
+
 export default function Subscription() {
   const { customer, plan: currentPlan, refresh } = useAuth();
   const [plans, setPlans] = useState([]);
@@ -90,6 +92,14 @@ export default function Subscription() {
   const yearlyFirst = (p) => Math.round(p.price * 12 * 0.5);
   const yearlyLoyal = (p) => Math.round(p.price * 12 * 0.9);
 
+  const selectDeferred = async (planKey) => {
+    try {
+      await api.post("/subscription/select-plan", { plan: planKey });
+      toast.success(`Du beholder Deluxe-tilgangen ut prøveperioden. ${planKey} starter etter at prøveperioden avsluttes.`);
+      await refresh();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   return (
     <div className="space-y-6" data-testid="subscription-page">
       <div>
@@ -111,6 +121,11 @@ export default function Subscription() {
                 {customer.cancel_at && <span className="text-sm text-slate-600">Avsluttes {new Date(customer.cancel_at).toLocaleDateString("nb-NO")}</span>}
               </div>
               <div className="text-sm text-slate-500 mt-2">Kundenummer: <span className="font-mono font-semibold text-slate-800">{customer.customer_number}</span></div>
+              {customer.status === "trial" && customer.selected_plan && (
+                <div className="mt-2 text-sm bg-emerald-50 border border-emerald-200 rounded-md p-2 inline-block">
+                  <strong>Valgt abonnement:</strong> {PLANS_LABEL[customer.selected_plan] || customer.selected_plan} – aktiveres når prøveperioden avsluttes
+                </div>
+              )}
             </div>
             <div className="flex gap-2 flex-wrap">
               {(customer.status === "trial" || customer.status === "past_due") && !isOwnerWs && (
@@ -181,9 +196,23 @@ export default function Subscription() {
                   <ul className="space-y-1 text-xs">
                     {p.features.map((f) => <li key={f} className="flex gap-1.5"><Check className="h-3 w-3 text-emerald-700 shrink-0 mt-0.5" />{f}</li>)}
                   </ul>
-                  <Button className="w-full mt-4" variant={isCurrent ? "outline" : "default"} disabled={isCurrent || loading === p.key || !acceptTerms} onClick={() => checkout(p.key)} data-testid={`checkout-${p.key}`}>
-                    {isCurrent ? "Nåværende pakke" : loading === p.key ? "Åpner Stripe…" : "Velg pakke"}
-                  </Button>
+                  {customer?.subscription_status === "trial" ? (
+                    <>
+                      <Button
+                        className={`w-full mt-4 ${p.key === "pro" ? "bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold" : "bg-emerald-900 hover:bg-emerald-800"}`}
+                        disabled={customer?.selected_plan === p.key}
+                        onClick={() => selectDeferred(p.key)}
+                        data-testid={`select-${p.key}`}
+                      >
+                        {customer?.selected_plan === p.key ? "Valgt" : p.key === "pro" ? "⭐ Velg Pro" : `Velg ${p.name.replace('Klubb ','')}`}
+                      </Button>
+                      <p className="text-[10px] text-slate-500 mt-1 text-center">Aktiveres etter prøveperioden</p>
+                    </>
+                  ) : (
+                    <Button className="w-full mt-4" variant={isCurrent ? "outline" : "default"} disabled={isCurrent || loading === p.key || !acceptTerms} onClick={() => checkout(p.key)} data-testid={`checkout-${p.key}`}>
+                      {isCurrent ? "Nåværende pakke" : loading === p.key ? "Åpner Stripe…" : "Velg pakke"}
+                    </Button>
+                  )}
                 </Card>
               );
             })}

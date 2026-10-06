@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { api, formatError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -7,46 +7,45 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Check } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Sparkles, Check } from "lucide-react";
 import { toast, Toaster } from "sonner";
 
 export default function Signup() {
-  const [params] = useSearchParams();
   const { signup } = useAuth();
   const nav = useNavigate();
-  const [plans, setPlans] = useState([]);
-  const [plan, setPlan] = useState(params.get("plan") || "pro");
-  const [cycle, setCycle] = useState("monthly");
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [welcome, setWelcome] = useState(null);
   const [form, setForm] = useState({ club_name: "", owner_name: "", owner_email: "", owner_phone: "", password: "" });
-
-  useEffect(() => { api.get("/plans").then((r) => setPlans(r.data)); }, []);
 
   const submit = async (e) => {
     e.preventDefault();
     if (!acceptTerms) { toast.error("Du må godta bruksvilkårene"); return; }
     setLoading(true);
     try {
-      const res = await signup({ ...form, plan, accept_terms: true });
-      toast.success(`Konto opprettet! Kundenummer: ${res.customer_number}`);
-      nav("/app");
+      const res = await signup({ ...form, accept_terms: true });
+      setWelcome(res);
     } catch (e) {
       toast.error(formatError(e.response?.data?.detail));
     } finally { setLoading(false); }
   };
 
-  const yearlyPrice = (p) => Math.round(p.price * 12 * 0.5); // first year with 50% off
-  const yearlyLoyal = (p) => Math.round(p.price * 12 * 0.9); // loyalty after
+  const closeWelcome = () => { setWelcome(null); nav("/app"); };
 
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4">
-      <div className="max-w-5xl mx-auto">
-        <Link to="/" className="font-display text-2xl font-extrabold text-emerald-900 inline-block mb-6">UTSTYRSROMMET</Link>
+      <div className="max-w-4xl mx-auto">
+        <Link to="/" className="inline-flex items-center gap-3 mb-6">
+          <img src="/logo.png" alt="UTSTYRSROMMET" className="h-12 w-auto" />
+        </Link>
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           <Card className="lg:col-span-3 p-6">
+            <div className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-800 mb-3">
+              <Sparkles className="h-3 w-3" /> 7 dager gratis Deluxe
+            </div>
             <h1 className="font-display text-3xl font-extrabold">Opprett klubbkonto</h1>
-            <p className="text-slate-600 text-sm mt-1">14 dagers gratis prøve. Ingen kort kreves nå.</p>
+            <p className="text-slate-600 text-sm mt-1">Få full tilgang til Utstyrsrommet Deluxe i 7 dager. Ingen betalingskort. Ingen bindingstid.</p>
             <form onSubmit={submit} className="space-y-3 mt-6">
               <div><Label>Klubbnavn</Label><Input required value={form.club_name} onChange={(e) => setForm({ ...form, club_name: e.target.value })} data-testid="signup-club" /></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -62,43 +61,53 @@ export default function Signup() {
               </label>
 
               <Button type="submit" disabled={loading || !acceptTerms} className="w-full bg-emerald-900 hover:bg-emerald-800" data-testid="signup-submit">
-                {loading ? "Oppretter…" : "Start 14 dagers gratis prøve"}
+                {loading ? "Oppretter…" : "Start 7 dagers gratis prøveperiode"}
               </Button>
               <p className="text-xs text-slate-500 text-center">Har du allerede konto? <Link to="/innlogging" className="text-emerald-800 font-semibold hover:underline">Logg inn</Link></p>
             </form>
           </Card>
-          <div className="lg:col-span-2 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="font-display text-lg font-bold">Velg pakke</div>
-              <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs">
-                <button type="button" onClick={() => setCycle("monthly")} className={`px-3 py-1.5 rounded ${cycle === "monthly" ? "bg-emerald-900 text-white" : "text-slate-600"}`} data-testid="cycle-monthly">Månedlig</button>
-                <button type="button" onClick={() => setCycle("yearly")} className={`px-3 py-1.5 rounded ${cycle === "yearly" ? "bg-emerald-900 text-white" : "text-slate-600"}`} data-testid="cycle-yearly">Årlig · -50% første år</button>
-              </div>
-            </div>
-            {plans.map((p) => (
-              <Card key={p.key} onClick={() => setPlan(p.key)} className={`p-4 cursor-pointer transition ${plan === p.key ? "border-emerald-700 border-2 bg-emerald-50" : "hover:border-slate-300"}`} data-testid={`signup-plan-${p.key}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-display font-bold text-lg">{p.name}</div>
-                    {cycle === "monthly" ? (
-                      <div className="font-display text-2xl font-extrabold text-emerald-900">kr {p.price}<span className="text-sm font-normal text-slate-500">/mnd</span></div>
-                    ) : (
-                      <>
-                        <div className="font-display text-2xl font-extrabold text-emerald-900">kr {yearlyPrice(p)}<span className="text-sm font-normal text-slate-500">/år</span></div>
-                        <div className="text-xs text-slate-500">Første år · deretter kr {yearlyLoyal(p)}/år (-10%)</div>
-                      </>
-                    )}
-                  </div>
-                  {plan === p.key && <Check className="h-6 w-6 text-emerald-700" />}
-                </div>
-                <ul className="mt-3 space-y-1 text-xs text-slate-600">
-                  {p.features.slice(0, 4).map((f) => <li key={f}>• {f}</li>)}
-                </ul>
-              </Card>
-            ))}
-          </div>
+
+          <Card className="lg:col-span-2 p-6 bg-gradient-to-br from-emerald-900 to-emerald-700 text-white">
+            <h3 className="font-display text-xl font-extrabold mb-3">Dette får du i prøveperioden</h3>
+            <ul className="space-y-2 text-sm">
+              {[
+                "Full Deluxe-tilgang i 7 dager",
+                "Ubegrenset antall lag og personer",
+                "Varer, drakter, baller med størrelse+lokasjon",
+                "Utlån, retur og automatisk skyldig beløp",
+                "QR-koder for lyn-raskt utlån via mobil",
+                "Varetelling og Excel-import",
+                "Fakturaer og klubblogo",
+              ].map((f) => (
+                <li key={f} className="flex items-start gap-2">
+                  <Check className="h-4 w-4 text-emerald-200 flex-shrink-0 mt-0.5" />
+                  <span>{f}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-emerald-100 mt-4">Når prøveperioden avsluttes velger du mellom Basic, Pro eller Deluxe – eller lar kontoen hvile i read-only.</p>
+          </Card>
         </div>
       </div>
+
+      <Dialog open={!!welcome} onOpenChange={(o) => !o && closeWelcome()}>
+        <DialogContent className="max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-amber-500" />Velkommen til Utstyrsrommet!</DialogTitle>
+            <DialogDescription>
+              Du har nå fått full tilgang til Utstyrsrommet Deluxe i 7 dager.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-slate-600 space-y-2">
+            <p>Utforsk alle funksjoner og se hvordan Utstyrsrommet kan gi klubben full kontroll på utstyr, drakter og lager.</p>
+            <p className="font-semibold">Ingen betalingskort. Ingen bindingstid.</p>
+            {welcome?.customer_number && <p className="text-xs text-slate-500">Kundenummer: <span className="font-mono font-bold">{welcome.customer_number}</span></p>}
+          </div>
+          <DialogFooter>
+            <Button onClick={closeWelcome} className="w-full bg-emerald-900 hover:bg-emerald-800" data-testid="welcome-start-btn">Start med Utstyrsrommet</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Toaster richColors position="top-right" />
     </div>
   );
