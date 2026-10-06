@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 8 - Bulk-generate QR + UpgradeCTA. Backend 4/4 pytest cases pass: deluxe bulk-generate-qr returns {ok, items_updated, sizes_updated}, idempotent (0/0 on 2nd call since create auto-marks has_qr on deluxe), response shape validated, basic plan returns 403 'Pakken støtter ikke qr_codes'. Frontend verified end-to-end on real preview URL: (1) Deluxe/platform_owner at /app/utstyr shows bulk-qr-btn + qr-labels-btn, no upgrade-cta; clicking bulk-qr-btn with window.confirm accepted triggers POST and shows 'QR aktivert' toast. /app/skann renders start-scan-btn (no CTA). (2) Basic tenant provisioned via /api/signup+plan=basic: /app/utstyr hides bulk-qr-btn and qr-labels-btn, shows inline upgrade-cta-qr_codes with upgrade-cta-btn (admin). Clicking upgrade-cta-btn navigates to /app/abonnement. /app/skann renders full-page UpgradeCTA (no start-scan-btn) with upgrade-cta-btn. Visual verified via screenshot - Crown icon, title 'QR-koder er med i Klubb Deluxe', orange CTA button, correct layout.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8.py",
+    "/app/test_reports/pytest/iteration8.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Bulk-generate-qr for deluxe is idempotent because POST /items on deluxe auto-sets has_qr=True on item + all sizes at creation time. Consequently bulk endpoint only has non-trivial work after a plan-downgrade→reupgrade or if admin manually clears has_qr. This is expected product behavior but means the items_updated/sizes_updated counters will usually report 0 for a healthy deluxe tenant.",
+    "ProtectedRoute UpgradeCTA has no outer wrapper when feature-blocked, so UpgradeCTA's non-inline branch provides its own padding (p-6/sm:p-10) - visually works but means the CTA is NOT embedded in the normal AppLayout content area padding (verified screenshot: looks fine, centered). Consider if you want sidebar+topbar visible around it (currently they are, so OK).",
+    "server.py bulk-generate-qr loops items in-process and issues N update_one calls; for a tenant with thousands of items prefer bulk_write/update_many with array filters."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "100% (deluxe + basic flows, screenshot verified)"},
+  "test_credentials": "raymond.d.hansen@gmail.com / Snowboard1! (platform_owner, deluxe). Basic tenants created on-the-fly via POST /api/signup with plan='basic'.",
+  "seed_data_creation": "test_iteration8.py provisions two basic tenants (one upgraded to deluxe via /owner/customers/{id} PATCH). Items TEST_It8_Cloth_* and TEST_It8_SL_* created on deluxe. All soft-deleted on teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Testids: bulk-qr-btn (deluxe only on /app/utstyr), upgrade-cta-qr_codes (basic/pro inline on inventory + full-page on /app/skann via ProtectedRoute feature-gate), upgrade-cta-btn (admin only, nav to /app/abonnement). ProtectedRoute in /app/frontend/src/components/ProtectedRoute.jsx renders <UpgradeCTA/> when feature prop set but hasFeature(feature) false. Non-admin branch shows italic 'Kontakt klubbens admin for å oppgradere' text (code path verified by reading UpgradeCTA.jsx; UI not exercised with non-admin user since no cheap member-invite helper was invoked - low risk as same component for both admin states).",
+  "rca of the issue": "No bugs found this iteration."
+}
