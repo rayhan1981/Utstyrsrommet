@@ -79,8 +79,8 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "max_teams": None, "max_users": 5,
         "stock_audit": True, "excel_export": True, "excel_import": True,
         "logo_upload": True, "settings": True, "allow_user_addon": True,
-        "qr_codes": True,
-        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "QR-koder for utstyr", "Prioritert support"],
+        "qr_codes": True, "product_images": True,
+        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "Produktbilder", "QR-koder for utstyr", "Prioritert support"],
     },
 }
 
@@ -1729,9 +1729,14 @@ async def list_items(request: Request, user=Depends(require_perm("inventory", "r
 async def create_item(data: ItemIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_tenant(request, user)
     doc = _prep_item_doc(data.dict())
-    # Auto-mark has_qr for new items on Deluxe plan
     plan = await get_tenant_plan(tid)
     is_deluxe = bool(plan.get("qr_codes")) or user.get("role") == "platform_owner"
+    allow_images = bool(plan.get("product_images")) or user.get("role") == "platform_owner"
+    if not allow_images:
+        doc["image_url"] = None
+        for s in doc.get("sizes", []):
+            s["image_url"] = None
+    # Auto-mark has_qr for new items on Deluxe plan
     if is_deluxe:
         if doc.get("is_clothing") or doc.get("is_ball"):
             for s in doc.get("sizes", []):
@@ -1861,6 +1866,12 @@ async def get_item_qr_images(item_id: str, request: Request, user=Depends(requir
 async def update_item(item_id: str, data: ItemIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_tenant(request, user)
     doc = _prep_item_doc(data.dict())
+    plan = await get_tenant_plan(tid)
+    allow_images = bool(plan.get("product_images")) or user.get("role") == "platform_owner"
+    if not allow_images:
+        doc["image_url"] = None
+        for s in doc.get("sizes", []):
+            s["image_url"] = None
     await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": doc})
     return await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
 

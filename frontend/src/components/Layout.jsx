@@ -1,46 +1,64 @@
-import React, { useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import React, { useState, useMemo } from "react";
+import { Link, NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users as UsersIcon, UserCircle, Package, ArrowLeftRight,
   ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2, QrCode,
+  ChevronDown, ChevronRight, SlidersHorizontal,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import NotificationCenter from "@/components/NotificationCenter";
 import TrialBanner from "@/components/TrialBanner";
 
-const BASE_NAV = [
+const PRIMARY_NAV = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard, module: "dashboard", feature: null },
-  { to: "/app/lag", label: "Lag", icon: UsersIcon, module: "teams", feature: null },
-  { to: "/app/personer", label: "Personer", icon: UserCircle, module: "people", feature: null },
   { to: "/app/utstyr", label: "Utstyr", icon: Package, module: "inventory", feature: null },
   { to: "/app/utlan", label: "Utlån & Retur", icon: ArrowLeftRight, module: "loans", feature: null },
   { to: "/app/skann", label: "Skann QR", icon: QrCode, module: "loans", feature: "qr_codes" },
   { to: "/app/varetelling", label: "Varetelling", icon: ClipboardCheck, module: "stock_audit", feature: "stock_audit" },
+];
+
+// Grouped under "Klubbinnstillinger"
+const CLUB_NAV = [
+  { to: "/app/lag", label: "Lag", icon: UsersIcon, module: "teams", feature: null },
+  { to: "/app/personer", label: "Personer", icon: UserCircle, module: "people", feature: null },
+  { to: "/app/innstillinger", label: "Klubb (logo/info)", icon: Settings, module: "settings", feature: "settings" },
+];
+
+const ADMIN_NAV = [
   { to: "/app/brukere", label: "Brukere", icon: ShieldCheck, module: "users", adminOnly: true, feature: null },
-  { to: "/app/innstillinger", label: "Innstillinger", icon: Settings, module: "settings", feature: "settings" },
   { to: "/app/abonnement", label: "Abonnement", icon: CreditCard, module: null, adminOnly: true, feature: null },
 ];
 
 export default function Layout() {
   const { user, customer, plan, impersonating, logout, hasPerm, hasFeature, stopImpersonate } = useAuth();
   const nav = useNavigate();
+  const loc = useLocation();
   const [open, setOpen] = useState(false);
 
   const handleLogout = async () => { await logout(); nav("/innlogging"); };
   const stop = async () => { await stopImpersonate(); nav("/app"); };
 
-  const visible = BASE_NAV.filter((n) => {
+  const canSee = (n) => {
     if (n.adminOnly && !(user?.role === "admin" || user?.role === "platform_owner")) return false;
     if (n.feature && !hasFeature(n.feature)) return false;
     if (n.module && !hasPerm(n.module, "read")) return false;
     return true;
-  });
+  };
+
+  const primary = PRIMARY_NAV.filter(canSee);
+  const club = CLUB_NAV.filter(canSee);
+  const admin = ADMIN_NAV.filter(canSee);
+
+  const clubActive = useMemo(() => club.some((n) => loc.pathname.startsWith(n.to)), [club, loc.pathname]);
+  const [clubOpen, setClubOpen] = useState(clubActive);
+  // Auto-expand group when a child route becomes active
+  React.useEffect(() => { if (clubActive) setClubOpen(true); }, [clubActive]);
 
   const isOwner = user?.role === "platform_owner";
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen app-shell flex">
       <button data-testid="mobile-menu-toggle" className="lg:hidden fixed top-3 left-3 z-50 bg-white border border-slate-200 rounded-md p-2 shadow-sm" onClick={() => setOpen((o) => !o)}>
         {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
       </button>
@@ -85,11 +103,44 @@ export default function Layout() {
               </NavLink>
             </div>
           )}
-          {visible.map((n) => (
+          {primary.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === "/app"} data-testid={`nav-${n.module || "sub"}`} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
               <n.icon className="h-4 w-4" />{n.label}
             </NavLink>
           ))}
+
+          {club.length > 0 && (
+            <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => setClubOpen((o) => !o)}
+                data-testid="nav-klubbinnstillinger"
+                className={`sidebar-link w-full justify-between ${clubActive ? "text-red-800 bg-red-50" : ""}`}
+              >
+                <span className="flex items-center gap-3"><SlidersHorizontal className="h-4 w-4" />Klubbinnstillinger</span>
+                {clubOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </button>
+              {clubOpen && (
+                <div className="pl-3 mt-1 space-y-1 border-l-2 border-red-200 ml-3" onClick={() => setOpen(false)}>
+                  {club.map((n) => (
+                    <NavLink key={n.to} to={n.to} data-testid={`nav-${n.module}`} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
+                      <n.icon className="h-4 w-4" />{n.label}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {admin.length > 0 && (
+            <div className="pt-2 mt-2 border-t border-slate-200 space-y-1">
+              {admin.map((n) => (
+                <NavLink key={n.to} to={n.to} data-testid={`nav-${n.module || "sub"}`} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
+                  <n.icon className="h-4 w-4" />{n.label}
+                </NavLink>
+              ))}
+            </div>
+          )}
         </nav>
         <div className="border-t border-slate-200 bg-white">
           <div className="p-3">
@@ -114,7 +165,7 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 min-w-0">
-        <div className="h-12 border-b border-slate-200 bg-white flex items-center justify-end px-4 gap-3">
+        <div className="h-12 border-b border-white/5 brand-gradient text-white flex items-center justify-end px-4 gap-3">
           <TrialBanner />
           <NotificationCenter />
         </div>
@@ -124,7 +175,7 @@ export default function Layout() {
             <Button size="sm" variant="secondary" onClick={stop} data-testid="stop-impersonate-btn">Tilbake til mitt dashboard</Button>
           </div>
         )}
-        <div className="p-4 sm:p-6 lg:p-8 pt-16 lg:pt-8 max-w-7xl mx-auto">
+        <div className="p-4 sm:p-6 lg:p-8 pt-16 lg:pt-6 max-w-7xl mx-auto">
           <Outlet />
         </div>
       </main>

@@ -73,6 +73,17 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
   - Mini-thumbs ved siden av hver størrelse-linje i tabell-visning
 - Testing: Backend API verifisert (POST/GET/DELETE med base64-bilder både på item og size), landing + login + inventory screenshot OK, cron fortsatt grønn
 
+### Nov 2026 – Branded app shell + plan-gated images
+- **Landing header**: `sticky top-0`, bakdrop-blur, økt padding (`py-5`), hero fått `pt-24` for å unngå konflikt mellom tittel og «Logg inn»-knapp
+- **App-shell**: Ny `.app-shell`-klasse gir subtil mørk gradient m/ rød glow (lesbar bakgrunn, branded følelse). Topp-stripe i Layout bruker `brand-gradient` for TrialBanner + varsel-ikon
+- **Sidebar restrukturert**: Primary (Dashboard, Utstyr, Utlån, Skann QR, Varetelling) → Collapsible «Klubbinnstillinger» (Lag, Personer, Klubb logo/info) → Admin (Brukere, Abonnement). Auto-ekspanderer når man er på en under-side
+- **Deluxe-only produktbilder**:
+  - Nytt plan-flagg `product_images: True` kun på Deluxe
+  - Backend: `create_item` + `update_item` stripper `image_url` på item og alle sizes hvis plan mangler flagget
+  - Frontend: `hasFeature("product_images")` gater hovedbilde-seksjon + per-str bilde-knapper. Non-deluxe får amber info-banner i stedet
+  - UpgradeCTA utvidet m/ `product_images`-tekst
+- Testing: `/plans` returnerer `product_images: True` kun for deluxe. E2E: Klubbinnstillinger-knapp synlig, Lag + Personer nestet, inventory viser thumbnails-kolonne
+
 ## Backlog
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall

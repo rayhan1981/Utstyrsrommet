@@ -14,9 +14,11 @@ export default function UpgradeCTA({ feature = "qr_codes", title, description, i
   const { user } = useAuth();
   const titles = {
     qr_codes: "QR-koder er med i Klubb Deluxe",
+    product_images: "Produktbilder er med i Klubb Deluxe",
   };
   const descs = {
     qr_codes: "Generer unike QR-koder for alle varer og størrelser, skann dem fra mobilen for å lyn-raskt registrere utlån, og skriv ut etiketter med klubblogo i senter.",
+    product_images: "Legg til hovedbilde på hver vare samt eget bilde pr. størrelse eller draktnummer, slik at utstyret er lett å kjenne igjen både i varetabellen og ved utlån.",
   };
   const t = title || titles[feature] || "Krever oppgradering";
   const d = description || descs[feature] || "Denne funksjonen er med i Klubb Deluxe-pakken.";

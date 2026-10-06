@@ -95,6 +95,15 @@ h1, h2, h3, h4, h5, h6, .font-display {
     0 25px 60px -20px rgba(0,0,0,0.7);
 }
 
+/* App shell: branded but readable (lighter than landing). Soft dark backdrop with red glow;
+   content cards remain light for easy reading. */
+.app-shell {
+  background:
+    radial-gradient(900px 500px at 100% -10%, rgba(220,38,38,0.09) 0%, transparent 55%),
+    radial-gradient(700px 400px at -10% 100%, rgba(220,38,38,0.06) 0%, transparent 55%),
+    linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+}
+
 .sidebar-link {
   @apply flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-700 hover:bg-red-50 hover:text-red-800 transition-colors text-sm font-medium;
 }

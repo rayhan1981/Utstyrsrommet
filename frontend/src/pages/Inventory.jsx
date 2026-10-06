@@ -238,34 +238,44 @@ export default function Inventory() {
             <DialogDescription>Legg til varen med kategori, pris, beholdning og lokasjon.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="flex items-start gap-4 border border-slate-200 rounded-md p-3 bg-slate-50">
-              <div className="h-24 w-24 rounded-md overflow-hidden bg-white border border-slate-200 flex items-center justify-center shrink-0">
-                {form.image_url ? (
-                  <img src={form.image_url} alt="Hovedbilde" className="h-full w-full object-cover" data-testid="main-image-preview" />
-                ) : (
-                  <ImageIcon className="h-8 w-8 text-slate-300" />
-                )}
-              </div>
-              <div className="flex-1">
-                <Label className="text-sm font-semibold">Hovedbilde</Label>
-                <p className="text-xs text-slate-500 mb-2">Vises i varetabellen og detaljvisning.</p>
-                <div className="flex gap-2">
-                  <label className="inline-flex">
-                    <Button type="button" variant="outline" size="sm" asChild data-testid="upload-main-image-btn">
-                      <span className="cursor-pointer">
-                        <ImagePlus className="h-4 w-4 mr-1" />{form.image_url ? "Bytt bilde" : "Legg til bilde"}
-                        <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleMainImage(e.target.files[0])} />
-                      </span>
-                    </Button>
-                  </label>
-                  {form.image_url && (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, image_url: null })} data-testid="remove-main-image-btn">
-                      <ImageOff className="h-4 w-4 mr-1" />Fjern
-                    </Button>
+            {hasFeature("product_images") ? (
+              <div className="flex items-start gap-4 border border-slate-200 rounded-md p-3 bg-slate-50">
+                <div className="h-24 w-24 rounded-md overflow-hidden bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                  {form.image_url ? (
+                    <img src={form.image_url} alt="Hovedbilde" className="h-full w-full object-cover" data-testid="main-image-preview" />
+                  ) : (
+                    <ImageIcon className="h-8 w-8 text-slate-300" />
                   )}
                 </div>
+                <div className="flex-1">
+                  <Label className="text-sm font-semibold">Hovedbilde</Label>
+                  <p className="text-xs text-slate-500 mb-2">Vises i varetabellen og detaljvisning.</p>
+                  <div className="flex gap-2">
+                    <label className="inline-flex">
+                      <Button type="button" variant="outline" size="sm" asChild data-testid="upload-main-image-btn">
+                        <span className="cursor-pointer">
+                          <ImagePlus className="h-4 w-4 mr-1" />{form.image_url ? "Bytt bilde" : "Legg til bilde"}
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleMainImage(e.target.files[0])} />
+                        </span>
+                      </Button>
+                    </label>
+                    {form.image_url && (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, image_url: null })} data-testid="remove-main-image-btn">
+                        <ImageOff className="h-4 w-4 mr-1" />Fjern
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center gap-3 border border-amber-200 bg-amber-50 rounded-md p-3 text-sm">
+                <ImageIcon className="h-5 w-5 text-amber-700 shrink-0" />
+                <div className="flex-1">
+                  <div className="font-semibold text-amber-900">Produktbilder er med i Klubb Deluxe</div>
+                  <div className="text-xs text-amber-800 mt-0.5">Oppgrader til Deluxe for å legge bilde på vare og per størrelse.</div>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><Label>Varenavn</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
               <div><Label>Kategori</Label><Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></div>
@@ -302,21 +312,23 @@ export default function Inventory() {
                 <div className="space-y-2">
                   {form.sizes.map((s, idx) => (
                     <div key={idx} className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
-                      <label className="inline-flex shrink-0 cursor-pointer">
-                        <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`size-image-btn-${idx}`}>
-                          {s.image_url ? (
-                            <img src={s.image_url} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <ImagePlus className="h-4 w-4 text-slate-400" />
-                          )}
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
-                        </span>
-                      </label>
+                      {hasFeature("product_images") && (
+                        <label className="inline-flex shrink-0 cursor-pointer">
+                          <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`size-image-btn-${idx}`}>
+                            {s.image_url ? (
+                              <img src={s.image_url} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <ImagePlus className="h-4 w-4 text-slate-400" />
+                            )}
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                          </span>
+                        </label>
+                      )}
                       <Input className="w-20 shrink-0" placeholder="Str" value={s.size} onChange={(e) => updSize(idx, "size", e.target.value)} />
                       <Input className="w-24 shrink-0" placeholder="Draktnr" value={s.jersey_number} onChange={(e) => updSize(idx, "jersey_number", e.target.value || "X")} />
                       <Input className="w-24 shrink-0" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
                       <Input className="flex-1 min-w-[140px]" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
-                      {s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
+                      {hasFeature("product_images") && s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
                       <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)}><X className="h-4 w-4 text-red-600" /></Button>
                     </div>
                   ))}
@@ -337,16 +349,18 @@ export default function Inventory() {
                     const used = form.sizes.map((x, i) => i !== idx ? x.size : null).filter(Boolean);
                     return (
                       <div key={idx} className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
-                        <label className="inline-flex shrink-0 cursor-pointer">
-                          <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`ball-size-image-btn-${idx}`}>
-                            {s.image_url ? (
-                              <img src={s.image_url} alt="" className="h-full w-full object-cover" />
-                            ) : (
-                              <ImagePlus className="h-4 w-4 text-slate-400" />
-                            )}
-                            <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
-                          </span>
-                        </label>
+                        {hasFeature("product_images") && (
+                          <label className="inline-flex shrink-0 cursor-pointer">
+                            <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`ball-size-image-btn-${idx}`}>
+                              {s.image_url ? (
+                                <img src={s.image_url} alt="" className="h-full w-full object-cover" />
+                              ) : (
+                                <ImagePlus className="h-4 w-4 text-slate-400" />
+                              )}
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                            </span>
+                          </label>
+                        )}
                         <div className="w-40 shrink-0">
                           <Select value={s.size} onValueChange={(v) => updSize(idx, "size", v)}>
                             <SelectTrigger data-testid={`ball-size-select-${idx}`}><SelectValue placeholder="Velg størrelse" /></SelectTrigger>
@@ -357,7 +371,7 @@ export default function Inventory() {
                         </div>
                         <Input className="w-24 shrink-0" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
                         <Input className="flex-1 min-w-[140px]" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
-                        {s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
+                        {hasFeature("product_images") && s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
                         <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)}><X className="h-4 w-4 text-red-600" /></Button>
                       </div>
                     );

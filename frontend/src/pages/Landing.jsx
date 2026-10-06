@@ -38,15 +38,15 @@ export default function Landing() {
       {/* Subtle red radial glow background */}
       <div className="fixed inset-0 pointer-events-none" aria-hidden="true"
            style={{ background: "radial-gradient(1200px 600px at 70% -10%, rgba(220,38,38,0.18) 0%, transparent 60%), radial-gradient(900px 500px at 10% 110%, rgba(220,38,38,0.12) 0%, transparent 60%)" }} />
-      <header className="relative z-10 border-b border-white/5 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src="/logo.png" alt="UTSTYRSROMMET" className="h-12 w-12 object-contain" style={{ filter: "drop-shadow(0 0 10px rgba(220,38,38,0.35))" }} />
-            <div className="font-display text-2xl font-black tracking-tight">
+      <header className="sticky top-0 z-30 border-b border-white/5 bg-[#0a0a0a]/85 backdrop-blur-md">
+        <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <img src="/logo.png" alt="UTSTYRSROMMET" className="h-11 w-11 object-contain shrink-0" style={{ filter: "drop-shadow(0 0 10px rgba(220,38,38,0.35))" }} />
+            <div className="font-display text-xl sm:text-2xl font-black tracking-tight truncate">
               <span className="chrome-text">UTSTYRS</span><span className="red-gloss-text">ROMMET</span>
             </div>
           </div>
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-2 items-center shrink-0">
             {user ? (
               <Button className="bg-white text-black hover:bg-zinc-200" onClick={() => nav("/app")} data-testid="go-app-btn">Åpne app</Button>
             ) : (
@@ -56,7 +56,7 @@ export default function Landing() {
         </div>
       </header>
 
-      <section className="relative z-10 pt-16 pb-24">
+      <section className="relative z-10 pt-24 pb-24">
         <div className="max-w-6xl mx-auto px-6 text-center">
           <div className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full border border-red-500/30 bg-red-500/10 text-red-200 mb-6">
             <Sparkles className="h-3.5 w-3.5" />
