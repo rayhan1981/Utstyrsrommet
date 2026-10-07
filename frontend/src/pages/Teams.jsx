@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Pencil, Trash2, Plus, Download, Eye, HandCoins, FileText } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, Eye, HandCoins, FileText, Mail, Send } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
@@ -130,6 +130,25 @@ export default function Teams() {
       });
   };
 
+  const [sendFor, setSendFor] = useState(null);
+  const [sendForm, setSendForm] = useState({ to: "", cc: "", message: "" });
+  const openSendList = (team) => {
+    const tm = team.team_manager || {}; const hc = team.head_coach || {};
+    setSendFor(team);
+    setSendForm({ to: tm.email || hc.email || team.email || "", cc: "", message: "" });
+  };
+  const sendList = async () => {
+    if (!sendForm.to) { toast.error("Angi mottakers e-post"); return; }
+    try {
+      const payload = { to: sendForm.to };
+      if (sendForm.cc) payload.cc = sendForm.cc;
+      if (sendForm.message) payload.message = sendForm.message;
+      const { data } = await api.post(`/teams/${sendFor.id}/send-equipment-list`, payload);
+      toast.success(`Utstyrsoversikt sendt til ${data.sent_to}`);
+      setSendFor(null); load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   return (
     <div className="space-y-6" data-testid="teams-page">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -166,9 +185,14 @@ export default function Teams() {
               <Button variant="ghost" size="icon" onClick={() => showDetail(t.id)} data-testid={`view-team-${t.id}`}>
                 <Eye className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={() => exportTeam(t.id, t.team_name)} data-testid={`export-team-${t.id}`}>
+              <Button variant="ghost" size="icon" onClick={() => exportTeam(t.id, t.team_name)} data-testid={`export-team-${t.id}`} title="Last ned utstyrsoversikt (PDF)">
                 <Download className="h-4 w-4" />
               </Button>
+              {hasPerm("teams", "write") && (
+                <Button variant="ghost" size="icon" onClick={() => openSendList(t)} data-testid={`send-equipment-${t.id}`} title="Send utstyrsoversikt til lagleder på e-post">
+                  <Mail className="h-4 w-4 text-sky-700" />
+                </Button>
+              )}
               {hasPerm("teams", "write") && (
                 <Button variant="ghost" size="icon" onClick={() => openEdit(t)} data-testid={`edit-team-${t.id}`}>
                   <Pencil className="h-4 w-4" />
@@ -183,6 +207,27 @@ export default function Teams() {
           )}
         />
       </Card>
+
+      <Dialog open={!!sendFor} onOpenChange={(o) => !o && setSendFor(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send utstyrsoversikt – {sendFor?.team_name}</DialogTitle>
+            <DialogDescription>PDF-oversikten vedlegges automatisk. Kopi til din e-post.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Mottakers e-post *</Label><Input type="email" value={sendForm.to} onChange={(e) => setSendForm({ ...sendForm, to: e.target.value })} placeholder="lagleder@..." data-testid="send-equipment-to" /></div>
+            <div><Label>Kopi til (valgfri)</Label><Input type="email" value={sendForm.cc} onChange={(e) => setSendForm({ ...sendForm, cc: e.target.value })} data-testid="send-equipment-cc" /></div>
+            <div><Label>Melding (valgfri)</Label>
+              <textarea className="w-full border rounded-md p-2 min-h-[100px] text-sm" value={sendForm.message} onChange={(e) => setSendForm({ ...sendForm, message: e.target.value })} data-testid="send-equipment-message" />
+            </div>
+            <p className="text-xs text-slate-500">Standard mottaker er lagleder (eller hovedtrener dersom lagleder mangler e-post). Overstyr feltet hvis ønsket.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendFor(null)}>Avbryt</Button>
+            <Button onClick={sendList} className="bg-sky-700 hover:bg-sky-800 text-white" data-testid="confirm-send-equipment"><Send className="h-4 w-4 mr-1" />Send e-post</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">

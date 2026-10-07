@@ -37,6 +37,13 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Bulk-generer QR for alle varer
 - UpgradeCTA for basic/pro-brukere som møter Deluxe-features
 
+### Okt 2026 – Direkte-send + CRON forfallsvarsler
+- Ny endpoint `POST /api/teams/{team_id}/send-equipment-list` som genererer utstyrs-PDFen og sender den rett til lagleder (default: team_manager.email → head_coach.email → team.email). Admin blir CC'd. Oppretter `equipment_list_sent_at` på teamet.
+- Teams.jsx: Ny blå "Mail"-knapp pr lag ved siden av Download — åpner dialog m/ to/cc/melding, data-testid `send-equipment-{team_id}`, `confirm-send-equipment`.
+- CRON `/api/cron/due-date-reminders` (daglig 08:00 Europe/Oslo via `.emergent/crons.yml`): 14 dager før frist og 7 dager før frist → e-post til lagleder m/ PDF; 1 dag etter frist → e-post til lagleder + CC alle aktive brukere i tenanten. Idempotent via `reminder_14_sent / reminder_7_sent / reminder_overdue_sent`-flagg pr lån, grupperer lån pr (tenant, team, milepel) i én mail.
+- Verifisert: Test-trigger med due_date=today+7 sender 1 e-post, flagget blir satt, re-trigger sender 0 (idempotent).
+
+
 ### Okt 2026 – Egen avsender-epost + vedlegg + multi-bilder + Lagsutstyr-PDF
 - Per-tenant E-postoppsett (Innstillinger): tre metoder (Standard / Egen SMTP / Resend), kryptert passord/API-nøkkel (Fernet avledet fra JWT_SECRET), "Send test-epost"-knapp, verifisert-badge, hjelpetekst under hvert felt.
 - Unified `send_tenant_email(tid, to, subject, html, attachments, cc)` som ruter via tenantens konfig; fallback til Emergent-standard. Fikset Emergent-attachment-schema (`type` ikke `content_type`).

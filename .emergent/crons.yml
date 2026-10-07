@@ -5,5 +5,12 @@ crons:
     timezone: "Europe/Oslo"
     endpoint: "{{BASE_URL}}/api/cron/trial-reminders"
     method: POST
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
+
+  - name: due-date-reminders
+    description: "Varsler lagleder 14/7 dager før frist og 1 dag etter forfall for utstyr som ikke er returnert (PDF vedlagt)"
+    cron: "0 8 * * *"
+    timezone: "Europe/Oslo"
+    endpoint: "{{BASE_URL}}/api/cron/due-date-reminders"
+    method: POST
     enabled: true

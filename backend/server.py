@@ -1036,6 +1036,106 @@ async def cron_trial_reminders(request: Request):
     return {"status": "accepted", "run_id": run_id}
 
 
+# ---------------- Cron: Due-date reminders for team loans ----------------
+async def _run_due_date_reminders():
+    """Send e-postvarsel for utlån med nærme/forfalt frist.
+    - 14 dager før frist → lagleder (idempotent: reminder_14_sent)
+    - 7 dager før frist  → lagleder (idempotent: reminder_7_sent)
+    - 1 dag etter frist   → lagleder + kopi til alle admin/aktive brukere (reminder_overdue_sent)
+    PDF vedlegges hver melding. Grupperer alle lån per lag + milepel i én e-post.
+    """
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    sent = 0
+    # Finn lån med team_id, status=borrowed og due_date satt
+    cursor = db.loans.find({"team_id": {"$ne": None}, "status": "borrowed", "due_date": {"$ne": None}})
+    # Grupper (tenant_id, team_id, milepel) → set av loan_ids
+    buckets: Dict[tuple, Dict[str, Any]] = {}
+    async for ln in cursor:
+        due_iso = ln.get("due_date")
+        if not due_iso: continue
+        try:
+            due_dt = datetime.fromisoformat(due_iso.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        days_until = (due_dt.date() - today).days
+        milestone = None; flag = None
+        if days_until == 14 and not ln.get("reminder_14_sent"):
+            milestone = "14_days_before"; flag = "reminder_14_sent"
+        elif days_until == 7 and not ln.get("reminder_7_sent"):
+            milestone = "7_days_before"; flag = "reminder_7_sent"
+        elif days_until == -1 and not ln.get("reminder_overdue_sent"):
+            milestone = "overdue"; flag = "reminder_overdue_sent"
+        if not milestone: continue
+        key = (ln["tenant_id"], ln["team_id"], milestone)
+        b = buckets.setdefault(key, {"loan_ids": [], "flag": flag})
+        b["loan_ids"].append(ln["id"])
+    for (tid, team_id, milestone), b in buckets.items():
+        try:
+            pdf_bytes, team, club_name, _ = await _generate_team_equipment_pdf_for_tenant(tid, team_id, None)
+            if not team: continue
+            tm = team.get("team_manager") or {}; hc = team.get("head_coach") or {}
+            to_email = tm.get("email") or hc.get("email") or team.get("email") or ""
+            leader_name = tm.get("name") or hc.get("name") or team.get("contact_person") or ""
+            if not to_email or not re.match(r"^[^@]+@[^@]+\.[^@]+$", to_email):
+                logger.info(f"[due-reminder] Mangler lagleder-epost for team {team_id} ({milestone})")
+                continue
+            if milestone == "14_days_before":
+                subject = f"Påminnelse: Utstyr for {team.get('team_name')} skal returneres om 14 dager"
+                lead_html = f"<p>Hei {leader_name},</p><p>Dette er en vennlig påminnelse om at utstyr lånt til <strong>{team.get('team_name')}</strong> har frist for retur om <strong>14 dager</strong>. Vedlagt oversikt over hva som er utestående.</p>"
+            elif milestone == "7_days_before":
+                subject = f"Påminnelse: Utstyr for {team.get('team_name')} skal returneres om 7 dager"
+                lead_html = f"<p>Hei {leader_name},</p><p>Fristen for retur av utstyr lånt til <strong>{team.get('team_name')}</strong> er om <strong>7 dager</strong>. Vedlagt oversikt.</p>"
+            else:  # overdue
+                subject = f"VIKTIG: Utstyr for {team.get('team_name')} er over frist"
+                lead_html = f"<p>Hei {leader_name},</p><p>Utstyr lånt til <strong>{team.get('team_name')}</strong> er nå <strong>over frist</strong>. Vennligst returner snarest. Vedlagt oversikt.</p>"
+            html = lead_html + f"<p>Mvh<br/>{club_name}</p>"
+            pdf_b64 = _b64mod.b64encode(pdf_bytes).decode()
+            safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
+            attachments = [{"filename": f"utstyr_{safe}.pdf", "content": pdf_b64, "type": "application/pdf"}]
+            # Overdue → kopi til alle aktive brukere i tenanten
+            cc_list = []
+            if milestone == "overdue":
+                users = await db.users.find({"tenant_id": tid, "active": True, "email": {"$ne": to_email}},
+                                              {"_id": 0, "email": 1}).to_list(500)
+                cc_list = [u["email"] for u in users if u.get("email")]
+            res = await send_tenant_email(tid, to_email, subject, html,
+                                           attachments=attachments, cc=cc_list or None)
+            if res.get("ok"):
+                await db.loans.update_many(
+                    {"id": {"$in": b["loan_ids"]}, "tenant_id": tid},
+                    {"$set": {b["flag"]: True, f"{b['flag']}_at": now.isoformat()}},
+                )
+                sent += 1
+            else:
+                logger.error(f"[due-reminder] Send feilet team={team_id} {milestone}: {res.get('error')}")
+        except Exception as e:
+            logger.exception(f"[due-reminder] Feil team={team_id} {milestone}: {e}")
+    logger.info(f"[due-reminder] Sendt {sent} e-poster")
+    return sent
+
+
+@api.post("/cron/due-date-reminders")
+async def cron_due_date_reminders(request: Request):
+    auth = request.headers.get("authorization", "")
+    if not WEBHOOK_CRON_SECRET or not auth.startswith("Bearer "):
+        raise HTTPException(401, "Unauthorized")
+    token = auth.split(" ", 1)[1].strip()
+    if not pysecrets.compare_digest(token, WEBHOOK_CRON_SECRET):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    run_id = request.headers.get("x-webhook-id") or (body.get("run_id") if isinstance(body, dict) else None) or new_id()
+    existing = await db.cron_runs.find_one({"run_id": run_id})
+    if existing:
+        return {"status": "duplicate", "run_id": run_id}
+    await db.cron_runs.insert_one({"run_id": run_id, "job": "due-date-reminders", "received_at": now_iso()})
+    asyncio.create_task(_run_due_date_reminders())
+    return {"status": "accepted", "run_id": run_id}
+
+
 # ---------------- Trial admin (platform owner) ----------------
 @api.post("/owner/customers/{customer_id}/extend-trial")
 async def extend_trial(customer_id: str, data: ExtendTrialIn, user=Depends(require_platform_owner)):
@@ -2831,6 +2931,70 @@ async def export_team(team_id: str, request: Request, user=Depends(require_perm(
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="utstyr_{safe}.pdf"'})
+
+
+async def _generate_team_equipment_pdf_for_tenant(tid: str, team_id: str, user: Optional[dict] = None) -> tuple:
+    """Hjelper: genererer PDF-bytes + metadata (team, club_name, user) for et lag."""
+    team = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
+    if not team: return None, None, None, None
+    loans = await db.loans.find({"team_id": team_id, "tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(5000)
+    pids = list({l.get("person_id") for l in loans if l.get("person_id")} |
+                {l.get("picked_up_by") for l in loans if l.get("picked_up_by")})
+    people = {p["id"]: p for p in await db.people.find({"id": {"$in": pids}, "tenant_id": tid}, {"_id": 0}).to_list(1000)}
+    cust = await db.customers.find_one({"id": tid}, {"_id": 0}) or {}
+    club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    club_name = club.get("name") or cust.get("club_name") or "Klubben"
+    effective_user = user or {"name": club_name, "email": cust.get("owner_email"), "phone": cust.get("owner_phone")}
+    pdf_bytes = _build_team_equipment_pdf(team, loans, people, club, cust, effective_user, club_name)
+    return pdf_bytes, team, club_name, loans
+
+
+class TeamSendEquipmentIn(BaseModel):
+    to: Optional[EmailStr] = None  # override; defaults to lagleder-epost
+    cc: Optional[EmailStr] = None
+    message: Optional[str] = None
+
+
+@api.post("/teams/{team_id}/send-equipment-list")
+async def send_team_equipment_list(team_id: str, data: TeamSendEquipmentIn, request: Request,
+                                     user=Depends(require_perm("teams", "write"))):
+    """Send utstyrsoversikt (PDF) rett til lagleder på epost."""
+    tid = await require_tenant(request, user)
+    pdf_bytes, team, club_name, _ = await _generate_team_equipment_pdf_for_tenant(tid, team_id, user)
+    if not team:
+        raise HTTPException(404, "Lag ikke funnet")
+    tm = team.get("team_manager") or {}
+    hc = team.get("head_coach") or {}
+    recipient = {"name": tm.get("name") or hc.get("name") or team.get("contact_person") or "",
+                 "email": tm.get("email") or hc.get("email") or team.get("email") or ""}
+    to_email = (data.to or recipient["email"] or "").strip()
+    if not to_email or not re.match(r"^[^@]+@[^@]+\.[^@]+$", to_email):
+        raise HTTPException(400, "Mangler gyldig e-post til lagleder. Sett e-post på laget først, eller angi mottaker.")
+    pdf_b64 = _b64mod.b64encode(pdf_bytes).decode()
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
+    filename = f"utstyr_{safe}.pdf"
+    msg = (data.message or "").strip()
+    html = (
+        f'<p>Hei {recipient["name"] or ""},</p>'
+        f'<p>Vedlagt er oversikt over utstyr og eventuelt utestående beløp for <strong>{team.get("team_name")}</strong>.</p>'
+        + (f'<p>{msg}</p>' if msg else '')
+        + f'<p>Vennligst sjekk listen og returner utstyr før fristdato.</p>'
+        f'<p>Mvh<br/>{club_name}</p>'
+    )
+    cc_list = []
+    if data.cc: cc_list.append(data.cc)
+    if user.get("email") and user["email"] != to_email and user["email"] not in cc_list:
+        cc_list.append(user["email"])
+    attachments = [{"filename": filename, "content": pdf_b64, "type": "application/pdf"}]
+    res = await send_tenant_email(tid, to_email,
+                                   f"Utstyrsoversikt – {team.get('team_name')}",
+                                   html, attachments=attachments, cc=cc_list or None)
+    if not res.get("ok"):
+        raise HTTPException(502, f"E-post feilet: {res.get('error')}")
+    await db.teams.update_one({"id": team_id, "tenant_id": tid}, {"$set": {
+        "equipment_list_sent_at": now_iso(), "equipment_list_sent_to": to_email,
+    }})
+    return {"ok": True, "sent_to": to_email, "provider_id": res.get("provider_id"), "method": res.get("method")}
 
 
 def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
