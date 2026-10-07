@@ -171,64 +171,72 @@ export default function Inventory() {
 
       <Card className="p-3">
         <DataTable
-          rows={items}
+          rows={items.flatMap((i) => {
+            if (i.is_clothing || i.is_ball) {
+              return (i.sizes || []).map((s, sidx) => ({
+                _id: `${i.id}__${sidx}`,
+                _parent: i,
+                _is_variant: true,
+                id: i.id,
+                image_url: s.image_url || i.image_url,
+                name: i.name,
+                category: i.category || "",
+                main_group: i.main_group || "",
+                sub_group: i.sub_group || "",
+                type: i.is_clothing ? "klær" : "ball",
+                size: s.size || "",
+                jersey_number: i.is_clothing ? (s.jersey_number || "") : "",
+                quantity: s.quantity || 0,
+                price: i.price || 0,
+                location: s.location || i.location || "",
+              }));
+            }
+            return [{
+              _id: i.id, _parent: i, _is_variant: false,
+              id: i.id, image_url: i.image_url, name: i.name,
+              category: i.category || "", main_group: i.main_group || "",
+              sub_group: i.sub_group || "", type: "vare",
+              size: "", jersey_number: "", quantity: i.total_stock || 0,
+              price: i.price || 0, location: i.location || "",
+            }];
+          })}
           emptyLabel="Ingen varer."
-          searchPlaceholder="Søk vare, kategori, lokasjon…"
+          searchPlaceholder="Søk vare, kategori, størrelse, draktnr, lokasjon…"
           columns={[
-            { key: "image", label: "", render: (i) => (
-                <div className="h-12 w-12 rounded-md overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
-                  {i.image_url ? (
-                    <img src={i.image_url} alt={i.name} className="h-full w-full object-cover" />
-                  ) : (
-                    <ImageIcon className="h-5 w-5 text-slate-300" />
-                  )}
+            { key: "image", label: "", render: (r) => (
+                <div className="h-10 w-10 rounded-md overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+                  {r.image_url ? <img src={r.image_url} alt={r.name} className="h-full w-full object-cover" /> : <ImageIcon className="h-4 w-4 text-slate-300" />}
                 </div>
             ) },
-            { key: "name", label: "Varenavn", filter: "text", render: (i) => (
-                <div>
-                  <div className="font-semibold">{i.name}</div>
-                  {(i.is_clothing || i.is_ball) && (
-                    <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
-                      {i.sizes?.map((s, idx) => (
-                        <div key={idx} className="flex items-center gap-1.5">
-                          {s.image_url && <img src={s.image_url} alt="" className="h-5 w-5 rounded object-cover border border-slate-200" />}
-                          <span className="font-mono">{s.size}: {s.quantity}</span>
-                          {i.is_clothing && s.jersey_number && s.jersey_number !== "X" && <span className="ml-1 text-slate-700">#{s.jersey_number}</span>}
-                          {s.location && <span className="ml-2 text-red-700">@ {s.location}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-            ) },
-            { key: "category", label: "Kategori", filter: "text", render: (i) => i.category || "-" },
-            { key: "main_group", label: "Hovedgruppe", filter: "text", render: (i) => i.main_group || "-" },
-            { key: "sub_group", label: "Undergruppe", filter: "text", render: (i) => i.sub_group || "-" },
+            { key: "name", label: "Varenavn", filter: "text", render: (r) => <div className="font-semibold truncate max-w-[180px]">{r.name}</div> },
+            { key: "size", label: "Str", filter: "text", render: (r) => r.size ? <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">{r.size}</span> : <span className="text-slate-400">–</span> },
+            { key: "jersey_number", label: "Draktnr", filter: "text", render: (r) => (r.jersey_number && r.jersey_number !== "X") ? <span className="font-mono text-xs">#{r.jersey_number}</span> : <span className="text-slate-400">–</span> },
+            { key: "category", label: "Kategori", filter: "text", render: (r) => <span className="text-xs">{r.category || "-"}</span> },
             { key: "type", label: "Type", filter: "select",
               options: [{value:"vare",label:"Vare"},{value:"klær",label:"Klær"},{value:"ball",label:"Ball"}],
-              accessor: (i) => i.is_clothing ? "klær" : (i.is_ball ? "ball" : "vare") },
-            { key: "price", label: "Pris", filter: "number", accessor: (i) => i.price || 0, render: (i) => nok(i.price) },
-            { key: "total_stock", label: "Beholdning", filter: "number", render: (i) => <span className={i.total_stock <= 3 ? "text-amber-700 font-semibold" : ""}>{i.total_stock}</span> },
-            { key: "location", label: "Lokasjon", filter: "text", render: (i) => i.location || "-" },
+              accessor: (r) => r.type,
+              render: (r) => <span className="text-xs">{r.type === "klær" ? "Klær" : r.type === "ball" ? "Ball" : "Vare"}</span> },
+            { key: "price", label: "Pris", filter: "number", accessor: (r) => r.price, render: (r) => <span className="text-xs">{nok(r.price)}</span> },
+            { key: "quantity", label: "Antall", filter: "number", render: (r) => <span className={r.quantity <= 3 ? "text-amber-700 font-semibold" : "font-semibold"}>{r.quantity}</span> },
+            { key: "location", label: "Lokasjon", filter: "text", render: (r) => <span className="text-xs text-red-700">{r.location || "-"}</span> },
           ]}
-          actions={(i) => (
+          actions={(r) => {
+            const i = r._parent;
+            return (
             <>
-              {hasFeature("qr_codes") && hasPerm("inventory", "write") && (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}>
-                    <QrCode className="h-3 w-3 mr-1" />Generer QR
-                  </Button>
-                  {anyQr(i) && (
-                    <Button variant="ghost" size="icon" onClick={() => viewQr(i)} title="Vis QR-koder" data-testid={`view-qr-${i.id}`}>
-                      <Eye className="h-4 w-4 text-red-700" />
-                    </Button>
-                  )}
-                </>
+              {hasFeature("qr_codes") && hasPerm("inventory", "write") && !r._is_variant && (
+                <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}>
+                  <QrCode className="h-3 w-3 mr-1" />QR
+                </Button>
               )}
-              {hasPerm("inventory", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(i)}><Pencil className="h-4 w-4" /></Button>}
-              {hasPerm("inventory", "admin") && <Button variant="ghost" size="icon" onClick={() => del(i.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
+              {hasFeature("qr_codes") && anyQr(i) && (
+                <Button variant="ghost" size="icon" onClick={() => viewQr(i)} title="Vis QR"><Eye className="h-4 w-4 text-red-700" /></Button>
+              )}
+              {hasPerm("inventory", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(i)} title="Rediger"><Pencil className="h-4 w-4" /></Button>}
+              {hasPerm("inventory", "admin") && !r._is_variant && <Button variant="ghost" size="icon" onClick={() => del(i.id)} title="Slett"><Trash2 className="h-4 w-4 text-red-600" /></Button>}
             </>
-          )}
+            );
+          }}
         />
       </Card>
 
@@ -311,27 +319,41 @@ export default function Inventory() {
                   <Label>Størrelser & Draktnummer</Label>
                   <Button type="button" size="sm" variant="outline" onClick={addSize}><Plus className="h-3 w-3 mr-1" />Legg til størrelse</Button>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {form.sizes.map((s, idx) => (
-                    <div key={idx} className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
-                      {hasFeature("product_images") && (
-                        <label className="inline-flex shrink-0 cursor-pointer">
-                          <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`size-image-btn-${idx}`}>
-                            {s.image_url ? (
-                              <img src={s.image_url} alt="" className="h-full w-full object-cover" />
-                            ) : (
-                              <ImagePlus className="h-4 w-4 text-slate-400" />
-                            )}
-                            <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
-                          </span>
-                        </label>
-                      )}
-                      <Input className="w-20 shrink-0" placeholder="Str" value={s.size} onChange={(e) => updSize(idx, "size", e.target.value)} />
-                      <Input className="w-24 shrink-0" placeholder="Draktnr" value={s.jersey_number} onChange={(e) => updSize(idx, "jersey_number", e.target.value || "X")} />
-                      <Input className="w-24 shrink-0" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
-                      <Input className="flex-1 min-w-[140px]" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
-                      {hasFeature("product_images") && s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
-                      <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)}><X className="h-4 w-4 text-red-600" /></Button>
+                    <div key={idx} className="border border-slate-200 rounded-md p-3 bg-slate-50/40">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end">
+                        {hasFeature("product_images") && (
+                          <div className="col-span-2 sm:col-span-1">
+                            <Label className="text-[11px] text-slate-500 mb-1 block">Bilde</Label>
+                            <label className="inline-flex cursor-pointer">
+                              <span className="h-10 w-10 rounded-md border border-slate-200 bg-white flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`size-image-btn-${idx}`}>
+                                {s.image_url ? <img src={s.image_url} alt="" className="h-full w-full object-cover" /> : <ImagePlus className="h-4 w-4 text-slate-400" />}
+                                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                              </span>
+                            </label>
+                          </div>
+                        )}
+                        <div>
+                          <Label className="text-[11px] text-slate-500 mb-1 block">Størrelse</Label>
+                          <Input placeholder="M" value={s.size} onChange={(e) => updSize(idx, "size", e.target.value)} />
+                        </div>
+                        <div>
+                          <Label className="text-[11px] text-slate-500 mb-1 block">Draktnummer</Label>
+                          <Input placeholder="10" value={s.jersey_number} onChange={(e) => updSize(idx, "jersey_number", e.target.value || "X")} />
+                        </div>
+                        <div>
+                          <Label className="text-[11px] text-slate-500 mb-1 block">Antall</Label>
+                          <Input type="number" placeholder="0" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
+                        </div>
+                        <div className="col-span-2 sm:col-span-1 flex items-end gap-1">
+                          <div className="flex-1">
+                            <Label className="text-[11px] text-slate-500 mb-1 block">Lokasjon</Label>
+                            <Input placeholder="B2" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
+                          </div>
+                          <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)} title="Fjern linje"><X className="h-4 w-4 text-red-600" /></Button>
+                        </div>
+                      </div>
                     </div>
                   ))}
                   {form.sizes.length === 0 && <p className="text-sm text-slate-500">Ingen størrelser lagt til. Klikk «Legg til størrelse».</p>}
@@ -346,35 +368,44 @@ export default function Inventory() {
                     <Plus className="h-3 w-3 mr-1" />Legg til størrelse
                   </Button>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {form.sizes.map((s, idx) => {
                     const used = form.sizes.map((x, i) => i !== idx ? x.size : null).filter(Boolean);
                     return (
-                      <div key={idx} className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
-                        {hasFeature("product_images") && (
-                          <label className="inline-flex shrink-0 cursor-pointer">
-                            <span className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`ball-size-image-btn-${idx}`}>
-                              {s.image_url ? (
-                                <img src={s.image_url} alt="" className="h-full w-full object-cover" />
-                              ) : (
-                                <ImagePlus className="h-4 w-4 text-slate-400" />
-                              )}
-                              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
-                            </span>
-                          </label>
-                        )}
-                        <div className="w-40 shrink-0">
-                          <Select value={s.size} onValueChange={(v) => updSize(idx, "size", v)}>
-                            <SelectTrigger data-testid={`ball-size-select-${idx}`}><SelectValue placeholder="Velg størrelse" /></SelectTrigger>
-                            <SelectContent>
-                              {BALL_SIZES.filter((b) => !used.includes(b) || b === s.size).map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
+                      <div key={idx} className="border border-slate-200 rounded-md p-3 bg-slate-50/40">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+                          {hasFeature("product_images") && (
+                            <div className="col-span-2 sm:col-span-1">
+                              <Label className="text-[11px] text-slate-500 mb-1 block">Bilde</Label>
+                              <label className="inline-flex cursor-pointer">
+                                <span className="h-10 w-10 rounded-md border border-slate-200 bg-white flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`ball-size-image-btn-${idx}`}>
+                                  {s.image_url ? <img src={s.image_url} alt="" className="h-full w-full object-cover" /> : <ImagePlus className="h-4 w-4 text-slate-400" />}
+                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                                </span>
+                              </label>
+                            </div>
+                          )}
+                          <div>
+                            <Label className="text-[11px] text-slate-500 mb-1 block">Størrelse</Label>
+                            <Select value={s.size} onValueChange={(v) => updSize(idx, "size", v)}>
+                              <SelectTrigger data-testid={`ball-size-select-${idx}`}><SelectValue placeholder="Velg str" /></SelectTrigger>
+                              <SelectContent>
+                                {BALL_SIZES.filter((b) => !used.includes(b) || b === s.size).map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-[11px] text-slate-500 mb-1 block">Antall</Label>
+                            <Input type="number" placeholder="0" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
+                          </div>
+                          <div className="col-span-2 sm:col-span-1 flex items-end gap-1">
+                            <div className="flex-1">
+                              <Label className="text-[11px] text-slate-500 mb-1 block">Lokasjon</Label>
+                              <Input placeholder="Ballbur" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
+                            </div>
+                            <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)} title="Fjern linje"><X className="h-4 w-4 text-red-600" /></Button>
+                          </div>
                         </div>
-                        <Input className="w-24 shrink-0" type="number" placeholder="Antall" value={s.quantity} onChange={(e) => updSize(idx, "quantity", parseInt(e.target.value) || 0)} />
-                        <Input className="flex-1 min-w-[140px]" placeholder="Lokasjon pr str (valgfri)" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
-                        {hasFeature("product_images") && s.image_url && <Button type="button" variant="ghost" size="icon" onClick={() => updSize(idx, "image_url", null)} title="Fjern bilde"><ImageOff className="h-4 w-4 text-slate-500" /></Button>}
-                        <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)}><X className="h-4 w-4 text-red-600" /></Button>
                       </div>
                     );
                   })}

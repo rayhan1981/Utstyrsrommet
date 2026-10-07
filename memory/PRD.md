@@ -123,6 +123,11 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **UI**: Nye knapper på bestillinger – PDF-download, Varsle lagleder (vises kun når klar), «✓ Varslet»-badge etter sending
 - Testing: 4 parallelle API-tester grønne (PDF 2189 bytes, 2 validerings-feil med riktige meldinger, full receipt → status "levert")
 
+### Nov 2026 – Varetabell flatet + labels + responsiv
+- **Inventory dialog**: Størrelse/Draktnr/Antall/Lokasjon-rader bygget om med explicitte feltlabels over hver kolonne (`text-[11px] text-slate-500`). Grid-layout `grid-cols-2 sm:grid-cols-5` (klær) og `sm:grid-cols-4` (ball) – wrapper på smale skjermer, aligner på desktop. Bilde-cell i bred mobil-kolonne på toppen.
+- **Varetabell flatet**: `items.flatMap()` splitter klær/ball-varer i én rad per variasjon. Egne kolonner: Str, Draktnr, Kategori, Type, Pris, Antall, Lokasjon. Hver kolonne er filtrerbar – søk fungerer også på størrelse og draktnummer. Thumbnail per variasjon (fallback til hovedbilde).
+- Testing: Screenshot bekrefter 11 av 11 rader uten horisontal scroll på 1920px. Hjemmedrakt 164-#4 og S-#10 vises som to separate linjer.
+
 ## Backlog
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall
