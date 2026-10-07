@@ -8,9 +8,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShoppingCart, Plus, FileText, Trash2, Download, Send, Package } from "lucide-react";
+import { ShoppingCart, Plus, FileText, Trash2, Download, Send, Package, Bell, FileDown } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./Leverandorer";
+import OrderDialog from "@/components/OrderDialog";
 
 export default function Bestillinger() {
   const [schemas, setSchemas] = useState([]);
@@ -21,6 +22,10 @@ export default function Bestillinger() {
   const [newOpen, setNewOpen] = useState(false);
   const [newForm, setNewForm] = useState({ team_id: "", season: "" });
   const [stockOpen, setStockOpen] = useState(false);
+  const [orderDialog, setOrderDialog] = useState(null);
+  const [notifyFor, setNotifyFor] = useState(null);
+  const [notifyChannel, setNotifyChannel] = useState("both");
+  const [notifyMsg, setNotifyMsg] = useState("");
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
@@ -71,6 +76,44 @@ export default function Bestillinger() {
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
+  const dlOrderPdf = async (o) => {
+    const token = localStorage.getItem("utr_token");
+    const r = await fetch(`${BASE}/api/orders/${o.id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) { toast.error("Kunne ikke generere PDF"); return; }
+    const b = await r.blob();
+    const u = URL.createObjectURL(b);
+    const a = document.createElement("a"); a.href = u; a.download = `bestilling_${o.po_number}.pdf`; a.click();
+    URL.revokeObjectURL(u);
+  };
+
+  const openNotify = (o) => {
+    setNotifyFor(o);
+    setNotifyChannel("both");
+    setNotifyMsg("");
+  };
+
+  const sendNotify = async () => {
+    try {
+      const { data } = await api.post(`/orders/${notifyFor.id}/notify-lagleder`,
+        { channel: notifyChannel, message: notifyMsg || null });
+      if (data.ok) {
+        toast.success("Lagleder varslet!");
+        setNotifyFor(null); load();
+      } else {
+        const errs = (data.log || []).filter((x) => !x.ok).map((x) => `${x.channel}: ${x.error}`).join("; ");
+        toast.error(`Varsling feilet: ${errs || "ukjent"}`);
+      }
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const canNotify = (o) => {
+    if (o.is_stock_order || !o.team_id) return false;
+    const lines = o.lines || [];
+    const total = lines.reduce((a, l) => a + (l.quantity || 0), 0);
+    const recv = lines.reduce((a, l) => a + (l.received_quantity || 0), 0);
+    return total > 0 && recv >= total;
+  };
+
   const delOrder = async (o) => {
     if (!window.confirm(`Arkivere bestilling ${o.po_number}?`)) return;
     try {
@@ -115,6 +158,7 @@ export default function Bestillinger() {
                     <TableCell className="text-right">
                       <Button size="sm" variant="outline" onClick={() => downloadTemplate(s)} title="Last ned Excel-mal"><Download className="h-3 w-3" /></Button>
                       <Button size="sm" variant="outline" onClick={() => markSent(s)} className="ml-1" title="Marker sendt"><Send className="h-3 w-3" /></Button>
+                      <Button size="sm" variant="outline" onClick={() => setOrderDialog(s)} className="ml-1 bg-emerald-50 border-emerald-300 text-emerald-800" title="Bestill behovsvarer" data-testid={`order-from-schema-${s.po_number}`}><ShoppingCart className="h-3 w-3" /></Button>
                       <Button size="sm" variant="ghost" onClick={() => delSchema(s)} className="ml-1"><Trash2 className="h-3 w-3 text-red-600" /></Button>
                     </TableCell>
                   </TableRow>
@@ -142,7 +186,12 @@ export default function Bestillinger() {
                     <TableCell className="text-right">{nok(o.total_amount)}</TableCell>
                     <TableCell><StatusBadge status={o.status} /></TableCell>
                     <TableCell className="text-right">
-                      <Button size="sm" variant="ghost" onClick={() => delOrder(o)}><Trash2 className="h-3 w-3 text-red-600" /></Button>
+                      <Button size="sm" variant="outline" onClick={() => dlOrderPdf(o)} title="Last ned PDF"><FileDown className="h-3 w-3" /></Button>
+                      {canNotify(o) && !o.ready_for_pickup_notified && (
+                        <Button size="sm" variant="outline" onClick={() => openNotify(o)} className="ml-1 bg-emerald-50 border-emerald-300 text-emerald-800" title="Varsle lagleder" data-testid={`notify-${o.po_number}`}><Bell className="h-3 w-3" /></Button>
+                      )}
+                      {o.ready_for_pickup_notified && <span className="ml-1 text-xs text-emerald-700 font-semibold">✓ Varslet</span>}
+                      <Button size="sm" variant="ghost" onClick={() => delOrder(o)} className="ml-1"><Trash2 className="h-3 w-3 text-red-600" /></Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -173,6 +222,39 @@ export default function Bestillinger() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setNewOpen(false)}>Avbryt</Button>
             <Button onClick={createSchema} className="bg-red-700 hover:bg-red-800" data-testid="confirm-new-schema">Opprett</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <OrderDialog open={!!orderDialog} onClose={() => setOrderDialog(null)} schema={orderDialog} suppliers={suppliers} onDone={() => load()} />
+
+      <Dialog open={!!notifyFor} onOpenChange={(o) => !o && setNotifyFor(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Varsle lagleder – {notifyFor?.team_name}</DialogTitle>
+            <DialogDescription>Alle varer er mottatt – klare for henting</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Kanal</Label>
+              <Select value={notifyChannel} onValueChange={setNotifyChannel}>
+                <SelectTrigger data-testid="notify-channel"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="both">E-post + SMS</SelectItem>
+                  <SelectItem value="email">Kun e-post</SelectItem>
+                  <SelectItem value="sms">Kun SMS</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div><Label>Melding (valgfri – standardtekst brukes om tom)</Label>
+              <textarea className="w-full border rounded-md p-2 min-h-[120px] text-sm" value={notifyMsg} onChange={(e) => setNotifyMsg(e.target.value)} placeholder="La stå tom for standardtekst" data-testid="notify-msg" />
+            </div>
+            <p className="text-xs text-slate-500">MERK: SMS krever at Twilio er konfigurert (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER). Hvis ikke, bruk «Kun e-post».</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNotifyFor(null)}>Avbryt</Button>
+            <Button onClick={sendNotify} className="bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="confirm-notify-btn">
+              <Bell className="h-4 w-4 mr-1" />Send varsel
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

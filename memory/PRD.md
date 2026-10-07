@@ -114,6 +114,15 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Statusbadges**: `StatusBadge`-komponent m/ farge+ikon (Bestilt●blå, Delvis▲orange, Levert✓grønn, Manko!rød, Restbestilling■lilla)
 - Testing: 10 API-tester grønne (supplier CRUD, 5-siffer sekvens 00001-26→00002-26, lagsbestilling gjenbruker behovsskjema-nummer, LB-prefiks for lagerbestilling, delmottak oppdaterer status, GET by po_number, team-historikk)
 
+### Nov 2026 – Bestill-dialog + Reservasjoner + PDF + Varsle lagleder
+- **PDF-bestilling** (`GET /api/orders/{id}/pdf`): ReportLab A4 m/ klubbinfo (venstre), leverandør (høyre), lag/sesong, tabell m/ varer/str/draktnr/antall/à-pris/sum, totalsum eks. mva, notat. Testet: 2189 bytes, valid PDF v1.3
+- **Udekket behov-endepunkt** (`GET /behovsskjema/{id}/udekket`): Kalkulerer udekket behov minus allerede bestilt (ekskl. arkivert), + viser åpne LB-lagerbestillinger som kandidater for reservasjon per linje
+- **Reservasjoner** (`POST /stock-reservations`): Reserverer én LB-linje mot et behovsskjema. Blokkerer dobbelt-reservasjon. Setter `reserved_for_po`, `reserved_for_team`, `reserved_quantity` på lagerbestilling-linjen
+- **Bestill-dialog** (`OrderDialog.jsx`): Åpnes fra behovsskjema. Velg leverandør, inkluder/ekskluder linjer, rediger antall + innkjøpspris. Røde advarsler per linje som har åpen LB med «Reserver»-knapp. Live-totalsum nederst. «Utfør bestilling» → oppretter PO, markerer skjema som `bestilt`
+- **Varsle lagleder** (`POST /orders/{id}/notify-lagleder`): Krever at alle linjer er mottatt + team manager/hovedtrener har kontaktinfo. Standardtekst norsk mal. Sender via Twilio SMS (`twilio` pip-installert, krever `TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER` env) + Emergent-managed e-post. Loggfører kanal/mottaker/tidspunkt/resultat. Idempotent (en-gang-varsling). Validerings-tester: "ikke fullstendig mottatt" (3/10 → 400), "mangler kontakt" (400). CC til brukerens egen e-post
+- **UI**: Nye knapper på bestillinger – PDF-download, Varsle lagleder (vises kun når klar), «✓ Varslet»-badge etter sending
+- Testing: 4 parallelle API-tester grønne (PDF 2189 bytes, 2 validerings-feil med riktige meldinger, full receipt → status "levert")
+
 ## Backlog
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall

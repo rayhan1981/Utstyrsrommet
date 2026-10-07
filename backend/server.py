@@ -41,6 +41,9 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 WEBHOOK_CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET", "")
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -3352,6 +3355,263 @@ async def resume_auto_status(oid: str, request: Request, user=Depends(require_pe
                                         {"$set": {"status": auto, "manual_status": None, "manual_status_reason": None},
                                          "$push": {"status_history": entry}})
     return {"ok": True, "status": auto}
+
+
+# ============== ORDER PDF ==============
+def _build_order_pdf(order: dict, club: dict, supplier: dict) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    y = h - 20 * mm
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(20 * mm, y, "BESTILLING")
+    c.setFont("Helvetica", 9)
+    c.drawRightString(w - 20 * mm, y, f"Innkjøpsnr: {order['po_number']}")
+    y -= 6 * mm
+    try:
+        dt = datetime.fromisoformat(order['created_at'].replace("Z","+00:00"))
+        c.drawRightString(w - 20 * mm, y, f"Dato: {dt.strftime('%d.%m.%Y')}")
+    except Exception: pass
+    # Club
+    y_i = h - 35 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(20 * mm, y_i, (club or {}).get("name") or (club or {}).get("club_name") or "Klubb")
+    c.setFont("Helvetica", 9)
+    y_i -= 4 * mm
+    for key in ("address", "postal_code", "city", "email", "phone"):
+        v = (club or {}).get(key)
+        if v: c.drawString(20 * mm, y_i, str(v)); y_i -= 4 * mm
+    # Supplier
+    y_s = h - 35 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(110 * mm, y_s, "Leverandør:")
+    c.setFont("Helvetica", 9)
+    y_s -= 4 * mm
+    c.drawString(110 * mm, y_s, supplier.get("name", "")); y_s -= 4 * mm
+    if supplier.get("address"): c.drawString(110 * mm, y_s, supplier["address"]); y_s -= 4 * mm
+    if supplier.get("postal_code") or supplier.get("city"):
+        c.drawString(110 * mm, y_s, f"{supplier.get('postal_code','')} {supplier.get('city','')}"); y_s -= 4 * mm
+    if supplier.get("email"): c.drawString(110 * mm, y_s, supplier["email"]); y_s -= 4 * mm
+    # Team/season
+    y = h - 70 * mm
+    if order.get("team_name"):
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(20 * mm, y, f"Lag: {order['team_name']}  ·  Årsklasse: {order.get('age_class','')}  ·  Sesong: {order.get('season','')}")
+        y -= 7 * mm
+    else:
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(20 * mm, y, "Lagerbestilling"); y -= 7 * mm
+    # Table header
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(20 * mm, y, "Vare")
+    c.drawString(90 * mm, y, "Str/#")
+    c.drawRightString(130 * mm, y, "Antall")
+    c.drawRightString(155 * mm, y, "À-pris")
+    c.drawRightString(w - 20 * mm, y, "Sum")
+    y -= 2 * mm; c.line(20 * mm, y, w - 20 * mm, y); y -= 5 * mm
+    c.setFont("Helvetica", 9)
+    total = 0
+    for ln in order.get("lines") or []:
+        qty = ln.get("quantity") or 0; price = ln.get("unit_price") or 0
+        s = qty * price; total += s
+        c.drawString(20 * mm, y, (ln.get("item_name") or "")[:50])
+        sz = ln.get("size") or ""
+        jn = ln.get("jersey_number") or ""
+        c.drawString(90 * mm, y, f"{sz}{' #'+jn if jn and jn != 'X' else ''}")
+        c.drawRightString(130 * mm, y, str(qty))
+        c.drawRightString(155 * mm, y, f"{price:,.2f}".replace(",", " "))
+        c.drawRightString(w - 20 * mm, y, f"{s:,.2f}".replace(",", " "))
+        y -= 5 * mm
+        if y < 50 * mm: c.showPage(); y = h - 20 * mm
+    y -= 3 * mm; c.line(20 * mm, y, w - 20 * mm, y); y -= 6 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(110 * mm, y, "Totalt (eks. mva):")
+    c.drawRightString(w - 20 * mm, y, f"NOK {total:,.2f}".replace(",", " "))
+    y -= 5 * mm
+    c.setFont("Helvetica", 8)
+    c.drawString(110 * mm, y, "MVA 25% kommer i tillegg der det er aktuelt.")
+    if order.get("notes"):
+        y -= 10 * mm
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(20 * mm, y, f"Notat: {order['notes'][:150]}")
+    c.save()
+    return buf.getvalue()
+
+
+@api.get("/orders/{oid}/pdf")
+async def get_order_pdf(oid: str, request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    order = await db.purchase_orders.find_one({"id": oid, "tenant_id": tid}, {"_id": 0})
+    if not order: raise HTTPException(404, "Fant ikke")
+    supplier = await db.suppliers.find_one({"id": order["supplier_id"], "tenant_id": tid}, {"_id": 0}) or {}
+    cust = await db.customers.find_one({"id": tid}, {"_id": 0}) or {}
+    club = await db.club_settings.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    if not club.get("name"):
+        club = {"name": cust.get("club_name"), "email": cust.get("owner_email"),
+                "phone": cust.get("owner_phone"), "address": cust.get("address", ""),
+                "postal_code": cust.get("postal_code", ""), "city": cust.get("city", "")}
+    try:
+        pdf = _build_order_pdf(order, club, supplier)
+    except Exception as e:
+        logger.exception("PDF generation failed")
+        raise HTTPException(500, f"PDF-feil: {e}")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="bestilling_{order["po_number"]}.pdf"'})
+
+
+# ============== UDEKKET BEHOV + RESERVATIONS ==============
+@api.get("/behovsskjema/{sid}/udekket")
+async def get_udekket_behov(sid: str, request: Request, user=Depends(require_perm("teams", "read"))):
+    """Returnerer udekket behov for et skjema, basert på behovs-import OG tidligere bestilte mengder."""
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+    if not bs: raise HTTPException(404, "Fant ikke")
+    # Fetch team-needs for this team+season
+    needs = await db.team_needs.find({"tenant_id": tid, "team_id": bs["team_id"], "season": bs["season"]}, {"_id": 0}).to_list(500)
+    coverage = await _compute_need_coverage(tid, needs)
+    # Reduce must_order by amounts already in existing non-archived orders for this behovsskjema
+    prev_orders = await db.purchase_orders.find({"tenant_id": tid, "behovsskjema_id": sid,
+                                                 "status": {"$nin": ["arkivert"]}}, {"_id": 0}).to_list(500)
+    already = {}
+    for o in prev_orders:
+        for ln in o.get("lines") or []:
+            k = f"{ln.get('item_id')}|{ln.get('size') or ''}|{ln.get('jersey_number') or ''}"
+            already[k] = already.get(k, 0) + int(ln.get("quantity") or 0)
+    # Find open stock orders (LB) that could reserve
+    stock_orders = await db.purchase_orders.find({"tenant_id": tid, "is_stock_order": True,
+                                                   "status": {"$in": ["bestilt", "delvis_levert"]}}, {"_id": 0}).to_list(500)
+    stock_available = {}
+    for o in stock_orders:
+        for ln in o.get("lines") or []:
+            if ln.get("reserved_for_po"): continue
+            remaining = (ln.get("quantity") or 0) - (ln.get("received_quantity") or 0)
+            if remaining <= 0: continue
+            k = f"{ln.get('item_id')}|{ln.get('size') or ''}|{ln.get('jersey_number') or ''}"
+            stock_available.setdefault(k, []).append({
+                "order_id": o["id"], "line_id": ln["id"], "po_number": o["po_number"],
+                "remaining": remaining,
+            })
+    out = []
+    for l in coverage:
+        k = f"{l['item_id']}|{l.get('size') or ''}|{l.get('jersey_number') or ''}"
+        already_ordered = already.get(k, 0)
+        remaining_to_order = max(0, l["must_order"] - already_ordered)
+        out.append({**l, "already_ordered": already_ordered,
+                    "remaining_to_order": remaining_to_order,
+                    "stock_order_candidates": stock_available.get(k, [])})
+    return {"behovsskjema": bs, "lines": out}
+
+
+class ReserveStockIn(BaseModel):
+    stock_order_id: str
+    stock_line_id: str
+    behovsskjema_id: str
+    quantity: int
+
+
+@api.post("/stock-reservations")
+async def reserve_from_stock_order(data: ReserveStockIn, request: Request, user=Depends(require_perm("inventory", "write"))):
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": data.behovsskjema_id, "tenant_id": tid}, {"_id": 0})
+    if not bs: raise HTTPException(404, "Behovsskjema finnes ikke")
+    order = await db.purchase_orders.find_one({"id": data.stock_order_id, "tenant_id": tid})
+    if not order: raise HTTPException(404, "Lagerbestilling finnes ikke")
+    lines = order.get("lines") or []
+    found = next((l for l in lines if l["id"] == data.stock_line_id), None)
+    if not found: raise HTTPException(404, "Linje finnes ikke")
+    if found.get("reserved_for_po"):
+        raise HTTPException(400, f"Linje er allerede reservert til {found['reserved_for_po']}")
+    found["reserved_for_po"] = bs["po_number"]
+    found["reserved_for_team"] = bs["team_name"]
+    found["reserved_quantity"] = data.quantity
+    await db.purchase_orders.update_one({"id": data.stock_order_id, "tenant_id": tid}, {"$set": {"lines": lines}})
+    return {"ok": True, "reserved_po": bs["po_number"]}
+
+
+# ============== NOTIFY LAGLEDER (SMS + email) ==============
+class NotifyIn(BaseModel):
+    channel: str  # email | sms | both
+    message: Optional[str] = None  # editable preview; falls back to default
+
+
+async def _send_sms(to: str, body: str) -> dict:
+    """Returns {ok, provider_id, error}. Requires Twilio env vars."""
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER):
+        return {"ok": False, "error": "Twilio er ikke konfigurert. Legg til TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN og TWILIO_FROM_NUMBER i miljøvariabler."}
+    try:
+        from twilio.rest import Client
+        c = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        m = c.messages.create(body=body, from_=TWILIO_FROM_NUMBER, to=to)
+        return {"ok": True, "provider_id": m.sid}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def _send_plain_email(to: str, subject: str, html: str) -> dict:
+    if not EMAIL_KEY: return {"ok": False, "error": "E-posttjeneste ikke konfigurert"}
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                             headers={"X-Email-Key": EMAIL_KEY},
+                             json={"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME})
+        r.raise_for_status()
+        return {"ok": True, "provider_id": r.json().get("id")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@api.post("/orders/{oid}/notify-lagleder")
+async def notify_lagleder(oid: str, data: NotifyIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    order = await db.purchase_orders.find_one({"id": oid, "tenant_id": tid}, {"_id": 0})
+    if not order: raise HTTPException(404, "Fant ikke")
+    if not order.get("team_id"):
+        raise HTTPException(400, "Dette er en lagerbestilling – lagleder kan ikke varsles.")
+    # Verify ready: all lines delivered
+    lines = order.get("lines") or []
+    total_q = sum(l.get("quantity") or 0 for l in lines)
+    recv_q = sum(l.get("received_quantity") or 0 for l in lines)
+    if total_q == 0 or recv_q < total_q:
+        raise HTTPException(400, f"Bestillingen er ikke fullstendig mottatt ({recv_q}/{total_q}). Varsling er deaktivert.")
+    if order.get("ready_for_pickup_notified"):
+        raise HTTPException(409, "Lagleder er allerede varslet for denne bestillingen.")
+    team = await db.teams.find_one({"id": order["team_id"], "tenant_id": tid}, {"_id": 0}) or {}
+    cust = await db.customers.find_one({"id": tid}, {"_id": 0}) or {}
+    tm = team.get("team_manager") or {}
+    hc = team.get("head_coach") or {}
+    recipient = tm if (tm.get("email") or tm.get("phone")) else hc
+    if not (recipient.get("email") or recipient.get("phone")):
+        raise HTTPException(400, "Mangler kontaktinformasjon på lagleder/hovedtrener.")
+    club_name = cust.get("club_name") or "klubben"
+    contact = cust.get("owner_name") or cust.get("owner_email") or ""
+    default_msg = (
+        f"Hei! Utstyret til {order['team_name']}, sesong {order.get('season','')}, "
+        f"med innkjøpsnummer {order['po_number']}, har nå ankommet og er mottatt. "
+        f"Varene er klare for henting. Ta kontakt med {contact} for å avtale henting. "
+        f"OBS! Denne meldingen kan ikke besvares.\n\nHilsen {club_name}"
+    )
+    body = (data.message or default_msg).strip()
+    log = []
+    user_email = user.get("email")
+    if data.channel in ("sms", "both") and recipient.get("phone"):
+        r = await _send_sms(recipient["phone"], body)
+        log.append({"channel": "sms", "to": recipient["phone"], "at": now_iso(), **r})
+    if data.channel in ("email", "both") and recipient.get("email"):
+        html = f'<pre style="font-family:Arial;font-size:13px;white-space:pre-wrap">{body}</pre>'
+        r = await _send_plain_email(recipient["email"], f"Utstyret for {order['team_name']} er klart", html)
+        log.append({"channel": "email", "to": recipient["email"], "at": now_iso(), **r})
+        # cc user
+        if user_email:
+            await _send_plain_email(user_email, f"Kopi: Varsel sendt til {order['team_name']}", html)
+    any_ok = any(x.get("ok") for x in log)
+    update = {"$push": {"notification_log": {"$each": log}}}
+    if any_ok:
+        update["$set"] = {"ready_for_pickup_notified": True, "notified_at": now_iso()}
+    await db.purchase_orders.update_one({"id": oid, "tenant_id": tid}, update)
+    return {"ok": any_ok, "log": log}
 
 
 @api.get("/teams/{team_id}/purchase-history")
