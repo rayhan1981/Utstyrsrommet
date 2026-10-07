@@ -9,6 +9,8 @@ import { Upload, Plus, Trash2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import EmailSettingsCard from "@/components/EmailSettingsCard";
+import ProfileCard from "@/components/ProfileCard";
+import NotificationSettingsCard from "@/components/NotificationSettingsCard";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -61,7 +63,11 @@ export default function Settings() {
         <p className="text-slate-600 text-sm mt-1">Klubber, logoer og generelle innstillinger</p>
       </div>
 
+      <ProfileCard />
+
       <EmailSettingsCard />
+
+      <NotificationSettingsCard />
 
       <Card className="p-5">
         <h3 className="font-display text-lg font-bold mb-3">Legg til ny klubb</h3>

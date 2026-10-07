@@ -967,6 +967,25 @@ async def me(request: Request, user=Depends(get_current_user)):
     }
 
 
+class MyProfileIn(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+@api.put("/auth/me/profile")
+async def update_my_profile(data: MyProfileIn, request: Request, user=Depends(get_current_user)):
+    """Oppdater egen profil (navn, telefon, adresse). Brukes bl.a. for å få telefon på utstyrs-PDFen."""
+    update = {}
+    if data.name is not None: update["name"] = data.name.strip()
+    if data.phone is not None: update["phone"] = data.phone.strip()
+    if data.address is not None: update["address"] = data.address.strip()
+    if not update:
+        return {"ok": True}
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+
+
 # ---------------- Cron: Trial reminder emails ----------------
 async def _run_trial_reminders():
     """Send trial expiration reminders. Day 5 (2 days left) and day 7 (last day).
@@ -1036,20 +1055,81 @@ async def cron_trial_reminders(request: Request):
     return {"status": "accepted", "run_id": run_id}
 
 
+# ---------------- Notification settings (per tenant) ----------------
+DEFAULT_REMINDER_BEFORE = [14, 7]
+DEFAULT_REMINDER_AFTER = [1]
+
+
+class NotificationSettingsIn(BaseModel):
+    reminder_before_days: Optional[List[int]] = None  # dager før frist
+    reminder_after_days: Optional[List[int]] = None   # dager etter frist
+    enabled: Optional[bool] = True
+
+
+async def _get_notification_settings(tid: str) -> dict:
+    cfg = await db.notification_settings.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "reminder_before_days": cfg.get("reminder_before_days") or DEFAULT_REMINDER_BEFORE,
+        "reminder_after_days": cfg.get("reminder_after_days") or DEFAULT_REMINDER_AFTER,
+    }
+
+
+@api.get("/notification-settings")
+async def get_notification_settings(request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    return await _get_notification_settings(tid)
+
+
+@api.put("/notification-settings")
+async def put_notification_settings(data: NotificationSettingsIn, request: Request,
+                                      user=Depends(require_perm("inventory", "admin"))):
+    tid = await require_tenant(request, user)
+    # Valider: positive heltall, maks 30 per felt
+    def _clean(xs, name):
+        if xs is None: return None
+        out = []
+        for x in xs:
+            try:
+                v = int(x)
+                if 0 <= v <= 180:
+                    out.append(v)
+            except Exception:
+                continue
+        if len(out) > 10:
+            raise HTTPException(400, f"Maks 10 verdier for {name}")
+        return sorted(set(out), reverse=True)
+    update = {"tenant_id": tid, "updated_at": now_iso(), "updated_by": user.get("email")}
+    if data.enabled is not None: update["enabled"] = bool(data.enabled)
+    rb = _clean(data.reminder_before_days, "reminder_before_days")
+    ra = _clean(data.reminder_after_days, "reminder_after_days")
+    if rb is not None: update["reminder_before_days"] = rb
+    if ra is not None: update["reminder_after_days"] = ra
+    await db.notification_settings.update_one({"tenant_id": tid}, {"$set": update}, upsert=True)
+    return await _get_notification_settings(tid)
+
+
 # ---------------- Cron: Due-date reminders for team loans ----------------
 async def _run_due_date_reminders():
     """Send e-postvarsel for utlån med nærme/forfalt frist.
-    - 14 dager før frist → lagleder (idempotent: reminder_14_sent)
-    - 7 dager før frist  → lagleder (idempotent: reminder_7_sent)
-    - 1 dag etter frist   → lagleder + kopi til alle admin/aktive brukere (reminder_overdue_sent)
-    PDF vedlegges hver melding. Grupperer alle lån per lag + milepel i én e-post.
+    Dagene (før/etter) er konfigurerbare pr tenant via `notification_settings`.
+    Default: [14, 7] før, [1] etter (overdue → kopi til alle aktive brukere).
+    Idempotent via `reminder_sent_{N}d_{before|after}`-flagg pr lån.
     """
     now = datetime.now(timezone.utc)
     today = now.date()
     sent = 0
+    # Build per-tenant config cache
+    settings_cache: Dict[str, dict] = {}
+
+    async def _get_cached(tid: str):
+        if tid not in settings_cache:
+            settings_cache[tid] = await _get_notification_settings(tid)
+        return settings_cache[tid]
+
     # Finn lån med team_id, status=borrowed og due_date satt
     cursor = db.loans.find({"team_id": {"$ne": None}, "status": "borrowed", "due_date": {"$ne": None}})
-    # Grupper (tenant_id, team_id, milepel) → set av loan_ids
+    # Grupper (tenant_id, team_id, milepel-nøkkel) → set av loan_ids
     buckets: Dict[tuple, Dict[str, Any]] = {}
     async for ln in cursor:
         due_iso = ln.get("due_date")
@@ -1058,18 +1138,28 @@ async def _run_due_date_reminders():
             due_dt = datetime.fromisoformat(due_iso.replace("Z", "+00:00"))
         except Exception:
             continue
+        tid = ln["tenant_id"]
+        cfg = await _get_cached(tid)
+        if not cfg.get("enabled", True):
+            continue
         days_until = (due_dt.date() - today).days
-        milestone = None; flag = None
-        if days_until == 14 and not ln.get("reminder_14_sent"):
-            milestone = "14_days_before"; flag = "reminder_14_sent"
-        elif days_until == 7 and not ln.get("reminder_7_sent"):
-            milestone = "7_days_before"; flag = "reminder_7_sent"
-        elif days_until == -1 and not ln.get("reminder_overdue_sent"):
-            milestone = "overdue"; flag = "reminder_overdue_sent"
-        if not milestone: continue
-        key = (ln["tenant_id"], ln["team_id"], milestone)
-        b = buckets.setdefault(key, {"loan_ids": [], "flag": flag})
+        milestone = None; flag = None; direction = None
+        if days_until > 0 and days_until in (cfg.get("reminder_before_days") or []):
+            direction = "before"; milestone = f"{days_until}d_before"
+            flag = f"reminder_sent_{days_until}d_before"
+        elif days_until < 0:
+            days_after = -days_until
+            if days_after in (cfg.get("reminder_after_days") or []):
+                direction = "after"; milestone = f"{days_after}d_after"
+                flag = f"reminder_sent_{days_after}d_after"
+        if not milestone or ln.get(flag):
+            continue
+        key = (tid, ln["team_id"], milestone)
+        b = buckets.setdefault(key, {"loan_ids": [], "flag": flag,
+                                        "direction": direction,
+                                        "days": days_until if direction == "before" else -days_until})
         b["loan_ids"].append(ln["id"])
+
     for (tid, team_id, milestone), b in buckets.items():
         try:
             pdf_bytes, team, club_name, _ = await _generate_team_equipment_pdf_for_tenant(tid, team_id, None)
@@ -1080,22 +1170,19 @@ async def _run_due_date_reminders():
             if not to_email or not re.match(r"^[^@]+@[^@]+\.[^@]+$", to_email):
                 logger.info(f"[due-reminder] Mangler lagleder-epost for team {team_id} ({milestone})")
                 continue
-            if milestone == "14_days_before":
-                subject = f"Påminnelse: Utstyr for {team.get('team_name')} skal returneres om 14 dager"
-                lead_html = f"<p>Hei {leader_name},</p><p>Dette er en vennlig påminnelse om at utstyr lånt til <strong>{team.get('team_name')}</strong> har frist for retur om <strong>14 dager</strong>. Vedlagt oversikt over hva som er utestående.</p>"
-            elif milestone == "7_days_before":
-                subject = f"Påminnelse: Utstyr for {team.get('team_name')} skal returneres om 7 dager"
-                lead_html = f"<p>Hei {leader_name},</p><p>Fristen for retur av utstyr lånt til <strong>{team.get('team_name')}</strong> er om <strong>7 dager</strong>. Vedlagt oversikt.</p>"
-            else:  # overdue
-                subject = f"VIKTIG: Utstyr for {team.get('team_name')} er over frist"
-                lead_html = f"<p>Hei {leader_name},</p><p>Utstyr lånt til <strong>{team.get('team_name')}</strong> er nå <strong>over frist</strong>. Vennligst returner snarest. Vedlagt oversikt.</p>"
+            days = b["days"]
+            if b["direction"] == "before":
+                subject = f"Påminnelse: Utstyr for {team.get('team_name')} skal returneres om {days} dager"
+                lead_html = f"<p>Hei {leader_name},</p><p>Dette er en vennlig påminnelse om at utstyr lånt til <strong>{team.get('team_name')}</strong> har frist for retur om <strong>{days} dager</strong>. Vedlagt oversikt over hva som er utestående.</p>"
+            else:
+                subject = f"VIKTIG: Utstyr for {team.get('team_name')} er {days} dag(er) over frist"
+                lead_html = f"<p>Hei {leader_name},</p><p>Utstyr lånt til <strong>{team.get('team_name')}</strong> er nå <strong>{days} dag(er) over frist</strong>. Vennligst returner snarest. Vedlagt oversikt.</p>"
             html = lead_html + f"<p>Mvh<br/>{club_name}</p>"
             pdf_b64 = _b64mod.b64encode(pdf_bytes).decode()
             safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
             attachments = [{"filename": f"utstyr_{safe}.pdf", "content": pdf_b64, "type": "application/pdf"}]
-            # Overdue → kopi til alle aktive brukere i tenanten
             cc_list = []
-            if milestone == "overdue":
+            if b["direction"] == "after":
                 users = await db.users.find({"tenant_id": tid, "active": True, "email": {"$ne": to_email}},
                                               {"_id": 0, "email": 1}).to_list(500)
                 cc_list = [u["email"] for u in users if u.get("email")]
@@ -2761,9 +2848,36 @@ async def dashboard_stats(request: Request, user=Depends(get_current_user)):
     stock_value = sum((i.get("total_stock", 0) * i.get("price", 0)) for i in items)
     low_stock = [i for i in items if i.get("total_stock", 0) <= 3]
     recent = await db.loans.find({"tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(10)
+    # Lån med frist denne uka (0-7 dager fra nå, status borrowed)
+    now_dt = datetime.now(timezone.utc)
+    week_cutoff = (now_dt + timedelta(days=7)).isoformat()
+    due_soon_raw = await db.loans.find({
+        "tenant_id": tid, "status": "borrowed",
+        "due_date": {"$ne": None, "$lte": week_cutoff}
+    }, {"_id": 0}).sort("due_date", 1).to_list(100)
+    team_ids = list({l.get("team_id") for l in due_soon_raw if l.get("team_id")})
+    teams_map = {t["id"]: t for t in await db.teams.find({"id": {"$in": team_ids}, "tenant_id": tid},
+                                                            {"_id": 0, "id": 1, "team_name": 1}).to_list(500)}
+    due_soon = []
+    for l in due_soon_raw:
+        try:
+            dd = datetime.fromisoformat(l["due_date"].replace("Z", "+00:00"))
+            days = (dd.date() - now_dt.date()).days
+        except Exception:
+            days = None
+        due_soon.append({
+            "id": l["id"], "item_name": l.get("item_name"),
+            "quantity": l.get("quantity"), "size": l.get("size"),
+            "team_name": teams_map.get(l.get("team_id"), {}).get("team_name"),
+            "team_id": l.get("team_id"),
+            "due_date": l.get("due_date"), "days_until_due": days,
+            "amount_owed": l.get("amount_owed") or 0,
+            "is_overdue": days is not None and days < 0,
+        })
     return {"total_items": total_items, "active_loans": active_loans, "teams": teams, "people": people,
             "team_debt": team_debt, "person_debt": person_debt, "stock_value": stock_value,
-            "low_stock_count": len(low_stock), "low_stock_items": low_stock[:10], "recent_loans": recent}
+            "low_stock_count": len(low_stock), "low_stock_items": low_stock[:10], "recent_loans": recent,
+            "due_soon": due_soon}
 
 
 # ---------------- Stock Audit ----------------

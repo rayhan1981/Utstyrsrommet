@@ -37,6 +37,14 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Bulk-generer QR for alle varer
 - UpgradeCTA for basic/pro-brukere som møter Deluxe-features
 
+### Okt 2026 – Profil-tlf + Konfigurerbare varsler + Dashboard-widget
+- `PUT /api/auth/me/profile` lar innlogget bruker oppdatere navn/telefon/adresse. Telefonen vises nå i signaturlinjen på utstyrs-PDFen ("Mvh / navn / telefon / klubb").
+- `GET/PUT /api/notification-settings` pr tenant: `reminder_before_days` (default [14,7]) og `reminder_after_days` (default [1]), `enabled` on/off. CRON leser nå tenant-config i stedet for hardkodet 14/7/1.
+- Idempotens-nøkler endret til `reminder_sent_{N}d_{before|after}` slik at flere intervaller støttes.
+- Dashboard: nytt endpoint `/api/dashboard/stats` returnerer `due_soon` (lån med frist ≤ 7 dager). Ny widget "Lån med frist denne uka" grupperer pr lag med farge-badge (over frist=rød, ≤2 dager=amber, ellers blå) og "Send oversikt"-knapp per lag.
+- Nye Settings-cards: `ProfileCard` (navn/tlf/adresse) + `NotificationSettingsCard` (chip-UI for å legge til/fjerne intervall-dager).
+
+
 ### Okt 2026 – Direkte-send + CRON forfallsvarsler
 - Ny endpoint `POST /api/teams/{team_id}/send-equipment-list` som genererer utstyrs-PDFen og sender den rett til lagleder (default: team_manager.email → head_coach.email → team.email). Admin blir CC'd. Oppretter `equipment_list_sent_at` på teamet.
 - Teams.jsx: Ny blå "Mail"-knapp pr lag ved siden av Download — åpner dialog m/ to/cc/melding, data-testid `send-equipment-{team_id}`, `confirm-send-equipment`.

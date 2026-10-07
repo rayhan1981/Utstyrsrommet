@@ -2,7 +2,9 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Card } from "@/components/ui/card";
-import { Package, ArrowLeftRight, Users as UsersIcon, UserCircle, TrendingUp, AlertTriangle } from "lucide-react";
+import { Package, ArrowLeftRight, Users as UsersIcon, UserCircle, TrendingUp, AlertTriangle, Clock, Mail } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import TrialDashboardCard from "@/components/TrialDashboardCard";
 
 function Stat({ icon: Icon, label, value, color = "emerald", testid }) {
@@ -111,6 +113,77 @@ export default function Dashboard() {
           </div>
         )}
       </Card>
+
+      <DueSoonWidget rows={stats.due_soon || []} />
     </div>
+  );
+}
+
+function DueSoonWidget({ rows }) {
+  const grouped = rows.reduce((acc, r) => {
+    const k = r.team_id || "__none__";
+    acc[k] = acc[k] || { team_name: r.team_name || "Uten lag", team_id: r.team_id, loans: [] };
+    acc[k].loans.push(r);
+    return acc;
+  }, {});
+  const teams = Object.values(grouped);
+
+  const sendOne = async (teamId, teamName) => {
+    try {
+      const email = window.prompt(`Send utstyrsoversikt for ${teamName} til:`, "");
+      if (!email) return;
+      await api.post(`/teams/${teamId}/send-equipment-list`, { to: email });
+      toast.success(`Oversikt sendt til ${email}`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Kunne ikke sende"); }
+  };
+
+  return (
+    <Card className="p-5" data-testid="due-soon-widget">
+      <div className="flex items-center gap-2 mb-3">
+        <Clock className="h-5 w-5 text-amber-600" />
+        <h3 className="font-display text-lg font-bold">Lån med frist denne uka</h3>
+        <span className="text-xs text-slate-500 ml-auto">{rows.length} linjer</span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-sm text-slate-500">Ingen lån har frist de neste 7 dagene.</p>
+      ) : (
+        <div className="space-y-3">
+          {teams.map((t) => (
+            <div key={t.team_id || "none"} className="border border-slate-200 rounded-md overflow-hidden" data-testid={`due-team-${t.team_id || "none"}`}>
+              <div className="bg-slate-50 px-3 py-2 flex items-center justify-between">
+                <div className="font-semibold text-sm">{t.team_name} <span className="text-slate-500 font-normal">({t.loans.length})</span></div>
+                {t.team_id && (
+                  <Button size="sm" variant="outline" onClick={() => sendOne(t.team_id, t.team_name)} data-testid={`due-send-${t.team_id}`}>
+                    <Mail className="h-3 w-3 mr-1" />Send oversikt
+                  </Button>
+                )}
+              </div>
+              <ul className="divide-y divide-slate-100 text-sm">
+                {t.loans.map((l) => {
+                  const label = l.is_overdue ? `${Math.abs(l.days_until_due)} dag(er) over frist` :
+                                 l.days_until_due === 0 ? "Forfaller i dag" :
+                                 `${l.days_until_due} dager igjen`;
+                  const color = l.is_overdue ? "bg-red-100 text-red-800" :
+                                 l.days_until_due <= 2 ? "bg-amber-100 text-amber-800" : "bg-sky-100 text-sky-800";
+                  return (
+                    <li key={l.id} className="px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="truncate">
+                        <span className="font-medium">{l.item_name}</span>
+                        {l.size && <span className="text-xs text-slate-500 ml-1 font-mono">{l.size}</span>}
+                        <span className="text-xs text-slate-500 ml-2">× {l.quantity}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {l.amount_owed > 0 && <span className="text-xs text-red-700 font-semibold">{(l.amount_owed || 0).toLocaleString("nb-NO", { style:"currency", currency:"NOK", maximumFractionDigits:0 })}</span>}
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${color}`}>{label}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
