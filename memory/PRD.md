@@ -37,6 +37,12 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Bulk-generer QR for alle varer
 - UpgradeCTA for basic/pro-brukere som møter Deluxe-features
 
+### Okt 2026 – Forbedret utstyrs-PDF + Multi-linje utlån
+- Utstyrs-PDF: Nye kolonner **Pris/stk** og **Linjebeløp** (totalbeløp pr vare). Kolonne-oppsett rettet så Frist/Linjebeløp ikke lenger overlapper. Lange varenavn trunkereres. Dottet skilleline mellom seksjonene og mer whitespace for klar separering mellom utestående utstyr og forbruksvarer.
+- Loans.jsx: Komplett rewrite. Dialog støtter nå **flere varer** på egne linjer med "Legg til linje". Frist-modus: **Felles** (én dato for alle linjer) eller **Egen frist pr linje**. Dato velges fra en månedskalender med måned/år-nedtrekk (bla fram/tilbake uten begrensning).
+- Backend LoanIn støtter nå `due_date` ISO direkte i tillegg til `due_in_days`.
+
+
 ### Okt 2026 – Profil-tlf + Konfigurerbare varsler + Dashboard-widget
 - `PUT /api/auth/me/profile` lar innlogget bruker oppdatere navn/telefon/adresse. Telefonen vises nå i signaturlinjen på utstyrs-PDFen ("Mvh / navn / telefon / klubb").
 - `GET/PUT /api/notification-settings` pr tenant: `reminder_before_days` (default [14,7]) og `reminder_after_days` (default [1]), `enabled` on/off. CRON leser nå tenant-config i stedet for hardkodet 14/7/1.

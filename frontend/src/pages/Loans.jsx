@@ -6,13 +6,61 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Undo2 } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Plus, Undo2, Trash2, CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
+import { nb } from "date-fns/locale";
+import { format } from "date-fns";
+
+const newLine = () => ({
+  item_id: "", quantity: 1, size: "", jersey_number: "",
+  due_date: null, // Date|null — null betyr "bruk fellesfrist"
+  notes: "",
+});
+
+function DatePicker({ value, onChange, placeholder = "Velg dato", testid }) {
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(value || new Date());
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" className="w-full justify-start text-left font-normal" data-testid={testid}>
+          <CalendarIcon className="h-4 w-4 mr-2 shrink-0" />
+          {value ? format(value, "d. MMMM yyyy", { locale: nb }) : <span className="text-slate-400">{placeholder}</span>}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <div className="p-2 flex items-center gap-2 border-b border-slate-100">
+          <Select value={String(month.getFullYear())}
+                  onValueChange={(v) => { const d = new Date(month); d.setFullYear(parseInt(v)); setMonth(d); }}>
+            <SelectTrigger className="h-8 w-24" data-testid={`${testid}-year`}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 11 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) =>
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={String(month.getMonth())}
+                  onValueChange={(v) => { const d = new Date(month); d.setMonth(parseInt(v)); setMonth(d); }}>
+            <SelectTrigger className="h-8 flex-1" data-testid={`${testid}-month`}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {["Januar","Februar","Mars","April","Mai","Juni","Juli","August","September","Oktober","November","Desember"].map((m, i) =>
+                <SelectItem key={i} value={String(i)}>{m}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <Calendar mode="single" selected={value || undefined} month={month}
+                   onMonthChange={setMonth}
+                   onSelect={(d) => { if (d) { onChange(d); setOpen(false); } }}
+                   locale={nb} initialFocus />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export default function Loans() {
   const { hasPerm } = useAuth();
@@ -25,11 +73,16 @@ export default function Loans() {
   const [returnBy, setReturnBy] = useState("");
   const [returnQty, setReturnQty] = useState(1);
 
-  const [form, setForm] = useState({
-    mode: "loan", charge_price: true, item_id: "", quantity: 1,
-    team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "",
-    loan_target: "person", due_in_days: 30,
+  // Fellesfelter for utlån:
+  const [common, setCommon] = useState({
+    mode: "loan", charge_price: true, loan_target: "person",
+    team_id: "none", person_id: "none",
+    due_mode: "same", // "same" = én felles frist | "per_line" = pr linje
+    common_due_date: addDays(new Date(), 30),
   });
+  const [lines, setLines] = useState([newLine()]);
+
+  function addDays(d, days) { const r = new Date(d); r.setDate(r.getDate() + days); return r; }
 
   const load = async () => {
     const [l, i, t, p] = await Promise.all([api.get("/loans"), api.get("/items"), api.get("/teams"), api.get("/people")]);
@@ -39,22 +92,50 @@ export default function Loans() {
 
   const nok = (v) => (v || 0).toLocaleString("nb-NO", { style: "currency", currency: "NOK", maximumFractionDigits: 0 });
 
-  const selectedItem = items.find((i) => i.id === form.item_id);
+  const setLineField = (idx, field, value) => {
+    const arr = [...lines]; arr[idx] = { ...arr[idx], [field]: value };
+    // Nullstill size/jersey hvis vare endres
+    if (field === "item_id") { arr[idx].size = ""; arr[idx].jersey_number = ""; }
+    setLines(arr);
+  };
+  const addLine = () => setLines([...lines, newLine()]);
+  const removeLine = (idx) => setLines(lines.filter((_, i) => i !== idx));
+
+  const openNew = () => {
+    setCommon({ mode: "loan", charge_price: true, loan_target: "person",
+                team_id: "none", person_id: "none",
+                due_mode: "same", common_due_date: addDays(new Date(), 30) });
+    setLines([newLine()]);
+    setOpen(true);
+  };
 
   const save = async () => {
+    // Valider linjer
+    const prepared = [];
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!l.item_id) { toast.error(`Linje ${i+1}: velg vare`); return; }
+      const q = parseInt(l.quantity, 10) || 0;
+      if (q < 1) { toast.error(`Linje ${i+1}: antall må være minst 1`); return; }
+      const item = items.find((x) => x.id === l.item_id);
+      if ((item?.is_clothing || item?.is_ball) && !l.size) { toast.error(`Linje ${i+1}: velg størrelse`); return; }
+      const due = common.due_mode === "per_line" ? (l.due_date || common.common_due_date) : common.common_due_date;
+      prepared.push({
+        item_id: l.item_id, quantity: q,
+        size: l.size || null, jersey_number: l.jersey_number || null,
+        team_id: common.team_id === "none" ? null : common.team_id,
+        person_id: common.person_id === "none" ? null : common.person_id,
+        mode: common.mode, charge_price: common.charge_price,
+        loan_target: common.loan_target,
+        due_date: due.toISOString(),
+        notes: l.notes || "",
+      });
+    }
     try {
-      const payload = {
-        ...form,
-        quantity: parseInt(form.quantity) || 1,
-        team_id: form.team_id === "none" ? null : form.team_id,
-        person_id: form.person_id === "none" ? null : form.person_id,
-        size: form.size || null,
-        jersey_number: form.jersey_number || null,
-      };
-      await api.post("/loans", payload);
-      toast.success(form.mode === "loan" ? "Utlån registrert" : "Utlevering registrert");
-      setOpen(false); setForm({ mode: "loan", charge_price: true, item_id: "", quantity: 1, team_id: "none", person_id: "none", size: "", jersey_number: "", notes: "", loan_target: "person", due_in_days: 30 });
-      load();
+      // Opprett sekvensielt — holder antall-sjekken korrekt
+      for (const p of prepared) await api.post("/loans", p);
+      toast.success(`${prepared.length} ${prepared.length === 1 ? "linje" : "linjer"} registrert`);
+      setOpen(false); await load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
@@ -65,7 +146,6 @@ export default function Loans() {
       setReturnFor(null); setReturnBy(""); setReturnQty(1); load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
-
   const openReturn = (l) => { setReturnFor(l); setReturnQty(l.quantity); setReturnBy(""); };
 
   const active = loans.filter((l) => l.status === "borrowed");
@@ -99,10 +179,10 @@ export default function Loans() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-display text-3xl font-extrabold">Utlån & Retur</h1>
-          <p className="text-slate-600 text-sm mt-1">Registrer utlån, utlevering og håndter innlevering</p>
+          <p className="text-slate-600 text-sm mt-1">Registrer utlån og utlevering – flere varer og egne frister pr linje</p>
         </div>
         {hasPerm("loans", "write") && (
-          <Button onClick={() => setOpen(true)} data-testid="new-loan-btn" className="bg-red-900 hover:bg-red-800">
+          <Button onClick={openNew} data-testid="new-loan-btn" className="bg-red-900 hover:bg-red-800">
             <Plus className="h-4 w-4 mr-2" />Nytt utlån / utlevering
           </Button>
         )}
@@ -145,100 +225,154 @@ export default function Loans() {
       </Tabs>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nytt utlån / utlevering</DialogTitle>
-            <DialogDescription>Velg vare, antall og hvem som henter.</DialogDescription>
+            <DialogDescription>Legg til flere varer. Velg felles frist eller egen frist per linje.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 border border-slate-200 rounded-md p-3">
-              <div className="flex-1">
-                <div className="font-semibold text-sm">Modus: {form.mode === "loan" ? "Utlån (lånes ut)" : "Utlevering (gis ut)"}</div>
-                <div className="text-xs text-slate-500">Bytt mellom utlån og utlevering</div>
-              </div>
-              <Switch checked={form.mode === "handout"} onCheckedChange={(v) => setForm({ ...form, mode: v ? "handout" : "loan" })} data-testid="loan-mode-switch" />
-            </div>
 
-            {form.mode === "handout" && (
-              <label className="flex items-center gap-2 text-sm border border-slate-200 rounded-md p-3">
-                <Switch checked={form.charge_price} onCheckedChange={(v) => setForm({ ...form, charge_price: v })} data-testid="charge-price-switch" />
-                <span>Legg pris til som skyldig beløp</span>
-              </label>
-            )}
+          <div className="space-y-4">
+            {/* Felles-innstillinger */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex items-center gap-3 border border-slate-200 rounded-md p-3">
+                <div className="flex-1">
+                  <div className="font-semibold text-sm">Modus: {common.mode === "loan" ? "Utlån (lånes ut)" : "Utlevering (gis ut)"}</div>
+                  <div className="text-xs text-slate-500">Bytt mellom utlån og utlevering</div>
+                </div>
+                <Switch checked={common.mode === "handout"} onCheckedChange={(v) => setCommon({ ...common, mode: v ? "handout" : "loan" })} data-testid="loan-mode-switch" />
+              </div>
+              {common.mode === "handout" && (
+                <label className="flex items-center gap-2 text-sm border border-slate-200 rounded-md p-3">
+                  <Switch checked={common.charge_price} onCheckedChange={(v) => setCommon({ ...common, charge_price: v })} data-testid="charge-price-switch" />
+                  <span>Legg pris til som skyldig beløp</span>
+                </label>
+              )}
+            </div>
 
             <div className="border border-slate-200 rounded-md p-3 bg-red-50/50">
               <Label className="text-sm font-semibold">Skyldig beløp går til</Label>
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <button type="button" onClick={() => setForm({ ...form, loan_target: "person" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "person" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="target-person-btn">Person</button>
-                <button type="button" onClick={() => setForm({ ...form, loan_target: "team" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${form.loan_target === "team" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="target-team-btn">Lag</button>
+                <button type="button" onClick={() => setCommon({ ...common, loan_target: "person" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${common.loan_target === "person" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="target-person-btn">Person</button>
+                <button type="button" onClick={() => setCommon({ ...common, loan_target: "team" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${common.loan_target === "team" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="target-team-btn">Lag</button>
               </div>
-              <p className="text-xs text-slate-600 mt-1.5">{form.loan_target === "team" ? "Gjelden belastes LAGET, ikke personen." : "Gjelden belastes PERSONEN som henter."}</p>
+              <p className="text-xs text-slate-600 mt-1.5">{common.loan_target === "team" ? "Gjelden belastes LAGET." : "Gjelden belastes PERSONEN som henter."}</p>
             </div>
 
-            <div>
-              <Label>Vare</Label>
-              <Select value={form.item_id} onValueChange={(v) => setForm({ ...form, item_id: v, size: "", jersey_number: "" })}>
-                <SelectTrigger data-testid="loan-item-select"><SelectValue placeholder="Velg vare" /></SelectTrigger>
-                <SelectContent>{items.map((i) => <SelectItem key={i.id} value={i.id}>{i.name} ({nok(i.price)})</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-
-            {(selectedItem?.is_clothing || selectedItem?.is_ball) && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Størrelse</Label>
-                  <Select value={form.size} onValueChange={(v) => {
-                    const s = selectedItem.sizes.find((x) => x.size === v);
-                    setForm({ ...form, size: v, jersey_number: s?.jersey_number || (selectedItem.is_ball ? "" : "X") });
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Velg str" /></SelectTrigger>
-                    <SelectContent>{(selectedItem.sizes || []).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} (lager: {s.quantity})</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                {selectedItem?.is_clothing && (
-                  <div><Label>Draktnr</Label><Input value={form.jersey_number} onChange={(e) => setForm({ ...form, jersey_number: e.target.value })} /></div>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>Antall</Label><Input type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} data-testid="loan-qty-input" /></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <Label>Forfallsfrist</Label>
-                <Select value={String(form.due_in_days)} onValueChange={(v) => setForm({ ...form, due_in_days: parseInt(v) })}>
-                  <SelectTrigger data-testid="loan-due-select"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="7">7 dager</SelectItem><SelectItem value="14">14 dager</SelectItem><SelectItem value="30">30 dager</SelectItem></SelectContent>
+                <Label>Lag</Label>
+                <Select value={common.team_id} onValueChange={(v) => setCommon({ ...common, team_id: v })}>
+                  <SelectTrigger data-testid="loan-team-select"><SelectValue placeholder="Ingen" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Ingen lag</SelectItem>
+                    {teams.map((t) => <SelectItem key={t.id} value={t.id}>{t.team_name} {t.age_class && `(${t.age_class})`}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Hentet av (person)</Label>
+                <Select value={common.person_id} onValueChange={(v) => setCommon({ ...common, person_id: v })}>
+                  <SelectTrigger><SelectValue placeholder="Ingen" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Ingen person</SelectItem>
+                    {people.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
                 </Select>
               </div>
             </div>
 
-            <div>
-              <Label>Lag</Label>
-              <Select value={form.team_id} onValueChange={(v) => setForm({ ...form, team_id: v })}>
-                <SelectTrigger data-testid="loan-team-select"><SelectValue placeholder="Ingen" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Ingen lag</SelectItem>
-                  {teams.map((t) => <SelectItem key={t.id} value={t.id}>{t.team_name} {t.age_class && `(${t.age_class})`}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            {/* Frist-modus */}
+            <div className="border border-slate-200 rounded-md p-3">
+              <Label className="text-sm font-semibold">Frist for innlevering</Label>
+              <div className="grid grid-cols-2 gap-2 mt-2 mb-3">
+                <button type="button" onClick={() => setCommon({ ...common, due_mode: "same" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${common.due_mode === "same" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="due-mode-same">Felles for alle linjer</button>
+                <button type="button" onClick={() => setCommon({ ...common, due_mode: "per_line" })} className={`py-2 px-3 rounded-md text-sm font-semibold transition ${common.due_mode === "per_line" ? "bg-red-900 text-white" : "bg-white border border-slate-200 hover:border-red-700"}`} data-testid="due-mode-per-line">Egen frist pr linje</button>
+              </div>
+              {common.due_mode === "same" && (
+                <DatePicker value={common.common_due_date} onChange={(d) => setCommon({ ...common, common_due_date: d })} testid="common-due-date" />
+              )}
+              {common.due_mode === "per_line" && (
+                <p className="text-xs text-slate-500">Fyll inn frist pr linje under. Blank = bruker felles frist ({format(common.common_due_date, "d. MMM yyyy", { locale: nb })}).</p>
+              )}
             </div>
 
-            <div>
-              <Label>Hentet av (person)</Label>
-              <Select value={form.person_id} onValueChange={(v) => setForm({ ...form, person_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Ingen" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Ingen person</SelectItem>
-                  {people.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            {/* Varelinjer */}
+            <div className="border border-slate-200 rounded-md p-3">
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-semibold">Varelinjer ({lines.length})</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addLine} data-testid="add-loan-line">
+                  <Plus className="h-3 w-3 mr-1" />Legg til linje
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {lines.map((line, idx) => {
+                  const item = items.find((i) => i.id === line.item_id);
+                  const hasSize = !!(item?.is_clothing || item?.is_ball);
+                  return (
+                    <div key={idx} className="border border-slate-200 rounded-md p-3 bg-slate-50/60" data-testid={`loan-line-${idx}`}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="text-xs font-bold text-slate-500">Linje {idx + 1}</div>
+                        {lines.length > 1 && (
+                          <Button type="button" variant="ghost" size="sm" onClick={() => removeLine(idx)} data-testid={`remove-line-${idx}`}>
+                            <Trash2 className="h-3 w-3 text-red-600" />
+                          </Button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
+                        <div className="sm:col-span-3">
+                          <Label className="text-[11px]">Vare</Label>
+                          <Select value={line.item_id} onValueChange={(v) => setLineField(idx, "item_id", v)}>
+                            <SelectTrigger data-testid={`line-item-${idx}`}><SelectValue placeholder="Velg vare" /></SelectTrigger>
+                            <SelectContent>{items.map((i) => <SelectItem key={i.id} value={i.id}>{i.name} ({nok(i.price)})</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                        {hasSize && (
+                          <div>
+                            <Label className="text-[11px]">Størrelse</Label>
+                            <Select value={line.size} onValueChange={(v) => {
+                              const s = (item.sizes || []).find((x) => x.size === v);
+                              const arr = [...lines]; arr[idx] = { ...arr[idx], size: v, jersey_number: s?.jersey_number || (item.is_ball ? "" : "X") };
+                              setLines(arr);
+                            }}>
+                              <SelectTrigger><SelectValue placeholder="Str" /></SelectTrigger>
+                              <SelectContent>{(item.sizes || []).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} ({s.quantity})</SelectItem>)}</SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                        {hasSize && item?.is_clothing && (
+                          <div>
+                            <Label className="text-[11px]">Draktnr</Label>
+                            <Input value={line.jersey_number} onChange={(e) => setLineField(idx, "jersey_number", e.target.value)} />
+                          </div>
+                        )}
+                        <div>
+                          <Label className="text-[11px]">Antall</Label>
+                          <Input type="number" min="1" value={line.quantity} onChange={(e) => setLineField(idx, "quantity", e.target.value)} data-testid={`line-qty-${idx}`} />
+                        </div>
+                      </div>
+                      {common.due_mode === "per_line" && (
+                        <div className="mt-2">
+                          <Label className="text-[11px]">Frist (overstyrer felles)</Label>
+                          <DatePicker value={line.due_date} onChange={(d) => setLineField(idx, "due_date", d)}
+                                       placeholder={`Felles: ${format(common.common_due_date, "d. MMM yyyy", { locale: nb })}`}
+                                       testid={`line-due-${idx}`} />
+                        </div>
+                      )}
+                      <div className="mt-2">
+                        <Label className="text-[11px]">Notat (valgfri)</Label>
+                        <Input value={line.notes} onChange={(e) => setLineField(idx, "notes", e.target.value)} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-
-            <div><Label>Notater</Label><Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Avbryt</Button>
-            <Button onClick={save} data-testid="save-loan-btn" className="bg-red-900 hover:bg-red-800">Registrer</Button>
+            <Button onClick={save} data-testid="save-loan-btn" className="bg-red-900 hover:bg-red-800">
+              Registrer {lines.length} {lines.length === 1 ? "linje" : "linjer"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

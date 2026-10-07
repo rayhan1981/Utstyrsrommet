@@ -712,6 +712,7 @@ class LoanIn(BaseModel):
     mode: str = "loan"  # 'loan' or 'handout'
     loan_target: Optional[str] = None  # 'team' | 'person' - overstyrer hvem gjelden havner på
     due_in_days: int = 30  # 7 | 14 | 30
+    due_date: Optional[str] = None  # ISO-dato; overstyrer due_in_days hvis satt
     charge_price: bool = True
     notes: Optional[str] = ""
 
@@ -2432,7 +2433,7 @@ async def create_loan(data: LoanIn, request: Request, user=Depends(require_perm(
         "unit_price": price, "amount_owed": charge, "status": "borrowed",
         "loan_date": now_iso(), "picked_up_by": data.person_id,
         "due_in_days": int(data.due_in_days),
-        "due_date": (datetime.now(timezone.utc) + timedelta(days=int(data.due_in_days))).isoformat(),
+        "due_date": (data.due_date if data.due_date else (datetime.now(timezone.utc) + timedelta(days=int(data.due_in_days))).isoformat()),
         "overdue_dismissed_at": None,
         "return_date": None, "received_by_person_id": None, "notes": data.notes,
     }
@@ -3201,18 +3202,22 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
     c.setFont("Helvetica-Bold", 12)
     c.drawString(LEFT, y, "Utestående utstyr (ikke levert tilbake)")
     y -= 6 * mm
-    c.setFont("Helvetica-Bold", 9)
-    # Columns: Vare | Str/Nr | Antall | Skyldig | Frist
+    # Kolonner (fra RIGHT bakover) – sikrer at ingenting overlapper.
     col_vare = LEFT
-    col_str = LEFT + 85 * mm
-    col_ant = LEFT + 115 * mm
-    col_skyld = LEFT + 135 * mm
-    col_frist = RIGHT - 24 * mm
-    c.drawString(col_vare, y, "Vare")
-    c.drawString(col_str, y, "Str/Nr")
-    c.drawRightString(col_ant + 10 * mm, y, "Antall")
-    c.drawRightString(col_skyld + 25 * mm, y, "Skyldig")
-    c.drawRightString(RIGHT, y, "Frist")
+    col_str = LEFT + 78 * mm   # "Str/Nr" start (venstre-justert)
+    col_ant_r = RIGHT - 68 * mm   # høyre kant av "Antall"
+    col_pris_r = RIGHT - 48 * mm  # høyre kant av "Pris/stk"
+    col_sum_r = RIGHT - 25 * mm   # høyre kant av "Linjebeløp"
+    col_frist_r = RIGHT           # høyre kant av "Frist"
+    def _header():
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(col_vare, y, "Vare")
+        c.drawString(col_str, y, "Str/Nr")
+        c.drawRightString(col_ant_r, y, "Antall")
+        c.drawRightString(col_pris_r, y, "Pris/stk")
+        c.drawRightString(col_sum_r, y, "Linjebeløp")
+        c.drawRightString(col_frist_r, y, "Frist")
+    _header()
     y -= 2 * mm
     c.line(LEFT, y, RIGHT, y)
     y -= 5 * mm
@@ -3225,27 +3230,39 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
     else:
         for l in unreturned:
             _ensure_space(6 * mm)
-            name = (l.get("item_name") or "")[:50]
+            name_full = (l.get("item_name") or "")
+            # Trunker varenavn hvis for langt
+            name = name_full if len(name_full) <= 38 else (name_full[:35] + "...")
             size_bits = []
             if l.get("size"): size_bits.append(l["size"])
             if l.get("jersey_number") and l["jersey_number"] not in ("X", ""): size_bits.append(f"#{l['jersey_number']}")
             size_str = " ".join(size_bits) or "-"
             qty = int(l.get("quantity") or 0)
+            unit = float(l.get("unit_price") or 0)
             amt = float(l.get("amount_owed") or 0)
             due = _fmt_date(l.get("due_date"))
             c.drawString(col_vare, y, name)
-            c.drawString(col_str, y, size_str)
-            c.drawRightString(col_ant + 10 * mm, y, str(qty))
-            c.drawRightString(col_skyld + 25 * mm, y, nok(amt))
-            c.drawRightString(RIGHT, y, due)
+            c.drawString(col_str, y, size_str[:10])
+            c.drawRightString(col_ant_r, y, str(qty))
+            c.drawRightString(col_pris_r, y, nok(unit))
+            c.drawRightString(col_sum_r, y, nok(amt))
+            c.drawRightString(col_frist_r, y, due)
             y -= 5 * mm
             total_amt += amt; total_qty += qty; lines_count += 1
         y -= 1 * mm
         c.line(LEFT, y, RIGHT, y); y -= 5 * mm
         c.setFont("Helvetica-Bold", 10)
-        c.drawRightString(col_skyld + 25 * mm, y, nok(total_amt))
         c.drawString(LEFT, y, f"Sum ({lines_count} linjer, {total_qty} varer)")
-        y -= 8 * mm
+        c.drawRightString(col_sum_r, y, nok(total_amt))
+        y -= 10 * mm
+
+    # --- Visuell separator mellom seksjoner ---
+    c.setStrokeColorRGB(0.75, 0.75, 0.75)
+    c.setDash(2, 2)
+    c.line(LEFT, y, RIGHT, y)
+    c.setDash()
+    c.setStrokeColorRGB(0, 0, 0)
+    y -= 8 * mm
 
     # --- Section 2: Utleverte forbruksvarer (handout uten skyld) ---
     _ensure_space(30 * mm)
@@ -3255,17 +3272,18 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
     c.setFont("Helvetica-Bold", 12)
     c.drawString(LEFT, y, "Utleverte forbruksvarer (uten skyldig beløp)")
     y -= 6 * mm
+    # Kolonner: Dato 25 | Vare 70 | Str/Nr 15 | Antall 15 | Utlevert til 45
+    col2_dato = LEFT
+    col2_vare = LEFT + 26 * mm
+    col2_str_r = RIGHT - 68 * mm   # høyre kant av Str/Nr
+    col2_ant_r = RIGHT - 48 * mm   # høyre kant av Antall
+    col2_hent = RIGHT - 42 * mm    # venstre kant av "Utlevert til" (brer seg til RIGHT)
     c.setFont("Helvetica-Bold", 9)
-    col_dato = LEFT
-    col_vare2 = LEFT + 32 * mm
-    col_str2 = LEFT + 95 * mm
-    col_ant2 = LEFT + 125 * mm
-    col_hent = LEFT + 148 * mm
-    c.drawString(col_dato, y, "Dato")
-    c.drawString(col_vare2, y, "Vare")
-    c.drawString(col_str2, y, "Str/Nr")
-    c.drawRightString(col_ant2 + 10 * mm, y, "Antall")
-    c.drawString(col_hent, y, "Utlevert til")
+    c.drawString(col2_dato, y, "Dato")
+    c.drawString(col2_vare, y, "Vare")
+    c.drawRightString(col2_str_r, y, "Str/Nr")
+    c.drawRightString(col2_ant_r, y, "Antall")
+    c.drawString(col2_hent, y, "Utlevert til")
     y -= 2 * mm
     c.line(LEFT, y, RIGHT, y)
     y -= 5 * mm
@@ -3278,7 +3296,8 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
     else:
         for l in handouts:
             _ensure_space(6 * mm)
-            name = (l.get("item_name") or "")[:40]
+            name_full = (l.get("item_name") or "")
+            name = name_full if len(name_full) <= 32 else (name_full[:29] + "...")
             size_bits = []
             if l.get("size"): size_bits.append(l["size"])
             if l.get("jersey_number") and l["jersey_number"] not in ("X", ""): size_bits.append(f"#{l['jersey_number']}")
@@ -3287,11 +3306,11 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
             dato = _fmt_date(l.get("loan_date"))
             pid = l.get("picked_up_by") or l.get("person_id")
             picked = (people.get(pid) or {}).get("name") or "-"
-            c.drawString(col_dato, y, dato)
-            c.drawString(col_vare2, y, name)
-            c.drawString(col_str2, y, size_str)
-            c.drawRightString(col_ant2 + 10 * mm, y, str(qty))
-            c.drawString(col_hent, y, picked[:28])
+            c.drawString(col2_dato, y, dato)
+            c.drawString(col2_vare, y, name)
+            c.drawRightString(col2_str_r, y, size_str[:10])
+            c.drawRightString(col2_ant_r, y, str(qty))
+            c.drawString(col2_hent, y, picked[:22])
             y -= 5 * mm
             h_qty_total += qty; h_lines += 1
         y -= 1 * mm
