@@ -80,11 +80,12 @@ export default function Leverandorer() {
           <Input className="pl-9" placeholder="Søk leverandør…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <Table>
-          <TableHeader><TableRow><TableHead>Navn</TableHead><TableHead>Kontakt</TableHead><TableHead>Sted</TableHead><TableHead>E-post / tlf</TableHead><TableHead>Status</TableHead><TableHead></TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead className="w-16">Nr</TableHead><TableHead>Navn</TableHead><TableHead>Kontakt</TableHead><TableHead>Sted</TableHead><TableHead>E-post / tlf</TableHead><TableHead>Status</TableHead><TableHead></TableHead></TableRow></TableHeader>
           <TableBody>
-            {filtered.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-slate-500 py-6">Ingen leverandører</TableCell></TableRow>}
+            {filtered.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-slate-500 py-6">Ingen leverandører</TableCell></TableRow>}
             {filtered.map((s) => (
               <TableRow key={s.id} className={s.active === false ? "opacity-60" : ""}>
+                <TableCell className="font-mono text-xs font-semibold text-red-700">#{s.supplier_number || "-"}</TableCell>
                 <TableCell className="font-semibold"><button onClick={() => openHistory(s)} className="text-red-700 hover:underline">{s.name}</button></TableCell>
                 <TableCell className="text-xs">{s.contact_person || "-"}</TableCell>
                 <TableCell className="text-xs">{s.postal_code} {s.city}</TableCell>

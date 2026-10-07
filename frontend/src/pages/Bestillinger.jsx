@@ -8,10 +8,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShoppingCart, Plus, FileText, Trash2, Download, Send, Package, Bell, FileDown } from "lucide-react";
+import { ShoppingCart, Plus, FileText, Trash2, Download, Send, Package, Bell, FileDown, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./Leverandorer";
 import OrderDialog from "@/components/OrderDialog";
+import StockOrderDialog from "@/components/StockOrderDialog";
 
 export default function Bestillinger() {
   const [schemas, setSchemas] = useState([]);
@@ -26,16 +27,20 @@ export default function Bestillinger() {
   const [notifyFor, setNotifyFor] = useState(null);
   const [notifyChannel, setNotifyChannel] = useState("both");
   const [notifyMsg, setNotifyMsg] = useState("");
+  const [editSchema, setEditSchema] = useState(null);
+  const [sendSchemaFor, setSendSchemaFor] = useState(null);
+  const [sendForm, setSendForm] = useState({ recipient_email: "", recipient_name: "", message: "" });
+  const [items, setItems] = useState([]);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
-    const [a, b, c, d, e] = await Promise.all([
+    const [a, b, c, d, e, f] = await Promise.all([
       api.get("/behovsskjema"), api.get("/orders"),
       api.get("/teams"), api.get("/suppliers"),
-      api.get("/needs/seasons"),
+      api.get("/needs/seasons"), api.get("/items"),
     ]);
     setSchemas(a.data); setOrders(b.data); setTeams(c.data); setSuppliers(d.data);
-    setSeasons(e.data.seasons);
+    setSeasons(e.data.seasons); setItems(f.data);
   };
   useEffect(() => { load(); }, []);
 
@@ -60,12 +65,42 @@ export default function Bestillinger() {
   };
 
   const markSent = async (schema) => {
-    const email = prompt(`Send til hvilken e-post? (lagleders adresse)`);
-    if (!email) return;
+    setSendSchemaFor(schema);
+    setSendForm({
+      recipient_email: schema.recipient_email || schema.sent_to || "",
+      recipient_name: schema.recipient_name || "",
+      message: schema.message || "",
+    });
+  };
+
+  const sendSchemaEmail = async () => {
+    if (!sendForm.recipient_email) { toast.error("Angi mottakers e-post"); return; }
     try {
-      await api.put(`/behovsskjema/${schema.id}`, { status: "sendt", sent_at: new Date().toISOString(), sent_to: email });
-      toast.success("Markert som sendt. (MERK: Faktisk e-postutsending er ikke integrert ennå – manuell videresending kreves.)");
-      load();
+      const { data } = await api.post(`/behovsskjema/${sendSchemaFor.id}/send`, sendForm);
+      toast.success(`Skjema sendt til ${data.sent_to}`);
+      setSendSchemaFor(null); load();
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail));
+    }
+  };
+
+  const openEditSchema = (schema) => {
+    setEditSchema({
+      ...schema,
+      recipient_name: schema.recipient_name || "",
+      recipient_email: schema.recipient_email || schema.sent_to || "",
+      message: schema.message || "",
+    });
+  };
+
+  const saveEditSchema = async () => {
+    try {
+      await api.put(`/behovsskjema/${editSchema.id}`, {
+        recipient_name: editSchema.recipient_name,
+        recipient_email: editSchema.recipient_email,
+        message: editSchema.message,
+      });
+      toast.success("Lagret"); setEditSchema(null); load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
@@ -156,8 +191,9 @@ export default function Bestillinger() {
                     <TableCell><StatusBadge status={s.status} /></TableCell>
                     <TableCell className="text-xs">{s.sent_at ? new Date(s.sent_at).toLocaleDateString("nb-NO") : "-"}</TableCell>
                     <TableCell className="text-right">
+                      <Button size="sm" variant="outline" onClick={() => openEditSchema(s)} className="ml-1" title="Rediger mottaker" data-testid={`edit-schema-${s.po_number}`}><Pencil className="h-3 w-3" /></Button>
                       <Button size="sm" variant="outline" onClick={() => downloadTemplate(s)} title="Last ned Excel-mal"><Download className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="outline" onClick={() => markSent(s)} className="ml-1" title="Marker sendt"><Send className="h-3 w-3" /></Button>
+                      <Button size="sm" variant="outline" onClick={() => markSent(s)} className="ml-1" title="Send skjema på e-post"><Send className="h-3 w-3" /></Button>
                       <Button size="sm" variant="outline" onClick={() => setOrderDialog(s)} className="ml-1 bg-emerald-50 border-emerald-300 text-emerald-800" title="Bestill behovsvarer" data-testid={`order-from-schema-${s.po_number}`}><ShoppingCart className="h-3 w-3" /></Button>
                       <Button size="sm" variant="ghost" onClick={() => delSchema(s)} className="ml-1"><Trash2 className="h-3 w-3 text-red-600" /></Button>
                     </TableCell>
@@ -170,7 +206,7 @@ export default function Bestillinger() {
 
         <TabsContent value="bestillinger" className="pt-4 space-y-3">
           <div className="flex gap-2 flex-wrap">
-            <Button onClick={() => setStockOpen(true)} variant="outline" data-testid="new-stock-order-btn"><Package className="h-4 w-4 mr-1" />Bestill lagervarer</Button>
+            <Button onClick={() => setStockOpen(true)} className="bg-red-700 hover:bg-red-800" data-testid="new-stock-order-btn"><Plus className="h-4 w-4 mr-1" />Opprett ny lagerordre</Button>
           </div>
           <Card>
             <Table>
@@ -227,6 +263,41 @@ export default function Bestillinger() {
       </Dialog>
 
       <OrderDialog open={!!orderDialog} onClose={() => setOrderDialog(null)} schema={orderDialog} suppliers={suppliers} onDone={() => load()} />
+      <StockOrderDialog open={stockOpen} onClose={() => setStockOpen(false)} suppliers={suppliers} items={items} onDone={() => load()} />
+
+      <Dialog open={!!editSchema} onOpenChange={(o) => !o && setEditSchema(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Rediger behovsskjema {editSchema?.po_number}</DialogTitle><DialogDescription>Mottakerinformasjon for utsending</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Mottakers navn (lagleder)</Label><Input value={editSchema?.recipient_name || ""} onChange={(e) => setEditSchema({ ...editSchema, recipient_name: e.target.value })} /></div>
+            <div><Label>Mottakers e-post *</Label><Input type="email" value={editSchema?.recipient_email || ""} onChange={(e) => setEditSchema({ ...editSchema, recipient_email: e.target.value })} data-testid="edit-schema-email" /></div>
+            <div><Label>Melding i e-posten (valgfri)</Label>
+              <textarea className="w-full border rounded-md p-2 min-h-[100px] text-sm" value={editSchema?.message || ""} onChange={(e) => setEditSchema({ ...editSchema, message: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditSchema(null)}>Avbryt</Button>
+            <Button onClick={saveEditSchema} className="bg-red-700 hover:bg-red-800" data-testid="save-edit-schema">Lagre</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!sendSchemaFor} onOpenChange={(o) => !o && setSendSchemaFor(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Send behovsskjema {sendSchemaFor?.po_number}</DialogTitle><DialogDescription>Excel-malen sendes som vedlegg til mottakeren. Kopi til din e-post.</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Mottakers navn</Label><Input value={sendForm.recipient_name} onChange={(e) => setSendForm({ ...sendForm, recipient_name: e.target.value })} /></div>
+            <div><Label>Mottakers e-post *</Label><Input type="email" value={sendForm.recipient_email} onChange={(e) => setSendForm({ ...sendForm, recipient_email: e.target.value })} data-testid="send-schema-email" /></div>
+            <div><Label>Melding (valgfri)</Label>
+              <textarea className="w-full border rounded-md p-2 min-h-[100px] text-sm" value={sendForm.message} onChange={(e) => setSendForm({ ...sendForm, message: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendSchemaFor(null)}>Avbryt</Button>
+            <Button onClick={sendSchemaEmail} className="bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="confirm-send-schema"><Send className="h-4 w-4 mr-1" />Send e-post</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!notifyFor} onOpenChange={(o) => !o && setNotifyFor(null)}>
         <DialogContent className="max-w-lg">

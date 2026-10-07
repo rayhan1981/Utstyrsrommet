@@ -128,6 +128,13 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Varetabell flatet**: `items.flatMap()` splitter klær/ball-varer i én rad per variasjon. Egne kolonner: Str, Draktnr, Kategori, Type, Pris, Antall, Lokasjon. Hver kolonne er filtrerbar – søk fungerer også på størrelse og draktnummer. Thumbnail per variasjon (fallback til hovedbilde).
 - Testing: Screenshot bekrefter 11 av 11 rader uten horisontal scroll på 1920px. Hjemmedrakt 164-#4 og S-#10 vises som to separate linjer.
 
+### Nov 2026 – Rediger behovsskjema + Reell e-postsending + Opprett lagerordre-dialog + Leverandørnummer + Vare-leverandør
+- **E-postsending fungerer**: `POST /behovsskjema/{id}/send` genererer Excel-malen inline (via `_build_needs_template_bytes`), bygger HTML, sender via Resend (Emergent-managed) m/ Excel-vedlegg + CC til bruker. Verifisert: 202 Accepted fra provider.
+- **Rediger behovsskjema**: Egen Pencil-knapp per skjema åpner modal med mottakers navn, e-post og custom melding. Lagres på skjemaet og brukes automatisk ved «Send»
+- **Opprett ny lagerordre**: Full dialog i Bestillinger. Felter: leverandør (må velges først), ønsket leveringsdato, «Legg til vare»-knapp som åpner sub-dialog. Varer fra VALGT leverandør er aktivert; andre vises grå med «Annen lev.»-tekst. Per linje: antall + innkjøpspris redigeres inline. Live-total eks. mva.
+- **Leverandørnummer**: Hver leverandør får unikt 5-sifret nummer (00001, 00002…) via `counters`-collection. Backfill ved GET /suppliers. Vises i leverandørlisten + i item-dropdown. Testet: #00001 Select Sport, #00002 Umbro Norge.
+- **Vare-leverandør**: `supplier_id`, `supplier_number`, `supplier_name` på Item. Dropdown i Inventory-dialog. Varer uten leverandør får rødt «⚠ Mangler leverandør»-badge i varetabellen. Søkbart (søker også på leverandørnavn/nummer).
+
 ## Backlog
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall

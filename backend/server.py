@@ -510,6 +510,9 @@ class ItemIn(BaseModel):
     sizes: List[SizeStock] = Field(default_factory=list)
     has_qr: bool = False
     image_url: Optional[str] = None
+    supplier_id: Optional[str] = None
+    supplier_number: Optional[str] = None
+    supplier_name: Optional[str] = None
 
 
 class LoanIn(BaseModel):
@@ -2746,11 +2749,9 @@ async def need_seasons():
     return {"seasons": _current_seasons()}
 
 
-@api.get("/teams/{team_id}/needs/template")
-async def team_needs_template(team_id: str, request: Request, user=Depends(require_perm("teams", "read"))):
+async def _build_needs_template_bytes(tid: str, team_id: str) -> bytes:
     from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.styles import PatternFill, Font
-    tid = await require_tenant(request, user)
     team = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
     if not team:
         raise HTTPException(404, "Lag finnes ikke")
@@ -2813,8 +2814,19 @@ async def team_needs_template(team_id: str, request: Request, user=Depends(requi
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64+i)].width = w
     ref.sheet_state = "hidden"
+    buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
+
+
+@api.get("/teams/{team_id}/needs/template")
+async def team_needs_template(team_id: str, request: Request, user=Depends(require_perm("teams", "read"))):
+    tid = await require_tenant(request, user)
+    xlsx = await _build_needs_template_bytes(tid, team_id)
+    team = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0}) or {}
+    seasons = _current_seasons()
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name") or "lag")
-    return _xlsx_response(wb, f"behov_mal_{safe}_{seasons[0].replace('/','-')}.xlsx")
+    return Response(content=xlsx,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="behov_mal_{safe}_{seasons[0].replace("/","-")}.xlsx"'})
 
 
 class NeedConfirmIn(BaseModel):
@@ -3024,9 +3036,23 @@ class SupplierIn(BaseModel):
     active: bool = True
 
 
+async def _next_supplier_number(tid: str) -> str:
+    key = f"supplier_counter_{tid}"
+    doc = await db.counters.find_one_and_update(
+        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True
+    )
+    seq = doc.get("seq", 1) if doc else 1
+    return f"{seq:05d}"
+
+
 @api.get("/suppliers")
 async def list_suppliers(request: Request, user=Depends(get_current_user)):
     tid = await require_tenant(request, user)
+    # Backfill any suppliers missing supplier_number
+    missing = await db.suppliers.find({"tenant_id": tid, "supplier_number": {"$in": [None, ""]}}, {"_id": 0}).to_list(500)
+    for m in missing:
+        num = await _next_supplier_number(tid)
+        await db.suppliers.update_one({"id": m["id"], "tenant_id": tid}, {"$set": {"supplier_number": num}})
     return await db.suppliers.find({"tenant_id": tid}, {"_id": 0}).sort("name", 1).to_list(500)
 
 
@@ -3035,7 +3061,9 @@ async def create_supplier(data: SupplierIn, request: Request, user=Depends(requi
     tid = await require_tenant(request, user)
     if not data.name.strip():
         raise HTTPException(400, "Leverandørnavn er obligatorisk")
-    doc = {**data.dict(), "id": new_id(), "tenant_id": tid, "created_at": now_iso()}
+    num = await _next_supplier_number(tid)
+    doc = {**data.dict(), "id": new_id(), "tenant_id": tid,
+           "supplier_number": num, "created_at": now_iso()}
     await db.suppliers.insert_one(doc); doc.pop("_id", None); return doc
 
 
@@ -3114,9 +3142,74 @@ async def list_behovsskjema(request: Request, user=Depends(require_perm("teams",
 @api.put("/behovsskjema/{sid}")
 async def update_behovsskjema(sid: str, data: dict, request: Request, user=Depends(require_perm("teams", "write"))):
     tid = await require_tenant(request, user)
-    allowed = {k: data[k] for k in ("notes", "status", "sent_at", "sent_to") if k in data}
+    allowed = {k: data[k] for k in ("notes", "status", "sent_at", "sent_to",
+                                     "recipient_name", "recipient_email", "message") if k in data}
     await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": allowed})
     return await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+
+
+@api.post("/behovsskjema/{sid}/send")
+async def send_behovsskjema(sid: str, data: dict, request: Request, user=Depends(require_perm("teams", "write"))):
+    """Send behovsskjema (Excel template) via email to lagleder."""
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+    if not bs:
+        raise HTTPException(404, "Fant ikke")
+    to_email = (data.get("recipient_email") or bs.get("recipient_email") or "").strip()
+    if not to_email or not re.match(r"^[^@]+@[^@]+\.[^@]+$", to_email):
+        raise HTTPException(400, "Ugyldig e-postadresse")
+    if not EMAIL_KEY:
+        raise HTTPException(503, "E-posttjeneste er ikke konfigurert")
+    # Generate Excel template directly as bytes
+    try:
+        xlsx_bytes = await _build_needs_template_bytes(tid, bs["team_id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Template generation failed")
+        raise HTTPException(500, f"Kunne ikke generere mal: {e}")
+    import base64
+    att_b64 = base64.b64encode(xlsx_bytes).decode()
+    recipient_name = data.get("recipient_name") or bs.get("recipient_name") or ""
+    custom_msg = data.get("message") or bs.get("message") or ""
+    club = await db.customers.find_one({"id": tid}, {"_id": 0}) or {}
+    html = (
+        f'<p>Hei {recipient_name or ""},</p>'
+        f'<p>Her er behovsskjemaet for <strong>{bs.get("team_name")}</strong> '
+        f'(årsklasse {bs.get("age_class")}, sesong {bs.get("season")}).</p>'
+        f'<p><strong>Innkjøpsnummer:</strong> {bs.get("po_number")}</p>'
+        + (f'<p>{custom_msg}</p>' if custom_msg else '')
+        + f'<p>Vennligst fyll ut Excel-malen og returner den til oss.</p>'
+        f'<p>Mvh<br/>{club.get("club_name") or "Klubben"}</p>'
+    )
+    filename = f"behovsskjema_{bs.get('po_number')}_{(bs.get('team_name') or '').replace(' ','_')}.xlsx"
+    payload = {
+        "to": [to_email],
+        "subject": f"Behovsskjema {bs.get('po_number')} – {bs.get('team_name')}",
+        "html": html,
+        "from_name": EMAIL_FROM_NAME,
+        "attachments": [{
+            "filename": filename,
+            "content": att_b64,
+            "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }],
+    }
+    if user.get("email"): payload["cc"] = [user.get("email")]
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                             headers={"X-Email-Key": EMAIL_KEY}, json=payload)
+        r.raise_for_status()
+        provider_id = r.json().get("id")
+    except Exception as e:
+        logger.error(f"Email send failed: {e}")
+        raise HTTPException(502, f"E-post feilet: {e}")
+    await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": {
+        "status": "sendt", "sent_at": now_iso(), "sent_to": to_email,
+        "recipient_name": recipient_name, "recipient_email": to_email,
+        "last_email_id": provider_id,
+    }})
+    return {"ok": True, "sent_to": to_email, "provider_id": provider_id}
 
 
 @api.delete("/behovsskjema/{sid}")
@@ -3151,6 +3244,7 @@ class PurchaseOrderIn(BaseModel):
     is_stock_order: bool = False
     lines: List[OrderLineIn]
     notes: str = ""
+    delivery_date: Optional[str] = None
 
 
 @api.post("/orders")
@@ -3191,6 +3285,7 @@ async def create_order(data: PurchaseOrderIn, request: Request, user=Depends(req
         "season": data.season or (behov["season"] if behov else None),
         "is_stock_order": data.is_stock_order,
         "lines": order_lines, "notes": data.notes,
+        "delivery_date": data.delivery_date,
         "status": "bestilt",  # bestilt | delvis_levert | levert | manko | restbestilling | arkivert
         "manual_status": None, "manual_status_reason": None,
         "status_history": [{"status": "bestilt", "at": now_iso(), "by": user.get("name"), "note": "Opprettet"}],

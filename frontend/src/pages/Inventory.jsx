@@ -18,7 +18,7 @@ import ViewQrDialog from "@/components/ViewQrDialog";
 import UpgradeCTA from "@/components/UpgradeCTA";
 import { compressImage } from "@/lib/imageUtils";
 
-const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null };
+const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null, supplier_id: "", supplier_number: "", supplier_name: "" };
 
 export default function Inventory() {
   const { hasPerm, hasFeature } = useAuth();
@@ -30,9 +30,13 @@ export default function Inventory() {
   const [viewFor, setViewFor] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
+  const [suppliers, setSuppliers] = useState([]);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
-  const load = () => api.get("/items").then((r) => setItems(r.data));
+  const load = async () => {
+    const r = await api.get("/items"); setItems(r.data);
+    const s = await api.get("/suppliers").catch(() => ({ data: [] })); setSuppliers(s.data || []);
+  };
   useEffect(() => { load(); }, []);
 
   const nok = (v) => (v || 0).toLocaleString("nb-NO", { style: "currency", currency: "NOK", maximumFractionDigits: 0 });
@@ -208,7 +212,12 @@ export default function Inventory() {
                   {r.image_url ? <img src={r.image_url} alt={r.name} className="h-full w-full object-cover" /> : <ImageIcon className="h-4 w-4 text-slate-300" />}
                 </div>
             ) },
-            { key: "name", label: "Varenavn", filter: "text", render: (r) => <div className="font-semibold truncate max-w-[180px]">{r.name}</div> },
+            { key: "name", label: "Varenavn", filter: "text", render: (r) => (
+              <div className="font-semibold truncate max-w-[180px] flex items-center gap-1.5">
+                {r.name}
+                {!r._parent.supplier_id && <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded whitespace-nowrap" title="Mangler leverandør – rediger varen">⚠ Mangler leverandør</span>}
+              </div>
+            ), accessor: (r) => `${r.name} ${r._parent.supplier_name || ""} ${r._parent.supplier_number || ""}` },
             { key: "size", label: "Str", filter: "text", render: (r) => r.size ? <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">{r.size}</span> : <span className="text-slate-400">–</span> },
             { key: "jersey_number", label: "Draktnr", filter: "text", render: (r) => (r.jersey_number && r.jersey_number !== "X") ? <span className="font-mono text-xs">#{r.jersey_number}</span> : <span className="text-slate-400">–</span> },
             { key: "category", label: "Kategori", filter: "text", render: (r) => <span className="text-xs">{r.category || "-"}</span> },
@@ -292,6 +301,22 @@ export default function Inventory() {
               <div><Label>Undergruppe</Label><Input value={form.sub_group} onChange={(e) => setForm({ ...form, sub_group: e.target.value })} /></div>
               <div><Label>Pris / salg (NOK)</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
               <div><Label>Innkjøpspris (NOK)</Label><Input type="number" step="0.01" placeholder="(valgfri)" value={form.purchase_price ?? ""} onChange={(e) => setForm({ ...form, purchase_price: e.target.value })} data-testid="purchase-price-input" /></div>
+              <div className="sm:col-span-2">
+                <Label>Leverandør</Label>
+                <Select value={form.supplier_id || "none"} onValueChange={(v) => {
+                  if (v === "none") { setForm({ ...form, supplier_id: "", supplier_number: "", supplier_name: "" }); return; }
+                  const s = suppliers.find((x) => x.id === v);
+                  setForm({ ...form, supplier_id: v, supplier_number: s?.supplier_number || "", supplier_name: s?.name || "" });
+                }}>
+                  <SelectTrigger data-testid="item-supplier-select"><SelectValue placeholder="(ingen leverandør)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">(ingen leverandør)</SelectItem>
+                    {suppliers.filter((s) => s.active !== false).map((s) => (
+                      <SelectItem key={s.id} value={s.id}>#{s.supplier_number} · {s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="sm:col-span-2"><Label>Lokasjon (hylle/rom)</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
