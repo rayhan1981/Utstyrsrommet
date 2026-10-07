@@ -26,7 +26,7 @@ export default function Users() {
   const [users, setUsers] = useState([]);
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], active: true, password: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], can_view_login_history: false, active: true, password: "" });
   const [sendInvite, setSendInvite] = useState(true);
   const [historyFor, setHistoryFor] = useState(null);
   const [history, setHistory] = useState([]);
@@ -50,24 +50,24 @@ export default function Users() {
 
   const openNew = () => {
     setEditId(null); setSendInvite(true);
-    setForm({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], active: true, password: "" });
+    setForm({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], can_view_login_history: false, active: true, password: "" });
     setOpen(true);
   };
   const openEdit = (u) => {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, phone: u.phone || "", address: u.address || "", role: u.role, permissions: u.permissions || defaultPerms(), reset_permissions: u.reset_permissions || [], active: u.active, password: "" });
+    setForm({ name: u.name, email: u.email, phone: u.phone || "", address: u.address || "", role: u.role, permissions: u.permissions || defaultPerms(), reset_permissions: u.reset_permissions || [], can_view_login_history: !!u.can_view_login_history, active: u.active, password: "" });
     setOpen(true);
   };
 
   const save = async () => {
     try {
       if (editId) {
-        const payload = { name: form.name, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, active: form.active };
+        const payload = { name: form.name, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, can_view_login_history: form.role === "admin" ? true : form.can_view_login_history, active: form.active };
         if (form.password) payload.password = form.password;
         await api.put(`/users/${editId}`, payload);
         toast.success("Oppdatert");
       } else {
-        const payload = { name: form.name, email: form.email, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions };
+        const payload = { name: form.name, email: form.email, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, can_view_login_history: form.role === "admin" ? true : form.can_view_login_history };
         if (!sendInvite && form.password) payload.password = form.password;
         const { data } = await api.post("/users", payload);
         toast.success(data.invitation_sent ? "Bruker opprettet - invitasjon sendt på e-post" : "Bruker opprettet");
@@ -181,7 +181,7 @@ export default function Users() {
 
                 <div>
                   <Label className="flex items-center gap-1 text-red-800"><Shield className="h-3 w-3" />Nullstillings-rettigheter (farlige handlinger)</Label>
-                  <p className="text-[11px] text-slate-500 mb-2">Velg hvilke seksjoner brukeren kan slette/nullstille alle data for. Krever passordbekreftelse ved utførelse.</p>
+                  <p className="text-[11px] text-slate-500 mb-2">Velg hvilke seksjoner brukeren kan slette/nullstille alle data for. Krever passordbekreftelse ved utførelse. Vanlige brukere kan maks nullstille 1 gang pr måned, admin 1 gang pr uke.</p>
                   <div className="border border-red-200 rounded-md p-2 bg-red-50/40 grid grid-cols-2 gap-1">
                     {RESET_SECTIONS.map((s) => {
                       const checked = (form.reset_permissions || []).includes(s.key);
@@ -199,6 +199,17 @@ export default function Users() {
                       );
                     })}
                   </div>
+                </div>
+
+                <div>
+                  <Label className="flex items-center gap-1"><History className="h-3 w-3" />Påloggingshistorikk</Label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer border border-slate-200 rounded-md p-2.5 mt-1">
+                    <Switch checked={!!form.can_view_login_history}
+                            onCheckedChange={(v) => setForm({ ...form, can_view_login_history: v })}
+                            data-testid="can-view-login-history" />
+                    <span className="flex-1">Kan se andres påloggingshistorikk</span>
+                  </label>
+                  <p className="text-[11px] text-slate-500 mt-1">Som standard kan vanlige brukere kun se sin egen historikk. Slå på for å gi tilgang til å se andre brukeres pålogginger.</p>
                 </div>
               </>
             )}

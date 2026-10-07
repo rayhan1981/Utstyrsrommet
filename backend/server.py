@@ -168,10 +168,12 @@ async def get_current_user(request: Request) -> dict:
                 if cust.get("status") == "inactive":
                     raise HTTPException(status_code=403, detail="Kundekonto er deaktivert")
         # Heartbeat: update last_seen (used to determine online/offline)
-        try:
-            await db.users.update_one({"id": user["id"]}, {"$set": {"last_seen": now_iso()}})
-        except Exception:
-            pass
+        # Platform-eier (app-eier) skal ALDRI logges i noen klubbs synlige logger.
+        if user.get("role") != "platform_owner":
+            try:
+                await db.users.update_one({"id": user["id"]}, {"$set": {"last_seen": now_iso()}})
+            except Exception:
+                pass
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token utløpt")
@@ -608,6 +610,7 @@ class UserCreateIn(BaseModel):
     role: str = "user"
     permissions: Optional[Dict[str, str]] = None
     reset_permissions: Optional[List[str]] = None  # ["inventory","suppliers","teams","people","users"]
+    can_view_login_history: Optional[bool] = False
     password: Optional[str] = None
 
 
@@ -618,6 +621,7 @@ class UserUpdateIn(BaseModel):
     role: Optional[str] = None
     permissions: Optional[Dict[str, str]] = None
     reset_permissions: Optional[List[str]] = None
+    can_view_login_history: Optional[bool] = None
     active: Optional[bool] = None
     password: Optional[str] = None
 
@@ -903,13 +907,11 @@ async def login(data: LoginIn, response: Response):
     _cookie(response, "access_token", token)
     # also clear impersonation on login
     response.delete_cookie("imp_cid", path="/")
+    # Platform-eier pålogginger skal IKKE registreres i noen logger
+    if user.get("role") == "platform_owner":
+        return {"user": _clean(dict(user)), "token": token}
     # Track login
     now = now_iso()
-    ip = None
-    try:
-        from fastapi import Request as _R  # noqa
-    except Exception:
-        pass
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now, "last_seen": now}})
     # Close any previous "open" sessions for this user so history stays tidy
     await db.login_history.update_many(
@@ -932,10 +934,12 @@ async def logout(request: Request, response: Response):
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
             uid = payload.get("sub")
             if uid:
-                last = await db.login_history.find_one({"user_id": uid, "logged_out_at": None}, sort=[("logged_in_at", -1)])
-                if last:
-                    await db.login_history.update_one({"id": last["id"]}, {"$set": {"logged_out_at": now_iso()}})
-                await db.users.update_one({"id": uid}, {"$set": {"last_seen": None}})
+                u = await db.users.find_one({"id": uid}, {"_id": 0, "role": 1})
+                if u and u.get("role") != "platform_owner":
+                    last = await db.login_history.find_one({"user_id": uid, "logged_out_at": None}, sort=[("logged_in_at", -1)])
+                    if last:
+                        await db.login_history.update_one({"id": last["id"]}, {"$set": {"logged_out_at": now_iso()}})
+                    await db.users.update_one({"id": uid}, {"$set": {"last_seen": None}})
         except Exception:
             pass
     response.delete_cookie("access_token", path="/")
@@ -1831,11 +1835,18 @@ async def list_users(request: Request, user=Depends(require_admin)):
 
 
 @api.get("/users/{user_id}/login-history")
-async def user_login_history(user_id: str, request: Request, admin=Depends(require_admin)):
-    tid = await require_tenant(request, admin)
+async def user_login_history(user_id: str, request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
     target = await db.users.find_one({"id": user_id, "tenant_id": tid})
     if not target:
         raise HTTPException(404, "Bruker ikke funnet")
+    # Tilgangskontroll: admin + platform_owner ser alt. Vanlige brukere trenger `can_view_login_history`.
+    # En bruker kan alltid se sin EGEN historikk.
+    is_admin = user.get("role") in ("admin", "platform_owner")
+    is_self = user.get("id") == user_id
+    can_view = bool(user.get("can_view_login_history"))
+    if not (is_admin or is_self or can_view):
+        raise HTTPException(403, "Du har ikke tilgang til å se påloggingshistorikk")
     history = await db.login_history.find({"user_id": user_id}, {"_id": 0}).sort("logged_in_at", -1).to_list(500)
     return history
 
@@ -1867,6 +1878,7 @@ async def create_user(data: UserCreateIn, request: Request, admin=Depends(requir
         "id": uid, "email": email, "name": data.name, "phone": data.phone or "", "address": data.address or "",
         "role": data.role, "permissions": perms, "active": True, "is_super_admin": False,
         "reset_permissions": list(data.reset_permissions or []) if data.role != "admin" else [],
+        "can_view_login_history": bool(data.can_view_login_history) if data.role != "admin" else True,
         "tenant_id": tid,
         "password_hash": hash_password(data.password) if data.password else "",
         "created_at": now_iso(),
@@ -1958,6 +1970,27 @@ async def reset_section(section: str, data: ResetSectionIn, request: Request, us
     if not full_user or not verify_password(data.password, full_user.get("password_hash", "")):
         raise HTTPException(401, "Feil passord")
 
+    # Reset-kvoter: app-eier (platform_owner) + hovedadmin (super_admin) ingen begrensning.
+    # Admin: maks 1 reset / 7 dager. Vanlig bruker: maks 1 reset / 30 dager.
+    role = user.get("role")
+    if role != "platform_owner" and not full_user.get("is_super_admin"):
+        window_days = 7 if role == "admin" else 30
+        label = "uke" if window_days == 7 else "måned"
+        since = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+        recent = await db.audit_log.find_one({
+            "tenant_id": tid, "action": "database_reset",
+            "by_user_id": user["id"], "at": {"$gte": since},
+        }, sort=[("at", -1)])
+        if recent:
+            try:
+                last_dt = datetime.fromisoformat(recent["at"].replace("Z", "+00:00"))
+                next_dt = last_dt + timedelta(days=window_days)
+                next_str = next_dt.strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                next_str = "senere"
+            raise HTTPException(429,
+                f"Reset-kvote: maks 1 nullstilling pr {label}. Neste nullstilling kan utføres etter {next_str}.")
+
     deleted: Dict[str, int] = {}
 
     async def _del(coll_name: str, filt: dict):
@@ -1989,11 +2022,13 @@ async def reset_section(section: str, data: ResetSectionIn, request: Request, us
                                           "id": {"$ne": user["id"]}})
         deleted["users"] = r.deleted_count
 
-    await db.audit_log.insert_one({
-        "id": new_id(), "tenant_id": tid, "action": "database_reset",
-        "section": section, "by": user.get("email"), "by_user_id": user.get("id"),
-        "deleted": deleted, "at": now_iso(),
-    })
+    # Platform-eier skal ikke logges i audit_log (unngår fotavtrykk hos klubben)
+    if role != "platform_owner":
+        await db.audit_log.insert_one({
+            "id": new_id(), "tenant_id": tid, "action": "database_reset",
+            "section": section, "by": user.get("email"), "by_user_id": user.get("id"),
+            "deleted": deleted, "at": now_iso(),
+        })
     return {"ok": True, "section": section, "deleted": deleted}
 
 

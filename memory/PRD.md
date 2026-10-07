@@ -37,6 +37,13 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Bulk-generer QR for alle varer
 - UpgradeCTA for basic/pro-brukere som møter Deluxe-features
 
+### Okt 2026 – Reset-kvoter + personvern for app-eier + login-historikk tilgang
+- **Reset-kvoter**: Vanlig bruker maks 1 nullstilling pr måned (30 dager). Admin maks 1 pr uke (7 dager). Super_admin (hovedadmin) + platform_owner har **ingen begrensning**. Returnerer HTTP 429 med beregnet neste-dato når kvoten er overskredet.
+- **Personvern for platform-eier**: Pålogging som platform_owner skrives IKKE til `login_history`, `last_seen`/`last_login` oppdateres ikke, logout rydder ikke historikk, og database_reset utført av platform_owner skrives IKKE til `audit_log`. Platform-eier er usynlig i alle klubbers logger.
+- **Login-historikk tilgangskontroll**: `can_view_login_history`-flagg pr bruker. Standard: false. Vanlige brukere kan nå kun se **sin egen** historikk med mindre admin har slått på flagget. Admin/platform_owner har alltid tilgang. Nytt toggle i brukerredigering.
+- Verifisert: platform_owner reset = ingen audit-oppføring. Admin "testadmin" første reset = 200 OK, andre reset = 429 "Reset-kvote: maks 1 nullstilling pr uke. Neste nullstilling kan utføres etter DD.MM.YYYY HH:MM".
+
+
 ### Okt 2026 – Database-reset (nullstill pr seksjon)
 - Nye endepunkter: `GET /api/reset/preview/{section}` returnerer antall rader som vil slettes, `POST /api/reset/{section}` krever `password` + `confirm=true` og bekrefter innloggingspassordet via bcrypt før sletting. Seksjoner: `inventory`, `suppliers`, `teams`, `people`, `users`, `all`. Audit-log skrives til `audit_log`-collection.
 - Rolle-logikk: admin + platform_owner har alt. Vanlige brukere får per-seksjon `reset_permissions`-tilgang tildelt av admin (`UserCreateIn.reset_permissions` + `UserUpdateIn.reset_permissions`).
