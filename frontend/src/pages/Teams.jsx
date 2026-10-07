@@ -126,7 +126,7 @@ export default function Teams() {
       .then(b => {
         const u = URL.createObjectURL(b);
         const a = document.createElement("a");
-        a.href = u; a.download = `lag_${name}.xlsx`; a.click(); URL.revokeObjectURL(u);
+        a.href = u; a.download = `utstyr_${name}.pdf`; a.click(); URL.revokeObjectURL(u);
       });
   };
 

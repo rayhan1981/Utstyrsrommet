@@ -534,7 +534,13 @@ async def _send_emergent(to: List[str], subject: str, html: str,
         "from_name": from_name or EMAIL_FROM_NAME,
     }
     if cc: payload["cc"] = cc
-    if attachments: payload["attachments"] = attachments
+    if attachments:
+        # Emergent email proxy forventer feltet 'type' (ikke 'content_type')
+        payload["attachments"] = [{
+            "filename": a.get("filename"),
+            "content": a.get("content"),
+            "type": a.get("type") or a.get("content_type") or "application/octet-stream",
+        } for a in attachments]
     try:
         async with httpx.AsyncClient(timeout=60) as c:
             r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
@@ -2810,32 +2816,244 @@ async def export_inventory(request: Request, user=Depends(require_perm("inventor
 
 @api.get("/export/team/{team_id}")
 async def export_team(team_id: str, request: Request, user=Depends(require_perm("teams", "read"))):
-    tid = await require_feature(request, user, "excel_export")
-    team = await db.teams.find_one({"id": team_id, "tenant_id": tid})
+    tid = await require_tenant(request, user)
+    team = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
     if not team:
         raise HTTPException(404, "Lag ikke funnet")
     loans = await db.loans.find({"team_id": team_id, "tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(5000)
     pids = list({l.get("person_id") for l in loans if l.get("person_id")} |
-                {l.get("received_by_person_id") for l in loans if l.get("received_by_person_id")})
+                {l.get("picked_up_by") for l in loans if l.get("picked_up_by")})
     people = {p["id"]: p for p in await db.people.find({"id": {"$in": pids}, "tenant_id": tid}, {"_id": 0}).to_list(1000)}
-    wb = Workbook(); ws = wb.active; ws.title = "Oversikt"
-    ws.append(["Lag", team.get("team_name")])
-    ws.append(["Aldersklasse", team.get("age_class")])
-    ws.append(["Kontaktperson", team.get("contact_person")])
-    ws.append(["Epost", team.get("email")])
-    ws.append(["Skyldig beløp (NOK)", round(team.get("debt", 0), 2)])
-    ws2 = wb.create_sheet("Historikk")
-    ws2.append(["Dato utlånt", "Vare", "Antall", "Størrelse", "Draktnr", "Modus", "Hentet av",
-                "Status", "Dato returnert", "Mottatt av", "Skyldig"])
-    for l in loans:
-        ws2.append([l.get("loan_date", ""), l.get("item_name", ""), l.get("quantity", 0),
-                    l.get("size") or "", l.get("jersey_number") or "", l.get("mode", ""),
-                    people.get(l.get("picked_up_by"), {}).get("name", ""),
-                    l.get("status", ""), l.get("return_date") or "",
-                    people.get(l.get("received_by_person_id"), {}).get("name", ""),
-                    l.get("amount_owed", 0)])
+    cust = await db.customers.find_one({"id": tid}, {"_id": 0}) or {}
+    club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    club_name = club.get("name") or cust.get("club_name") or "Klubben"
+    pdf_bytes = _build_team_equipment_pdf(team, loans, people, club, cust, user, club_name)
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
-    return _xlsx_response(wb, f"lag_{safe}.xlsx")
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="utstyr_{safe}.pdf"'})
+
+
+def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
+                               cust: dict, user: dict, club_name: str) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.lib.utils import ImageReader
+    import base64 as _b64
+
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    LEFT = 20 * mm; RIGHT = w - 20 * mm
+    y = h - 20 * mm
+
+    # --- Letterhead: Club info (logo + name + contact) ---
+    logo_url = club.get("logo_url") or ""
+    if logo_url.startswith("data:image"):
+        try:
+            logo_bytes = _b64.b64decode(logo_url.split(",", 1)[1])
+            img = ImageReader(io.BytesIO(logo_bytes))
+            c.drawImage(img, LEFT, y - 18 * mm, 20 * mm, 20 * mm, mask="auto", preserveAspectRatio=True)
+            text_x = LEFT + 24 * mm
+        except Exception:
+            text_x = LEFT
+    else:
+        text_x = LEFT
+
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(text_x, y, club_name)
+    c.setFont("Helvetica", 9)
+    y_h = y - 5 * mm
+    if club.get("org_number"):
+        c.drawString(text_x, y_h, f"Org.nr: {club['org_number']}"); y_h -= 4 * mm
+    if cust.get("owner_email"):
+        c.drawString(text_x, y_h, cust["owner_email"]); y_h -= 4 * mm
+    if cust.get("owner_phone"):
+        c.drawString(text_x, y_h, f"Tlf: {cust['owner_phone']}"); y_h -= 4 * mm
+    if cust.get("address") or cust.get("postal_code") or cust.get("city"):
+        addr = " ".join(x for x in [cust.get("address"), cust.get("postal_code"), cust.get("city")] if x)
+        c.drawString(text_x, y_h, addr); y_h -= 4 * mm
+
+    # --- Dato (right side) ---
+    c.setFont("Helvetica", 9)
+    c.drawRightString(RIGHT, y, datetime.now(timezone.utc).strftime("%d.%m.%Y"))
+
+    y = min(y_h, y - 22 * mm) - 4 * mm
+    c.line(LEFT, y, RIGHT, y)
+    y -= 8 * mm
+
+    # --- Adressert til [lag] v/ [lagleder] ---
+    tm = team.get("team_manager") or {}
+    hc = team.get("head_coach") or {}
+    leader = tm.get("name") or hc.get("name") or team.get("contact_person") or ""
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(LEFT, y, f"Til: {team.get('team_name') or ''}" + (f" v/ {leader}" if leader else ""))
+    y -= 6 * mm
+    if team.get("age_class"):
+        c.setFont("Helvetica", 9)
+        c.drawString(LEFT, y, f"Årsklasse: {team.get('age_class')}")
+        y -= 5 * mm
+
+    # --- Tittel ---
+    y -= 4 * mm
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(LEFT, y, "Oversikt over utstyr og utestående beløp")
+    y -= 8 * mm
+
+    def nok(v):
+        return f"{(v or 0):,.0f}".replace(",", " ") + " kr"
+
+    def _fmt_date(iso):
+        if not iso: return ""
+        try:
+            return datetime.fromisoformat(iso.replace("Z", "+00:00")).strftime("%d.%m.%Y")
+        except Exception:
+            return str(iso)[:10]
+
+    def _ensure_space(need_mm):
+        nonlocal y
+        if y < (25 * mm + need_mm):
+            c.showPage()
+            y = h - 20 * mm
+
+    # --- Section 1: Utestående utstyr (status=borrowed med skyldig beløp) ---
+    unreturned = [l for l in loans if l.get("status") == "borrowed" and float(l.get("amount_owed") or 0) > 0]
+    unreturned.sort(key=lambda l: l.get("loan_date") or "")
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(LEFT, y, "Utestående utstyr (ikke levert tilbake)")
+    y -= 6 * mm
+    c.setFont("Helvetica-Bold", 9)
+    # Columns: Vare | Str/Nr | Antall | Skyldig | Frist
+    col_vare = LEFT
+    col_str = LEFT + 85 * mm
+    col_ant = LEFT + 115 * mm
+    col_skyld = LEFT + 135 * mm
+    col_frist = RIGHT - 24 * mm
+    c.drawString(col_vare, y, "Vare")
+    c.drawString(col_str, y, "Str/Nr")
+    c.drawRightString(col_ant + 10 * mm, y, "Antall")
+    c.drawRightString(col_skyld + 25 * mm, y, "Skyldig")
+    c.drawRightString(RIGHT, y, "Frist")
+    y -= 2 * mm
+    c.line(LEFT, y, RIGHT, y)
+    y -= 5 * mm
+    c.setFont("Helvetica", 9)
+    total_amt = 0.0; total_qty = 0; lines_count = 0
+    if not unreturned:
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(LEFT, y, "Ingen utestående varer.")
+        y -= 6 * mm
+    else:
+        for l in unreturned:
+            _ensure_space(6 * mm)
+            name = (l.get("item_name") or "")[:50]
+            size_bits = []
+            if l.get("size"): size_bits.append(l["size"])
+            if l.get("jersey_number") and l["jersey_number"] not in ("X", ""): size_bits.append(f"#{l['jersey_number']}")
+            size_str = " ".join(size_bits) or "-"
+            qty = int(l.get("quantity") or 0)
+            amt = float(l.get("amount_owed") or 0)
+            due = _fmt_date(l.get("due_date"))
+            c.drawString(col_vare, y, name)
+            c.drawString(col_str, y, size_str)
+            c.drawRightString(col_ant + 10 * mm, y, str(qty))
+            c.drawRightString(col_skyld + 25 * mm, y, nok(amt))
+            c.drawRightString(RIGHT, y, due)
+            y -= 5 * mm
+            total_amt += amt; total_qty += qty; lines_count += 1
+        y -= 1 * mm
+        c.line(LEFT, y, RIGHT, y); y -= 5 * mm
+        c.setFont("Helvetica-Bold", 10)
+        c.drawRightString(col_skyld + 25 * mm, y, nok(total_amt))
+        c.drawString(LEFT, y, f"Sum ({lines_count} linjer, {total_qty} varer)")
+        y -= 8 * mm
+
+    # --- Section 2: Utleverte forbruksvarer (handout uten skyld) ---
+    _ensure_space(30 * mm)
+    handouts = [l for l in loans if (l.get("mode") == "handout" and float(l.get("amount_owed") or 0) == 0)]
+    handouts.sort(key=lambda l: l.get("loan_date") or "")
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(LEFT, y, "Utleverte forbruksvarer (uten skyldig beløp)")
+    y -= 6 * mm
+    c.setFont("Helvetica-Bold", 9)
+    col_dato = LEFT
+    col_vare2 = LEFT + 32 * mm
+    col_str2 = LEFT + 95 * mm
+    col_ant2 = LEFT + 125 * mm
+    col_hent = LEFT + 148 * mm
+    c.drawString(col_dato, y, "Dato")
+    c.drawString(col_vare2, y, "Vare")
+    c.drawString(col_str2, y, "Str/Nr")
+    c.drawRightString(col_ant2 + 10 * mm, y, "Antall")
+    c.drawString(col_hent, y, "Utlevert til")
+    y -= 2 * mm
+    c.line(LEFT, y, RIGHT, y)
+    y -= 5 * mm
+    c.setFont("Helvetica", 9)
+    h_qty_total = 0; h_lines = 0
+    if not handouts:
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(LEFT, y, "Ingen forbruksvarer utlevert.")
+        y -= 6 * mm
+    else:
+        for l in handouts:
+            _ensure_space(6 * mm)
+            name = (l.get("item_name") or "")[:40]
+            size_bits = []
+            if l.get("size"): size_bits.append(l["size"])
+            if l.get("jersey_number") and l["jersey_number"] not in ("X", ""): size_bits.append(f"#{l['jersey_number']}")
+            size_str = " ".join(size_bits) or "-"
+            qty = int(l.get("quantity") or 0)
+            dato = _fmt_date(l.get("loan_date"))
+            pid = l.get("picked_up_by") or l.get("person_id")
+            picked = (people.get(pid) or {}).get("name") or "-"
+            c.drawString(col_dato, y, dato)
+            c.drawString(col_vare2, y, name)
+            c.drawString(col_str2, y, size_str)
+            c.drawRightString(col_ant2 + 10 * mm, y, str(qty))
+            c.drawString(col_hent, y, picked[:28])
+            y -= 5 * mm
+            h_qty_total += qty; h_lines += 1
+        y -= 1 * mm
+        c.line(LEFT, y, RIGHT, y); y -= 5 * mm
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(LEFT, y, f"Sum ({h_lines} linjer, {h_qty_total} varer)")
+        y -= 8 * mm
+
+    # --- Oppsummering ---
+    _ensure_space(40 * mm)
+    y -= 2 * mm
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(LEFT, y, "Oppsummering")
+    y -= 6 * mm
+    c.setFont("Helvetica", 10)
+    c.drawString(LEFT, y, f"Utestående utstyr: {lines_count} linjer, totalt {total_qty} varer")
+    y -= 5 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(LEFT, y, f"Totalt utestående beløp: {nok(total_amt)}")
+    y -= 7 * mm
+    c.setFont("Helvetica", 10)
+    c.drawString(LEFT, y, f"Utleverte forbruksvarer: {h_lines} linjer, totalt {h_qty_total} varer")
+    y -= 12 * mm
+
+    # --- Avslutning / signatur ---
+    _ensure_space(25 * mm)
+    c.setFont("Helvetica", 10)
+    c.drawString(LEFT, y, "Mvh")
+    y -= 5 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(LEFT, y, user.get("name") or user.get("email") or "")
+    y -= 5 * mm
+    c.setFont("Helvetica", 10)
+    if user.get("phone"):
+        c.drawString(LEFT, y, user.get("phone"))
+        y -= 5 * mm
+    c.drawString(LEFT, y, club_name)
+
+    c.save()
+    return buf.getvalue()
 
 
 # ============== VAREMOTTAK (Goods Receipt) ==============

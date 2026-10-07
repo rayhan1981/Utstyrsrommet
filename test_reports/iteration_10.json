@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 10 - Per-tenant email settings + order send + multi-image inventory. Backend: 12/14 pytest cases pass (2 SKIPPED due to real bug with attachment-based sends). Verified: (1) GET /api/email-settings returns default; (2) PUT /api/email-settings for SMTP encrypts password (raw never returned) and GET shows method=smtp with masked state; (3) PUT /api/email-settings for Resend encrypts resend_api_key (no leak); (4) POST /api/email-settings/test with method=default returns 200 ok=true method=default (Emergent email proxy returns 202 Accepted in backend logs); (5) POST /api/email-settings/test with method=smtp host=invalid.example.com returns 502 with last_test_ok=false persisted; (6) POST /api/items with images=[5] stores all 5 and auto-sets image_url=images[0]; posting 6 truncates to 5; (7) size.images truncates to 4; (8) PUT /api/items/{id} supports images update; (9) Non-Deluxe (basic) plan strips images=[] + image_url=null after direct DB trial expiry (trial grants deluxe effective plan - this is correct behavior); (10) Order 404 case returns 404; (11) /orders/{oid}/send attempts send but Emergent email proxy rejects attachments with HTTP 422; (12) /behovsskjema/{sid}/send also skipped due to same 422 attachment issue. Frontend verified E2E on preview URL via playwright: Settings page (/app/innstillinger) renders EmailSettingsCard with 3 method tabs (default/smtp/resend), SMTP form fields appear on smtp tab, Resend API key field on resend tab, Save (lagre innstillinger) and Test (send test-epost) buttons both present. Inventory (/app/utstyr) 'Nytt utstyr' dialog shows multi-image gallery with 0/5 counter, 'Første bilde vises i varetabellen og som hovedbilde' help text, 'Legg til' slot. Bestillinger page tabs work, send-order-{po_number} testids verified in source code (no live orders to click in test tenant).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/orders/{oid}/send AND /api/behovsskjema/{sid}/send (default method)", "issue": "Emergent email proxy returns HTTP 422 'unknown' when attachments are included in payload. Non-attachment emails work (202 Accepted). The attachments field format {filename, content(base64), content_type} may not match what the proxy expects. Current _send_emergent sends attachments as-is to EMAIL_BASE_URL/api/v1/email/send - need to confirm expected schema. This blocks both PDF order sends AND Excel behovsskjema sends when tenant uses default method.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "PUT /api/email-settings", "issue": "If method='smtp' is saved but smtp_host or from_email are missing, send_tenant_email silently falls back to default emergent provider (line 561). UI/API gives no warning. Consider returning 400 on save if method=smtp but required fields missing, or at least surface a warning in GET response."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10.py",
+    "/app/test_reports/pytest/iteration10.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix Emergent email attachment payload format. Likely the EMAIL_BASE_URL/api/v1/email/send endpoint expects a different attachment schema than {filename, content, content_type}. Options: (a) web_search the current Emergent email API schema, (b) use requests debug mode or examine working examples in the codebase - check if invoices send is sending attachments successfully. If Emergent doesn't support attachments on their default proxy, the UI should either disable 'default' method for behovsskjema/orders OR fall back to inlining content/links.",
+    "Consider validating that method=smtp PUT requires smtp_host + from_email (currently silently falls back to default)."
+  ],
+  "critical_code_review_comments": [
+    "send_tenant_email silent fallback: if method='smtp' saved but smtp_host missing OR method='resend' but no resend_api_key_enc, it silently uses default proxy. Users wouldn't know their SMTP didn't actually get used - should return explicit error.",
+    "Fernet key is derived from JWT_SECRET. If JWT_SECRET rotates, all encrypted smtp/resend secrets become undecryptable. Document this coupling or decouple into a dedicated ENCRYPTION_KEY env var.",
+    "server.py now 4100 lines - well over the 700-line threshold. High priority to split into modules (email, items, orders, email-settings, auth, admin).",
+    "In test_email_settings endpoint, when method=='default' the verified_at is NOT updated (correct), but when SMTP/Resend fails the verified_at is preserved from existing - which could leave stale 'verified' badge after breaking changes. Consider clearing verified_at on failed tests when method != 'default'.",
+    "image_url auto-set to images[0] is good, but when images array is edited (reordered client-side) the backend doesn't resync image_url with images[0] on update. The current update_item does: 'if images and not image_url'. So if user re-orders images[0]<->images[1], image_url stays stale. Should always set image_url=images[0] when images is provided.",
+    "OrderSendIn.cc is Optional[EmailStr] single value, but endpoint builds cc_list by appending user_email. If data.cc not provided, user email is CC'd (good). If supplier == data.to and user is already in cc, dedupe works but if data.cc provided AND user_email==data.cc both added - no dedup. Minor."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration10.py"],
+  "success_rate": {"backend": "86% (12/14; 2 skipped due to Emergent email attachment bug)", "frontend": "100% (all elements verified rendering: EmailSettingsCard+tabs+save+test, multi-image gallery 0/5 counter, send-order testids present in code)"},
+  "test_credentials": "raymond.d.hansen@gmail.com / Snowboard1! (platform_owner). Test tenants created via /api/signup with example.com emails.",
+  "seed_data_creation": "test_iteration10.py creates ~2 TEST_It10_* tenants per run. Not auto-cleaned - owner_session.delete attempts soft-delete in fixture teardown.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "Key testids: email-settings-card, email-method-{default|smtp|resend}, email-from-name, email-from-email, smtp-host/port/username/password/tls/ssl, resend-api-key, save-email-settings, email-test-to, send-test-email. Inventory testids: new-item-btn, upload-main-image-btn. Bestillinger testids: send-order-{po_number} (only visible on Bestillinger tab when stock/team orders exist), send-order-to/cc/subject/message, confirm-send-order. App is at /app/* namespace (NOT root). Login requires clicking landing-page 'Logg inn' then filling email/password form. Trial users signup gives deluxe effective plan; to test basic plan behavior you MUST directly update MongoDB customers.subscription_status='active' + selected_plan='basic'. Emergent email proxy (EMAIL_BASE_URL/api/v1/email/send) RETURNS 202 for non-attachment emails but 422 for emails with attachments - this is the bug to investigate.",
+  "rca of the issue": "Emergent email attachment 422: backend _send_emergent sends payload with attachments as [{'filename', 'content': base64, 'content_type': 'application/pdf'}]. Backend logs show 'HTTP/1.1 422 unknown' every time attachments are included. Reproduction: curl POST /api/orders/{oid}/send with valid order id -> 502 'E-post feilet: ...422...'. Likely cause: the Emergent email API expects a different schema (perhaps 'type' instead of 'content_type', or no 'content_type' field, or 'data' instead of 'content'). Mitigation: Option A - inspect Emergent email proxy docs/schema (requires main agent). Option B - if attachments aren't supported, main agent should prompt user to configure SMTP/Resend to send attachments (test endpoint verifies this works). Option C - fall back to inlining attachments as download links."
+}

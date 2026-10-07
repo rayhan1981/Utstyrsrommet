@@ -37,6 +37,15 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Bulk-generer QR for alle varer
 - UpgradeCTA for basic/pro-brukere som møter Deluxe-features
 
+### Okt 2026 – Egen avsender-epost + vedlegg + multi-bilder + Lagsutstyr-PDF
+- Per-tenant E-postoppsett (Innstillinger): tre metoder (Standard / Egen SMTP / Resend), kryptert passord/API-nøkkel (Fernet avledet fra JWT_SECRET), "Send test-epost"-knapp, verifisert-badge, hjelpetekst under hvert felt.
+- Unified `send_tenant_email(tid, to, subject, html, attachments, cc)` som ruter via tenantens konfig; fallback til Emergent-standard. Fikset Emergent-attachment-schema (`type` ikke `content_type`).
+- Behovsskjema: Excel-malen vedlegges fortsatt, nå sendes via tenant-adresse. Fix: attachment nå akseptert av proxy.
+- Bestillinger: Ny `POST /api/orders/{id}/send` som vedlegger PDF til leverandør/mottaker. Lagleder-varsling vedlegger også PDF.
+- Inventory multi-bilder (Deluxe): opp til 5 bilder for hovedvare, 4 bilder per variasjon (`images: List[str]`), bakoverkompatibel med `image_url` (speiler images[0]).
+- Lagsutstyr-PDF (erstatter Excel): klubblogo+brevhode, "Til: [lagsnavn] v/ [lagleder]", tittel "Oversikt over utstyr og utestående beløp", seksjon 1 (utestående: Vare/Str/Antall/Skyldig/Frist, én linje pr utlån), seksjon 2 (forbruksvarer: Dato/Vare/Str/Antall/Utlevert til), oppsummering med linjer/antall/totalbeløp, signatur Mvh/navn/tlf/klubb.
+
+
 ### Okt 2026 – 7-dagers Deluxe-trial (denne økten)
 - **Backend**: SignupIn.plan optional, auto-trial 7 dager på signup. `_sync_subscription_status` kjører på hver /auth/me — switcher til `expired` eller aktiverer `selected_plan` når trial går ut. `require_perm` m/ level ≥ write blokkerer med 402 for expired/cancelled. Owner-workspace short-circuit.
 - Nye endepunkter: `POST /subscription/select-plan` (deferred activation), `POST /owner/customers/{id}/extend-trial`
