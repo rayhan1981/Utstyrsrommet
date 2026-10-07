@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useNavigate, useLocation } from "react-router-do
 import {
   LayoutDashboard, Users as UsersIcon, UserCircle, Package, ArrowLeftRight,
   ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2, QrCode,
-  ChevronDown, ChevronRight, SlidersHorizontal,
+  ChevronDown, ChevronRight, SlidersHorizontal, PackagePlus,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import TrialBanner from "@/components/TrialBanner";
 const PRIMARY_NAV = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard, module: "dashboard", feature: null },
   { to: "/app/utstyr", label: "Utstyr", icon: Package, module: "inventory", feature: null },
+  { to: "/app/varemottak", label: "Varemottak", icon: PackagePlus, module: "inventory", feature: null },
   { to: "/app/utlan", label: "Utlån & Retur", icon: ArrowLeftRight, module: "loans", feature: null },
   { to: "/app/skann", label: "Skann QR", icon: QrCode, module: "loans", feature: "qr_codes" },
   { to: "/app/varetelling", label: "Varetelling", icon: ClipboardCheck, module: "stock_audit", feature: "stock_audit" },

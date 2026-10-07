@@ -18,7 +18,7 @@ import ViewQrDialog from "@/components/ViewQrDialog";
 import UpgradeCTA from "@/components/UpgradeCTA";
 import { compressImage } from "@/lib/imageUtils";
 
-const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null };
+const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null };
 
 export default function Inventory() {
   const { hasPerm, hasFeature } = useAuth();
@@ -42,7 +42,8 @@ export default function Inventory() {
 
   const save = async () => {
     try {
-      const payload = { ...form, price: parseFloat(form.price) || 0, total_stock: parseInt(form.total_stock) || 0 };
+      const payload = { ...form, price: parseFloat(form.price) || 0, total_stock: parseInt(form.total_stock) || 0,
+        purchase_price: form.purchase_price === "" || form.purchase_price === null ? null : parseFloat(form.purchase_price) };
       if (editId) await api.put(`/items/${editId}`, payload); else await api.post("/items", payload);
       toast.success("Lagret"); setOpen(false); load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
@@ -281,8 +282,9 @@ export default function Inventory() {
               <div><Label>Kategori</Label><Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></div>
               <div><Label>Hovedgruppe</Label><Input value={form.main_group} onChange={(e) => setForm({ ...form, main_group: e.target.value })} /></div>
               <div><Label>Undergruppe</Label><Input value={form.sub_group} onChange={(e) => setForm({ ...form, sub_group: e.target.value })} /></div>
-              <div><Label>Pris (NOK)</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
-              <div><Label>Lokasjon (hylle/rom)</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
+              <div><Label>Pris / salg (NOK)</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+              <div><Label>Innkjøpspris (NOK)</Label><Input type="number" step="0.01" placeholder="(valgfri)" value={form.purchase_price ?? ""} onChange={(e) => setForm({ ...form, purchase_price: e.target.value })} data-testid="purchase-price-input" /></div>
+              <div className="sm:col-span-2"><Label>Lokasjon (hylle/rom)</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="flex items-center gap-3 border border-slate-200 rounded-md p-3 cursor-pointer">

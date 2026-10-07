@@ -490,6 +490,7 @@ class SizeStock(BaseModel):
     location: str = ""
     has_qr: bool = False
     image_url: Optional[str] = None
+    purchase_price: Optional[float] = None
 
 
 class ItemIn(BaseModel):
@@ -498,6 +499,7 @@ class ItemIn(BaseModel):
     main_group: str = ""
     sub_group: str = ""
     price: float = 0.0
+    purchase_price: Optional[float] = None
     total_stock: int = 0
     location: str = ""
     is_clothing: bool = False
@@ -2631,6 +2633,377 @@ async def export_team(team_id: str, request: Request, user=Depends(require_perm(
                     l.get("amount_owed", 0)])
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
     return _xlsx_response(wb, f"lag_{safe}.xlsx")
+
+
+# ============== VAREMOTTAK (Goods Receipt) ==============
+class StockReceiptIn(BaseModel):
+    request_id: Optional[str] = None
+    item_id: str
+    size: Optional[str] = None
+    jersey_number: Optional[str] = None
+    quantity: int
+    order_ref: str = ""
+    comment: str = ""
+
+
+class QrResolveIn(BaseModel):
+    code: str
+
+
+@api.post("/stock-receipts/resolve-qr")
+async def resolve_receipt_qr(data: QrResolveIn, request: Request, user=Depends(require_perm("inventory", "write"))):
+    tid = await require_tenant(request, user)
+    code = (data.code or "").strip()
+    if not code:
+        raise HTTPException(400, "Mangler QR-kode")
+    item_id = code; size = None
+    if "#" in code:
+        item_id, size = code.split("#", 1)
+    item = await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "QR-koden tilhører ikke en vare i systemet")
+    return {"item": item, "size": size}
+
+
+@api.get("/stock-receipts")
+async def list_receipts(request: Request, user=Depends(require_perm("inventory", "read"))):
+    tid = await require_tenant(request, user)
+    return await db.stock_receipts.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+
+
+@api.post("/stock-receipts")
+async def create_receipt(data: StockReceiptIn, request: Request, user=Depends(require_perm("inventory", "write"))):
+    tid = await require_tenant(request, user)
+    if not isinstance(data.quantity, int) or data.quantity <= 0:
+        raise HTTPException(400, "Mottatt antall må være et positivt heltall")
+    if data.request_id:
+        existing = await db.stock_receipts.find_one({"tenant_id": tid, "request_id": data.request_id}, {"_id": 0})
+        if existing:
+            return existing
+    item = await db.items.find_one({"id": data.item_id, "tenant_id": tid})
+    if not item:
+        raise HTTPException(404, "Vare finnes ikke")
+    qty_before = 0; qty_after = 0
+    if item.get("is_clothing") or item.get("is_ball"):
+        if not data.size:
+            raise HTTPException(400, "Størrelse må oppgis for klær og baller")
+        sizes = item.get("sizes") or []
+        found = None
+        for s in sizes:
+            if s.get("size") == data.size and (
+                not data.jersey_number or data.jersey_number in ("X", s.get("jersey_number"))
+            ):
+                found = s; break
+        if not found:
+            raise HTTPException(404, "Fant ikke angitt variant på varen")
+        qty_before = int(found.get("quantity") or 0)
+        found["quantity"] = qty_before + data.quantity
+        qty_after = found["quantity"]
+        new_total = sum(int(s.get("quantity") or 0) for s in sizes)
+        await db.items.update_one({"id": data.item_id, "tenant_id": tid},
+                                  {"$set": {"sizes": sizes, "total_stock": new_total}})
+    else:
+        qty_before = int(item.get("total_stock") or 0)
+        qty_after = qty_before + data.quantity
+        await db.items.update_one({"id": data.item_id, "tenant_id": tid},
+                                  {"$set": {"total_stock": qty_after}})
+    receipt = {
+        "id": new_id(), "tenant_id": tid, "request_id": data.request_id,
+        "item_id": data.item_id, "item_name": item.get("name"),
+        "size": data.size, "jersey_number": data.jersey_number,
+        "quantity": data.quantity, "qty_before": qty_before, "qty_after": qty_after,
+        "order_ref": data.order_ref, "comment": data.comment,
+        "user_id": user.get("id"), "user_name": user.get("name"),
+        "created_at": now_iso(),
+    }
+    await db.stock_receipts.insert_one(receipt)
+    receipt.pop("_id", None)
+    return receipt
+
+
+# ============== TEAM NEEDS (Innmeldt Behov) ==============
+NEED_RULES = {
+    "Håndball":    {"min": 1, "max": 50, "size_required": True,  "jersey_required": False},
+    "Hjemmedrakt": {"min": 1, "max": 1,  "size_required": True,  "jersey_required": True},
+    "Bortedrakt":  {"min": 1, "max": 1,  "size_required": True,  "jersey_required": True},
+    "Tape":        {"min": 1, "max": 10, "size_required": False, "jersey_required": False},
+    "Isposer":     {"min": 1, "max": 10, "size_required": False, "jersey_required": False},
+    "Andre klær":  {"min": 1, "max": 1,  "size_required": True,  "jersey_required": False},
+}
+NEED_HEADERS = ["Varetype", "Vare/variant", "Størrelse", "Draktnummer", "Antall", "Kommentar"]
+
+
+def _current_seasons():
+    y = datetime.now(timezone.utc).year
+    return [f"{str(y)[-2:]}/{str(y+1)[-2:]}", f"{str(y+1)[-2:]}/{str(y+2)[-2:]}"]
+
+
+@api.get("/needs/seasons")
+async def need_seasons():
+    return {"seasons": _current_seasons()}
+
+
+@api.get("/teams/{team_id}/needs/template")
+async def team_needs_template(team_id: str, request: Request, user=Depends(require_perm("teams", "read"))):
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.styles import PatternFill, Font
+    tid = await require_tenant(request, user)
+    team = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
+    if not team:
+        raise HTTPException(404, "Lag finnes ikke")
+    teams = await db.teams.find({"tenant_id": tid}, {"_id": 0}).to_list(500)
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    seasons = _current_seasons()
+    wb = Workbook()
+    ws = wb.active; ws.title = "Behov"
+    hdr_font = Font(bold=True, color="FFFFFF")
+    hdr_fill = PatternFill(start_color="7F1D1D", end_color="7F1D1D", fill_type="solid")
+    ws["A1"] = "UTSTYRSROMMET – Innmeldt Behov"
+    ws["A1"].font = Font(bold=True, size=14, color="7F1D1D")
+    ws["A2"] = "Fyll ut lag, årsklasse og sesong, deretter én linje per enhet. Klær registreres som én enhet per linje."
+    ws["A2"].font = Font(italic=True, size=10, color="555555")
+    ws["A4"] = "Lagsnavn:"; ws["B4"] = team.get("team_name") or ""
+    ws["A5"] = "Årsklasse:"; ws["B5"] = team.get("age_class") or ""
+    ws["A6"] = "Sesong:"; ws["B6"] = seasons[0]
+    ws["A7"] = "Lag-ID (ikke endre):"; ws["B7"] = team_id
+    for r in range(4, 8):
+        ws[f"A{r}"].font = Font(bold=True)
+    for ci, h in enumerate(NEED_HEADERS, start=1):
+        c = ws.cell(row=9, column=ci, value=h)
+        c.font = hdr_font; c.fill = hdr_fill
+    ref = wb.create_sheet("Referanse")
+    team_names = sorted({t.get("team_name") for t in teams if t.get("team_name")})
+    age_classes = sorted({t.get("age_class") for t in teams if t.get("age_class")})
+    item_names = sorted({i.get("name") for i in items if i.get("name")})
+    all_sizes = set()
+    for it in items:
+        for s in it.get("sizes") or []:
+            if s.get("size"): all_sizes.add(s.get("size"))
+    sizes = sorted(all_sizes)
+    varetypes = list(NEED_RULES.keys())
+    def _col(col_idx, header, values):
+        ref.cell(row=1, column=col_idx, value=header)
+        for i, v in enumerate(values, start=2):
+            ref.cell(row=i, column=col_idx, value=v)
+    _col(1, "Lag", team_names)
+    _col(2, "Årsklasse", age_classes)
+    _col(3, "Sesonger", seasons)
+    _col(4, "Varetype", varetypes)
+    _col(5, "Vare", item_names)
+    _col(6, "Størrelse", sizes)
+    dv_team = DataValidation(type="list", formula1=f"=Referanse!$A$2:$A${1+max(len(team_names),1)}", allow_blank=True)
+    dv_age = DataValidation(type="list", formula1=f"=Referanse!$B$2:$B${1+max(len(age_classes),1)}", allow_blank=True)
+    dv_season = DataValidation(type="list", formula1=f"=Referanse!$C$2:$C${1+len(seasons)}", allow_blank=True)
+    dv_type = DataValidation(type="list", formula1=f"=Referanse!$D$2:$D${1+len(varetypes)}", allow_blank=False, errorTitle="Ugyldig varetype", error="Velg fra listen")
+    dv_item = DataValidation(type="list", formula1=f"=Referanse!$E$2:$E${1+max(len(item_names),1)}", allow_blank=True)
+    dv_size = DataValidation(type="list", formula1=f"=Referanse!$F$2:$F${1+max(len(sizes),1)}", allow_blank=True)
+    dv_qty = DataValidation(type="whole", operator="between", formula1=1, formula2=50, allow_blank=True, errorTitle="Ugyldig antall", error="Antall må være heltall 1-50")
+    for dv in (dv_team, dv_age, dv_season, dv_type, dv_item, dv_size, dv_qty):
+        ws.add_data_validation(dv)
+    dv_team.add("B4"); dv_age.add("B5"); dv_season.add("B6")
+    rows_count = 205
+    dv_type.add(f"A10:A{10+rows_count}")
+    dv_item.add(f"B10:B{10+rows_count}")
+    dv_size.add(f"C10:C{10+rows_count}")
+    dv_qty.add(f"E10:E{10+rows_count}")
+    widths = [16, 32, 14, 12, 9, 36]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64+i)].width = w
+    ref.sheet_state = "hidden"
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name") or "lag")
+    return _xlsx_response(wb, f"behov_mal_{safe}_{seasons[0].replace('/','-')}.xlsx")
+
+
+class NeedConfirmIn(BaseModel):
+    season: str
+    lines: List[dict]
+    strategy: str = "replace"
+    filename: Optional[str] = None
+
+
+async def _compute_need_coverage(tid, needs):
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    item_by_id = {i["id"]: i for i in items}
+    def vk(iid, size, jersey): return f"{iid}|{size or ''}|{jersey or ''}"
+    avail = {}
+    for i in items:
+        if i.get("is_clothing") or i.get("is_ball"):
+            for s in i.get("sizes") or []:
+                jk = s.get("jersey_number") if i.get("is_clothing") else ""
+                avail[vk(i["id"], s.get("size"), jk)] = int(s.get("quantity") or 0)
+        else:
+            avail[vk(i["id"], None, None)] = int(i.get("total_stock") or 0)
+    computed = []
+    for need in needs:
+        for ln in need.get("lines", []):
+            item_id = ln.get("item_id")
+            size = ln.get("size") or None
+            jersey = ln.get("jersey_number") or ""
+            it = item_by_id.get(item_id, {})
+            key = vk(item_id, size, jersey if it.get("is_clothing") else "")
+            avail_now = avail.get(key, 0)
+            needed = int(ln.get("quantity") or 0)
+            can_cover = min(needed, avail_now)
+            avail[key] = max(0, avail_now - can_cover)
+            must_order = max(0, needed - can_cover)
+            pprice = it.get("purchase_price")
+            missing_price = pprice in (None, "", 0)
+            cost = (must_order * pprice) if not missing_price else None
+            alt = None
+            if must_order > 0 and it:
+                for cand in items:
+                    if cand.get("id") == item_id: continue
+                    if bool(cand.get("is_clothing")) != bool(it.get("is_clothing")): continue
+                    if bool(cand.get("is_ball")) != bool(it.get("is_ball")): continue
+                    if (cand.get("category") or "") != (it.get("category") or ""): continue
+                    if cand.get("is_clothing") or cand.get("is_ball"):
+                        for cs in cand.get("sizes") or []:
+                            if cs.get("size") == size and int(cs.get("quantity") or 0) > 0:
+                                alt = {"item_id": cand["id"], "name": cand.get("name"), "size": cs.get("size"),
+                                       "quantity_available": int(cs.get("quantity") or 0),
+                                       "reason": "Samme kategori og størrelse"}
+                                break
+                    else:
+                        if int(cand.get("total_stock") or 0) > 0:
+                            alt = {"item_id": cand["id"], "name": cand.get("name"), "size": None,
+                                   "quantity_available": int(cand.get("total_stock") or 0),
+                                   "reason": "Samme kategori"}
+                    if alt: break
+            computed.append({
+                "need_id": need.get("id"), "line_id": ln.get("id"),
+                "item_type": ln.get("item_type"), "item_id": item_id,
+                "item_name": it.get("name") or ln.get("item_name") or "?",
+                "size": size, "jersey_number": jersey, "quantity": needed,
+                "available_now": avail_now, "can_cover": can_cover, "must_order": must_order,
+                "unit_purchase_price": pprice, "line_cost": cost,
+                "missing_price": missing_price, "alternative": alt,
+                "comment": ln.get("comment"),
+            })
+    return computed
+
+
+@api.get("/teams/{team_id}/needs")
+async def get_team_needs(team_id: str, request: Request, season: Optional[str] = None, user=Depends(require_perm("teams", "read"))):
+    tid = await require_tenant(request, user)
+    q = {"tenant_id": tid, "team_id": team_id}
+    if season: q["season"] = season
+    needs = await db.team_needs.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    computed = await _compute_need_coverage(tid, needs)
+    return {"seasons": _current_seasons(), "needs": needs, "lines_computed": computed,
+            "computed_at": now_iso()}
+
+
+@api.post("/teams/{team_id}/needs/import")
+async def import_team_needs(team_id: str, request: Request, file: UploadFile = File(...), user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    team = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0})
+    if not team:
+        raise HTTPException(404, "Lag finnes ikke")
+    content = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        raise HTTPException(400, "Kunne ikke lese Excel-fil")
+    ws = wb.active
+    file_season = str(ws["B6"].value or "").strip()
+    file_team_id = str(ws["B7"].value or "").strip()
+    file_team_name = str(ws["B4"].value or "").strip()
+    file_age = str(ws["B5"].value or "").strip()
+    if file_team_id and file_team_id != team_id:
+        raise HTTPException(400, f"Malen tilhører et annet lag ({file_team_name!r}).")
+    valid_seasons = _current_seasons()
+    if file_season not in valid_seasons:
+        raise HTTPException(400, f"Ugyldig sesong: {file_season!r}. Gyldige: {', '.join(valid_seasons)}")
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    items_by_name = {i["name"].lower(): i for i in items if i.get("name")}
+    lines_preview = []
+    errors = []
+    for ridx, row in enumerate(ws.iter_rows(min_row=10, values_only=True), start=10):
+        if row is None or all(v is None or (isinstance(v, str) and not v.strip()) for v in (row[:6] if row else [])):
+            continue
+        vtype = (str(row[0]) if row[0] else "").strip()
+        iname = (str(row[1]) if row[1] else "").strip()
+        size = (str(row[2]) if row[2] else "").strip()
+        jersey = (str(row[3]) if row[3] else "").strip()
+        qty_raw = row[4] if len(row) > 4 else None
+        comment = (str(row[5]) if len(row) > 5 and row[5] else "").strip()
+        line_err = []
+        if vtype not in NEED_RULES:
+            line_err.append(f"Ukjent varetype {vtype!r}")
+        rule = NEED_RULES.get(vtype, {})
+        try:
+            qty = int(qty_raw) if qty_raw not in (None, "") else 0
+        except Exception:
+            qty = 0; line_err.append("Antall må være heltall")
+        if rule and (qty < rule.get("min", 1) or qty > rule.get("max", 50)):
+            line_err.append(f"Antall {qty} ugyldig for {vtype} (må være {rule.get('min')}-{rule.get('max')})")
+        if rule.get("size_required") and not size:
+            line_err.append("Størrelse er påkrevd")
+        if rule.get("jersey_required") and not jersey:
+            line_err.append("Draktnummer er påkrevd")
+        it = items_by_name.get(iname.lower()) if iname else None
+        if not iname:
+            line_err.append("Vare/variant mangler")
+        elif not it:
+            line_err.append(f"Fant ikke vare {iname!r} i katalogen")
+        lines_preview.append({
+            "row": ridx, "item_type": vtype, "item_name": iname,
+            "item_id": it["id"] if it else None,
+            "size": size, "jersey_number": jersey,
+            "quantity": qty, "comment": comment, "errors": line_err,
+        })
+        if line_err:
+            errors.extend([f"Rad {ridx}: {e}" for e in line_err])
+    existing = await db.team_needs.find({"tenant_id": tid, "team_id": team_id, "season": file_season}, {"_id": 0}).to_list(100)
+    return {
+        "team_id": team_id, "team_name": team.get("team_name"),
+        "age_class": file_age, "season": file_season,
+        "filename": file.filename, "lines": lines_preview,
+        "errors": errors, "has_existing": bool(existing),
+    }
+
+
+@api.post("/teams/{team_id}/needs/confirm")
+async def confirm_team_needs(team_id: str, data: NeedConfirmIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    if data.season not in _current_seasons():
+        raise HTTPException(400, "Ugyldig sesong")
+    clean = []
+    for ln in data.lines:
+        if ln.get("errors"): continue
+        if not ln.get("item_id"): continue
+        clean.append({
+            "id": new_id(),
+            "item_type": ln.get("item_type"),
+            "item_id": ln.get("item_id"),
+            "item_name": ln.get("item_name"),
+            "size": ln.get("size") or None,
+            "jersey_number": ln.get("jersey_number") or None,
+            "quantity": int(ln.get("quantity") or 0),
+            "comment": ln.get("comment") or "",
+            "original_item_id": ln.get("item_id"),
+        })
+    if not clean:
+        raise HTTPException(400, "Ingen gyldige linjer å importere")
+    if data.strategy == "replace":
+        await db.team_needs.delete_many({"tenant_id": tid, "team_id": team_id, "season": data.season})
+    doc = {
+        "id": new_id(), "tenant_id": tid, "team_id": team_id, "season": data.season,
+        "filename": data.filename or "", "lines": clean,
+        "imported_by": user.get("name") or user.get("email"),
+        "created_at": now_iso(),
+    }
+    await db.team_needs.insert_one(doc)
+    return {"ok": True, "need_id": doc["id"]}
+
+
+@api.delete("/teams/{team_id}/needs/{need_id}")
+async def delete_team_need(team_id: str, need_id: str, request: Request, user=Depends(require_perm("teams", "admin"))):
+    tid = await require_tenant(request, user)
+    r = await db.team_needs.delete_one({"id": need_id, "tenant_id": tid, "team_id": team_id})
+    if not r.deleted_count:
+        raise HTTPException(404, "Fant ikke")
+    return {"ok": True}
 
 
 app.include_router(api)

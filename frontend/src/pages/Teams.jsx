@@ -8,10 +8,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pencil, Trash2, Plus, Download, Eye, HandCoins, FileText } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
 import InvoiceDialog from "@/components/InvoiceDialog";
+import TeamNeedsTab from "@/components/TeamNeedsTab";
 
 const EMPTY_TRAINER = { name: "", email: "", phone: "", years_engaged: "" };
 const EMPTY_TEAM = {
@@ -260,7 +262,12 @@ export default function Teams() {
             </DialogDescription>
           </DialogHeader>
           {detail && (
-            <div className="space-y-4">
+            <Tabs defaultValue="info">
+              <TabsList>
+                <TabsTrigger value="info" data-testid="team-tab-info">Oversikt</TabsTrigger>
+                <TabsTrigger value="needs" data-testid="team-tab-needs">Innmeldt Behov</TabsTrigger>
+              </TabsList>
+              <TabsContent value="info" className="space-y-4 pt-4">
               <div>
                 <h4 className="font-semibold text-sm mb-2">Personer tilknyttet laget ({detail.people.length})</h4>
                 <div className="border border-slate-200 rounded-md overflow-x-auto">
@@ -295,7 +302,11 @@ export default function Teams() {
                   </table>
                 </div>
               </div>
-            </div>
+              </TabsContent>
+              <TabsContent value="needs" className="pt-4">
+                <TeamNeedsTab teamId={detail.team.id} teamName={detail.team.team_name} />
+              </TabsContent>
+            </Tabs>
           )}
           <DialogFooter><Button variant="outline" onClick={() => setDetail(null)}>Lukk</Button></DialogFooter>
         </DialogContent>

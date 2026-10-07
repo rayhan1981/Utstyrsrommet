@@ -84,6 +84,25 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
   - UpgradeCTA utvidet m/ `product_images`-tekst
 - Testing: `/plans` returnerer `product_images: True` kun for deluxe. E2E: Klubbinnstillinger-knapp synlig, Lag + Personer nestet, inventory viser thumbnails-kolonne
 
+### Nov 2026 – Varemottak + Innmeldt Behov + Innkjøpspris
+- **Innkjøpspris**: `purchase_price: Optional[float]` på både Item og SizeStock (model). UI: nytt felt i Inventory-dialog
+- **Varemottak** (`/app/varemottak`):
+  - Backend: `POST /stock-receipts` (idempotent via `request_id`), `GET /stock-receipts`, `POST /stock-receipts/resolve-qr`
+  - Dekker klær/baller (variant via size+jersey) OG vanlig vare
+  - Lagrer: dato, bruker, qty_before/qty_after, order_ref, comment
+  - Frontend: Tabs «Velg vare fra liste» + «Motta vare QR» (html5-qrcode). Søk, variant-knapper, før/etter preview, confirm-knapp disables under submit
+  - Sidebar-link under Utstyr
+- **Innmeldt Behov** (ny tab i Lag-detalj):
+  - Backend: `GET /needs/seasons` (dynamisk: 26/27 + 27/28 i 2026)
+  - `GET/POST/DELETE /teams/{id}/needs` + `/needs/import` + `/needs/confirm`
+  - Excel-mal med openpyxl `DataValidation` (lag/årsklasse/sesong/varetype/vare/str/antall), 205 datalinjer, lag-ID i B7
+  - NEED_RULES validerer antall per varetype (Håndball 1-50, Hjemmedrakt=1, Tape 1-10, osv), krever størrelse for klær/håndball, draktnummer for drakter
+  - Preview-dialog med rad-feilmeldinger, replace|append-valg, blokkerer confirm ved feil
+  - Dekningsberegning: `_compute_need_coverage` fordeler lager FIFO over linjer så samme variant ikke dobbeltelles
+  - Alternativer: samme kategori + størrelse først, feil str ikke foreslått direkte
+  - UI: 6 KPI-kort (sesong, linjer, ønsket, dekkes, må bestilles, kostnad*), filtre (alle/dekkes/bestille/alt/mangler pris), tidligere imports m/ dato+bruker+slett
+- Testing: 7 API-tester grønne (seasons, create-receipt +3 10→13, idempotency, zero-qty-400, QR resolve, template 7 DVs, team-ID forhåndsutfylt). E2E screenshot av Varemottak-side viser full UX
+
 ## Backlog
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall
