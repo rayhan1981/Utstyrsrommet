@@ -219,7 +219,6 @@ export default function Bestillinger() {
                     <TableCell className="text-right">
                       <Button size="sm" variant="outline" onClick={() => openEditSchema(s)} className="ml-1" title="Rediger mottaker" data-testid={`edit-schema-${s.po_number}`}><Pencil className="h-3 w-3" /></Button>
                       <Button size="sm" variant="outline" onClick={() => downloadTemplate(s)} title="Last ned Excel-mal"><Download className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="outline" onClick={() => markSent(s)} className="ml-1" title="Send skjema på e-post"><Send className="h-3 w-3" /></Button>
                       <Button size="sm" variant="outline" onClick={() => setOrderDialog(s)} className="ml-1 bg-emerald-50 border-emerald-300 text-emerald-800" title="Bestill behovsvarer" data-testid={`order-from-schema-${s.po_number}`}><ShoppingCart className="h-3 w-3" /></Button>
                       <Button size="sm" variant="ghost" onClick={() => delSchema(s)} className="ml-1"><Trash2 className="h-3 w-3 text-red-600" /></Button>
                     </TableCell>
@@ -312,21 +311,8 @@ export default function Bestillinger() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!sendSchemaFor} onOpenChange={(o) => !o && setSendSchemaFor(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Send behovsskjema {sendSchemaFor?.po_number}</DialogTitle><DialogDescription>Excel-malen sendes som vedlegg til mottakeren. Kopi til din e-post.</DialogDescription></DialogHeader>
-          <div className="space-y-3">
-            <div><Label>Mottakers navn</Label><Input value={sendForm.recipient_name} onChange={(e) => setSendForm({ ...sendForm, recipient_name: e.target.value })} /></div>
-            <div><Label>Mottakers e-post *</Label><Input type="email" value={sendForm.recipient_email} onChange={(e) => setSendForm({ ...sendForm, recipient_email: e.target.value })} data-testid="send-schema-email" /></div>
-            <div><Label>Melding (valgfri)</Label>
-              <textarea className="w-full border rounded-md p-2 min-h-[100px] text-sm" value={sendForm.message} onChange={(e) => setSendForm({ ...sendForm, message: e.target.value })} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSendSchemaFor(null)}>Avbryt</Button>
-            <Button onClick={sendSchemaEmail} className="bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="confirm-send-schema"><Send className="h-4 w-4 mr-1" />Send e-post</Button>
-          </DialogFooter>
-        </DialogContent>
+      <Dialog open={false} onOpenChange={() => {}}>
+        <DialogContent></DialogContent>
       </Dialog>
 
       <Dialog open={!!sendOrderFor} onOpenChange={(o) => !o && setSendOrderFor(null)}>
