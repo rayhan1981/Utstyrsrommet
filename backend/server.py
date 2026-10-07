@@ -474,7 +474,8 @@ def _send_smtp_sync(cfg: dict, to: List[str], subject: str, html: str,
         msg.add_alternative(html, subtype="html")
         for att in (attachments or []):
             data = _b64mod.b64decode(att.get("content") or "")
-            maintype, _, subtype = (att.get("content_type") or "application/octet-stream").partition("/")
+            ct = att.get("content_type") or att.get("type") or "application/octet-stream"
+            maintype, _, subtype = ct.partition("/")
             if not subtype: subtype = "octet-stream"
             msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=att.get("filename") or "vedlegg")
         recipients = list(to) + (list(cc) if cc else [])

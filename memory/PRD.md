@@ -37,6 +37,16 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Bulk-generer QR for alle varer
 - UpgradeCTA for basic/pro-brukere som møter Deluxe-features
 
+### Okt 2026 – Fix PDF-vedlegg + unified LoanDialog + knapp-labels
+- **Bugfix PDF-vedlegg**: `_send_smtp_sync` leste kun `content_type` fra attachment, ikke `type` som nye endepunkter sender. Nå aksepteres begge formater. Verifisert: `POST /teams/{id}/send-equipment-list` returnerer provider_id og vedlegger utstyrs-PDFen korrekt uansett e-postmetode.
+- **Unified LoanDialog**: Ny delt komponent `/components/LoanDialog.jsx` som støtter multi-linje utlån med utlevering/utlån-toggle, egen dato eller felles dato (månedskalender med år/måned-nedtrekk). Brukt i:
+  - Loans.jsx (hovedside "Nytt utlån")
+  - Teams.jsx (per-lag "Lån ut" → forhåndsvalgt lag)
+  - People.jsx (per-person "Lån ut" → forhåndsvalgt person + lag)
+  - Scan.jsx (etter QR-skanning → forhåndsvalgt vare+str, åpner samme dialog)
+- **Beskrivende labels under ikonknapper**: Alle action-knapper i Lag- og Person-tabellene har nå tekstlabel under ikonet (Lån ut, Detaljer, Last ned, Send epost, Rediger, Slett). Scan-siden har også label-knapper.
+
+
 ### Okt 2026 – Reset-kvoter + personvern for app-eier + login-historikk tilgang
 - **Reset-kvoter**: Vanlig bruker maks 1 nullstilling pr måned (30 dager). Admin maks 1 pr uke (7 dager). Super_admin (hovedadmin) + platform_owner har **ingen begrensning**. Returnerer HTTP 429 med beregnet neste-dato når kvoten er overskredet.
 - **Personvern for platform-eier**: Pålogging som platform_owner skrives IKKE til `login_history`, `last_seen`/`last_login` oppdateres ikke, logout rydder ikke historikk, og database_reset utført av platform_owner skrives IKKE til `audit_log`. Platform-eier er usynlig i alle klubbers logger.

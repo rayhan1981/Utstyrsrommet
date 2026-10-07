@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pencil, Trash2, Plus, Eye, HandCoins, FileText } from "lucide-react";
+import LoanDialog from "@/components/LoanDialog";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
@@ -62,31 +63,11 @@ export default function People() {
 
   const openQuickLoan = (p) => {
     setLoanFor(p);
-    const firstTeam = (p.team_ids && p.team_ids[0]) || "none";
-    setLoanForm({ item_id: "", quantity: 1, team_id: firstTeam, size: "", jersey_number: "", notes: "" });
   };
 
-  const selectedItem = items.find((i) => i.id === loanForm.item_id);
+  const selectedItem = null;
 
-  const submitQuickLoan = async () => {
-    try {
-      if (!loanForm.item_id) { toast.error("Velg vare"); return; }
-      await api.post("/loans", {
-        mode: "loan", charge_price: true,
-        item_id: loanForm.item_id,
-        quantity: parseInt(loanForm.quantity) || 1,
-        team_id: loanForm.team_id === "none" ? null : loanForm.team_id,
-        person_id: loanFor.id,
-        loan_target: "person",
-        size: loanForm.size || null,
-        jersey_number: loanForm.jersey_number || null,
-        notes: loanForm.notes,
-      });
-      toast.success(`Utlån registrert til ${loanFor.name}`);
-      setLoanFor(null);
-      load();
-    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
-  };
+  const submitQuickLoan = async () => {};
 
   return (
     <div className="space-y-6" data-testid="people-page">
@@ -119,15 +100,42 @@ export default function People() {
             { key: "auto_created_from_team", label: "Fra lag?", filter: "boolean", accessor: (p) => !!p.auto_created_from_team, render: (p) => p.auto_created_from_team ? <span className="text-xs text-red-700">Auto</span> : "-" },
           ]}
           actions={(p) => (
-            <>
-              {hasPerm("loans", "write") && <Button variant="outline" size="sm" onClick={() => openQuickLoan(p)} data-testid={`quick-loan-${p.id}`}><HandCoins className="h-3 w-3 mr-1" />Lån ut</Button>}
-              <Button variant="ghost" size="icon" onClick={() => showDetail(p.id)} data-testid={`view-person-${p.id}`}><Eye className="h-4 w-4" /></Button>
-              {hasPerm("people", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button>}
-              {hasPerm("people", "admin") && <Button variant="ghost" size="icon" onClick={() => del(p.id)}><Trash2 className="h-4 w-4 text-red-600" /></Button>}
-            </>
+            <div className="flex items-center gap-1 flex-wrap justify-end">
+              {hasPerm("loans", "write") && (
+                <Button variant="outline" size="sm" onClick={() => openQuickLoan(p)} data-testid={`quick-loan-${p.id}`} className="flex flex-col items-center h-auto py-1.5 px-2.5 gap-0.5">
+                  <HandCoins className="h-4 w-4" />
+                  <span className="text-[9px] font-semibold">Lån ut</span>
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => showDetail(p.id)} data-testid={`view-person-${p.id}`} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
+                <Eye className="h-4 w-4" /><span className="text-[9px]">Detaljer</span>
+              </Button>
+              {hasPerm("people", "write") && (
+                <Button variant="ghost" size="sm" onClick={() => openEdit(p)} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
+                  <Pencil className="h-4 w-4" /><span className="text-[9px]">Rediger</span>
+                </Button>
+              )}
+              {hasPerm("people", "admin") && (
+                <Button variant="ghost" size="sm" onClick={() => del(p.id)} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
+                  <Trash2 className="h-4 w-4 text-red-600" /><span className="text-[9px] text-red-600">Slett</span>
+                </Button>
+              )}
+            </div>
           )}
         />
       </Card>
+
+      <LoanDialog
+        open={!!loanFor}
+        onOpenChange={(o) => !o && setLoanFor(null)}
+        items={items} teams={teams} people={people}
+        context={loanFor ? {
+          personId: loanFor.id,
+          teamId: (loanFor.team_ids && loanFor.team_ids[0]) || undefined,
+          title: `Nytt utlån til ${loanFor.name}`
+        } : {}}
+        onSaved={() => { setLoanFor(null); load(); }}
+      />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -223,58 +231,8 @@ export default function People() {
           )}
         </DialogContent>
       </Dialog>
-      <Dialog open={!!loanFor} onOpenChange={(o) => !o && setLoanFor(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Lån ut til {loanFor?.name}</DialogTitle>
-            <DialogDescription>Ett-klikks utlån – skyldig beløp går til personen.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Vare</Label>
-              <Select value={loanForm.item_id} onValueChange={(v) => setLoanForm({ ...loanForm, item_id: v, size: "", jersey_number: "" })}>
-                <SelectTrigger data-testid="quick-loan-item"><SelectValue placeholder="Velg vare" /></SelectTrigger>
-                <SelectContent>{items.map((i) => <SelectItem key={i.id} value={i.id}>{i.name} ({nok(i.price)})</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            {(selectedItem?.is_clothing || selectedItem?.is_ball) && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Størrelse</Label>
-                  <Select value={loanForm.size} onValueChange={(v) => {
-                    const s = selectedItem.sizes.find((x) => x.size === v);
-                    setLoanForm({ ...loanForm, size: v, jersey_number: s?.jersey_number || (selectedItem.is_ball ? "" : "X") });
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Velg str" /></SelectTrigger>
-                    <SelectContent>{(selectedItem.sizes || []).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} (lager: {s.quantity})</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                {selectedItem?.is_clothing && (
-                  <div><Label>Draktnr</Label><Input value={loanForm.jersey_number} onChange={(e) => setLoanForm({ ...loanForm, jersey_number: e.target.value })} /></div>
-                )}
-              </div>
-            )}
-            <div><Label>Antall</Label><Input type="number" min="1" value={loanForm.quantity} onChange={(e) => setLoanForm({ ...loanForm, quantity: e.target.value })} data-testid="quick-loan-qty" /></div>
-            <div>
-              <Label>Lag</Label>
-              <Select value={loanForm.team_id} onValueChange={(v) => setLoanForm({ ...loanForm, team_id: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Ingen lag</SelectItem>
-                  {(loanFor?.team_ids || []).map((tid) => {
-                    const t = teams.find((x) => x.id === tid);
-                    return t ? <SelectItem key={t.id} value={t.id}>{t.team_name}</SelectItem> : null;
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-            <div><Label>Notater</Label><Input value={loanForm.notes} onChange={(e) => setLoanForm({ ...loanForm, notes: e.target.value })} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLoanFor(null)}>Avbryt</Button>
-            <Button onClick={submitQuickLoan} className="bg-red-900 hover:bg-red-800" data-testid="submit-quick-loan">Lån ut</Button>
-          </DialogFooter>
-        </DialogContent>
+      <Dialog open={false} onOpenChange={() => {}}>
+        <DialogContent></DialogContent>
       </Dialog>
       <InvoiceDialog
         open={!!invoiceFor}

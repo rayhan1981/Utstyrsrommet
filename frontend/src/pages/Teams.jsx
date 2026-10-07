@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pencil, Trash2, Plus, Download, Eye, HandCoins, FileText, Mail, Send } from "lucide-react";
+import LoanDialog from "@/components/LoanDialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
@@ -78,30 +79,11 @@ export default function Teams() {
 
   const openQuickLoan = (t) => {
     setLoanFor(t);
-    setLoanForm({ item_id: "", quantity: 1, size: "", jersey_number: "", notes: "" });
   };
 
-  const selectedItem = items.find((i) => i.id === loanForm.item_id);
+  const selectedItem = null;
 
-  const submitQuickLoan = async () => {
-    try {
-      if (!loanForm.item_id) { toast.error("Velg vare"); return; }
-      await api.post("/loans", {
-        mode: "loan", charge_price: true,
-        item_id: loanForm.item_id,
-        quantity: parseInt(loanForm.quantity) || 1,
-        team_id: loanFor.id,
-        person_id: null,
-        loan_target: "team",
-        size: loanForm.size || null,
-        jersey_number: loanForm.jersey_number || null,
-        notes: loanForm.notes,
-      });
-      toast.success(`Utlån registrert til ${loanFor.team_name}`);
-      setLoanFor(null);
-      load();
-    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
-  };
+  const submitQuickLoan = async () => {};
 
   const save = async () => {
     try {
@@ -176,37 +158,51 @@ export default function Teams() {
             { key: "debt", label: "Skyldig", filter: "number", accessor: (t) => t.debt || 0, render: (t) => <span className={t.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(t.debt)}</span> },
           ]}
           actions={(t) => (
-            <>
+            <div className="flex items-center gap-1 flex-wrap justify-end">
               {hasPerm("loans", "write") && (
-                <Button variant="outline" size="sm" onClick={() => openQuickLoan(t)} data-testid={`quick-loan-team-${t.id}`}>
-                  <HandCoins className="h-3 w-3 mr-1" />Lån ut
+                <Button variant="outline" size="sm" onClick={() => openQuickLoan(t)} data-testid={`quick-loan-team-${t.id}`} className="flex flex-col items-center h-auto py-1.5 px-2.5 gap-0.5">
+                  <HandCoins className="h-4 w-4" />
+                  <span className="text-[9px] font-semibold">Lån ut</span>
                 </Button>
               )}
-              <Button variant="ghost" size="icon" onClick={() => showDetail(t.id)} data-testid={`view-team-${t.id}`}>
+              <Button variant="ghost" size="sm" onClick={() => showDetail(t.id)} data-testid={`view-team-${t.id}`} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
                 <Eye className="h-4 w-4" />
+                <span className="text-[9px]">Detaljer</span>
               </Button>
-              <Button variant="ghost" size="icon" onClick={() => exportTeam(t.id, t.team_name)} data-testid={`export-team-${t.id}`} title="Last ned utstyrsoversikt (PDF)">
+              <Button variant="ghost" size="sm" onClick={() => exportTeam(t.id, t.team_name)} data-testid={`export-team-${t.id}`} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
                 <Download className="h-4 w-4" />
+                <span className="text-[9px]">Last ned</span>
               </Button>
               {hasPerm("teams", "write") && (
-                <Button variant="ghost" size="icon" onClick={() => openSendList(t)} data-testid={`send-equipment-${t.id}`} title="Send utstyrsoversikt til lagleder på e-post">
+                <Button variant="ghost" size="sm" onClick={() => openSendList(t)} data-testid={`send-equipment-${t.id}`} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
                   <Mail className="h-4 w-4 text-sky-700" />
+                  <span className="text-[9px] text-sky-700">Send epost</span>
                 </Button>
               )}
               {hasPerm("teams", "write") && (
-                <Button variant="ghost" size="icon" onClick={() => openEdit(t)} data-testid={`edit-team-${t.id}`}>
+                <Button variant="ghost" size="sm" onClick={() => openEdit(t)} data-testid={`edit-team-${t.id}`} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
                   <Pencil className="h-4 w-4" />
+                  <span className="text-[9px]">Rediger</span>
                 </Button>
               )}
               {hasPerm("teams", "admin") && (
-                <Button variant="ghost" size="icon" onClick={() => del(t.id)} data-testid={`del-team-${t.id}`}>
+                <Button variant="ghost" size="sm" onClick={() => del(t.id)} data-testid={`del-team-${t.id}`} className="flex flex-col items-center h-auto py-1.5 px-2 gap-0.5">
                   <Trash2 className="h-4 w-4 text-red-600" />
+                  <span className="text-[9px] text-red-600">Slett</span>
                 </Button>
               )}
-            </>
+            </div>
           )}
         />
       </Card>
+
+      <LoanDialog
+        open={!!loanFor}
+        onOpenChange={(o) => !o && setLoanFor(null)}
+        items={items} teams={teams} people={[]}
+        context={loanFor ? { teamId: loanFor.id, title: `Nytt utlån til ${loanFor.team_name}` } : {}}
+        onSaved={() => { setLoanFor(null); load(); }}
+      />
 
       <Dialog open={!!sendFor} onOpenChange={(o) => !o && setSendFor(null)}>
         <DialogContent>
@@ -357,45 +353,8 @@ export default function Teams() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!loanFor} onOpenChange={(o) => !o && setLoanFor(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Lån ut til {loanFor?.team_name}</DialogTitle>
-            <DialogDescription>Ett-klikks utlån – skyldig beløp går til laget.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Vare</Label>
-              <Select value={loanForm.item_id} onValueChange={(v) => setLoanForm({ ...loanForm, item_id: v, size: "", jersey_number: "" })}>
-                <SelectTrigger data-testid="quick-loan-team-item"><SelectValue placeholder="Velg vare" /></SelectTrigger>
-                <SelectContent>{items.map((i) => <SelectItem key={i.id} value={i.id}>{i.name} ({nok(i.price)})</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            {(selectedItem?.is_clothing || selectedItem?.is_ball) && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Størrelse</Label>
-                  <Select value={loanForm.size} onValueChange={(v) => {
-                    const s = selectedItem.sizes.find((x) => x.size === v);
-                    setLoanForm({ ...loanForm, size: v, jersey_number: s?.jersey_number || (selectedItem.is_ball ? "" : "X") });
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Velg str" /></SelectTrigger>
-                    <SelectContent>{(selectedItem.sizes || []).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} (lager: {s.quantity})</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                {selectedItem?.is_clothing && (
-                  <div><Label>Draktnr</Label><Input value={loanForm.jersey_number} onChange={(e) => setLoanForm({ ...loanForm, jersey_number: e.target.value })} /></div>
-                )}
-              </div>
-            )}
-            <div><Label>Antall</Label><Input type="number" min="1" value={loanForm.quantity} onChange={(e) => setLoanForm({ ...loanForm, quantity: e.target.value })} data-testid="quick-loan-team-qty" /></div>
-            <div><Label>Notater</Label><Input value={loanForm.notes} onChange={(e) => setLoanForm({ ...loanForm, notes: e.target.value })} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLoanFor(null)}>Avbryt</Button>
-            <Button onClick={submitQuickLoan} className="bg-red-900 hover:bg-red-800" data-testid="submit-quick-loan-team">Lån ut</Button>
-          </DialogFooter>
-        </DialogContent>
+      <Dialog open={false} onOpenChange={() => {}}>
+        <DialogContent></DialogContent>
       </Dialog>
 
       <InvoiceDialog
