@@ -37,6 +37,13 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Bulk-generer QR for alle varer
 - UpgradeCTA for basic/pro-brukere som møter Deluxe-features
 
+### Okt 2026 – Database-reset (nullstill pr seksjon)
+- Nye endepunkter: `GET /api/reset/preview/{section}` returnerer antall rader som vil slettes, `POST /api/reset/{section}` krever `password` + `confirm=true` og bekrefter innloggingspassordet via bcrypt før sletting. Seksjoner: `inventory`, `suppliers`, `teams`, `people`, `users`, `all`. Audit-log skrives til `audit_log`-collection.
+- Rolle-logikk: admin + platform_owner har alt. Vanlige brukere får per-seksjon `reset_permissions`-tilgang tildelt av admin (`UserCreateIn.reset_permissions` + `UserUpdateIn.reset_permissions`).
+- Frontend: ny `DataResetCard` i Innstillinger – viser alle tillatte seksjoner som egne knapper, dialog med preview av antall rader som slettes, link til eksport-tips, to sjekkbokser (forstår + bekrefter) + passordfelt, røde advarselstekst om at handlingen er permanent.
+- Users.jsx: Ny seksjon "Nullstillings-rettigheter" i brukerredigering med sjekkbokser pr seksjon (vises ikke for admin siden admin alltid har tilgang).
+
+
 ### Okt 2026 – Forbedret utstyrs-PDF + Multi-linje utlån
 - Utstyrs-PDF: Nye kolonner **Pris/stk** og **Linjebeløp** (totalbeløp pr vare). Kolonne-oppsett rettet så Frist/Linjebeløp ikke lenger overlapper. Lange varenavn trunkereres. Dottet skilleline mellom seksjonene og mer whitespace for klar separering mellom utestående utstyr og forbruksvarer.
 - Loans.jsx: Komplett rewrite. Dialog støtter nå **flere varer** på egne linjer med "Legg til linje". Frist-modus: **Felles** (én dato for alle linjer) eller **Egen frist pr linje**. Dato velges fra en månedskalender med måned/år-nedtrekk (bla fram/tilbake uten begrensning).

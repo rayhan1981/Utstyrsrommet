@@ -14,11 +14,19 @@ import DataTable from "@/components/DataTable";
 
 const defaultPerms = (level = "read") => Object.fromEntries(MODULES.map((m) => [m.key, level]));
 
+const RESET_SECTIONS = [
+  { key: "inventory", label: "Utstyr" },
+  { key: "suppliers", label: "Leverandører" },
+  { key: "teams", label: "Lag" },
+  { key: "people", label: "Personer" },
+  { key: "users", label: "Brukere" },
+];
+
 export default function Users() {
   const [users, setUsers] = useState([]);
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), active: true, password: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], active: true, password: "" });
   const [sendInvite, setSendInvite] = useState(true);
   const [historyFor, setHistoryFor] = useState(null);
   const [history, setHistory] = useState([]);
@@ -42,24 +50,24 @@ export default function Users() {
 
   const openNew = () => {
     setEditId(null); setSendInvite(true);
-    setForm({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), active: true, password: "" });
+    setForm({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], active: true, password: "" });
     setOpen(true);
   };
   const openEdit = (u) => {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, phone: u.phone || "", address: u.address || "", role: u.role, permissions: u.permissions || defaultPerms(), active: u.active, password: "" });
+    setForm({ name: u.name, email: u.email, phone: u.phone || "", address: u.address || "", role: u.role, permissions: u.permissions || defaultPerms(), reset_permissions: u.reset_permissions || [], active: u.active, password: "" });
     setOpen(true);
   };
 
   const save = async () => {
     try {
       if (editId) {
-        const payload = { name: form.name, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, active: form.active };
+        const payload = { name: form.name, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, active: form.active };
         if (form.password) payload.password = form.password;
         await api.put(`/users/${editId}`, payload);
         toast.success("Oppdatert");
       } else {
-        const payload = { name: form.name, email: form.email, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions };
+        const payload = { name: form.name, email: form.email, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions };
         if (!sendInvite && form.password) payload.password = form.password;
         const { data } = await api.post("/users", payload);
         toast.success(data.invitation_sent ? "Bruker opprettet - invitasjon sendt på e-post" : "Bruker opprettet");
@@ -155,20 +163,44 @@ export default function Users() {
             </div>
 
             {form.role !== "admin" && (
-              <div>
-                <Label>Rettigheter per modul</Label>
-                <div className="border border-slate-200 rounded-md divide-y divide-slate-100">
-                  {MODULES.map((m) => (
-                    <div key={m.key} className="flex items-center justify-between p-2.5">
-                      <span className="text-sm font-medium">{m.label}</span>
-                      <Select value={form.permissions[m.key] || "none"} onValueChange={(v) => setForm({ ...form, permissions: { ...form.permissions, [m.key]: v } })}>
-                        <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-                        <SelectContent>{PERMS.map((p) => <SelectItem key={p} value={p}>{p === "none" ? "Ingen" : p === "read" ? "Lesetilgang" : p === "write" ? "Skrivetilgang" : "Admin"}</SelectItem>)}</SelectContent>
-                      </Select>
-                    </div>
-                  ))}
+              <>
+                <div>
+                  <Label>Rettigheter per modul</Label>
+                  <div className="border border-slate-200 rounded-md divide-y divide-slate-100">
+                    {MODULES.map((m) => (
+                      <div key={m.key} className="flex items-center justify-between p-2.5">
+                        <span className="text-sm font-medium">{m.label}</span>
+                        <Select value={form.permissions[m.key] || "none"} onValueChange={(v) => setForm({ ...form, permissions: { ...form.permissions, [m.key]: v } })}>
+                          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                          <SelectContent>{PERMS.map((p) => <SelectItem key={p} value={p}>{p === "none" ? "Ingen" : p === "read" ? "Lesetilgang" : p === "write" ? "Skrivetilgang" : "Admin"}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+
+                <div>
+                  <Label className="flex items-center gap-1 text-red-800"><Shield className="h-3 w-3" />Nullstillings-rettigheter (farlige handlinger)</Label>
+                  <p className="text-[11px] text-slate-500 mb-2">Velg hvilke seksjoner brukeren kan slette/nullstille alle data for. Krever passordbekreftelse ved utførelse.</p>
+                  <div className="border border-red-200 rounded-md p-2 bg-red-50/40 grid grid-cols-2 gap-1">
+                    {RESET_SECTIONS.map((s) => {
+                      const checked = (form.reset_permissions || []).includes(s.key);
+                      return (
+                        <label key={s.key} className="flex items-center gap-2 text-sm cursor-pointer p-1.5 hover:bg-white/60 rounded">
+                          <input type="checkbox" checked={checked}
+                                 onChange={(e) => {
+                                   const cur = new Set(form.reset_permissions || []);
+                                   if (e.target.checked) cur.add(s.key); else cur.delete(s.key);
+                                   setForm({ ...form, reset_permissions: Array.from(cur) });
+                                 }}
+                                 data-testid={`reset-perm-${s.key}`} />
+                          <span>{s.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
             )}
 
             {!editId && (

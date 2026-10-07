@@ -11,6 +11,7 @@ import { useAuth } from "@/context/AuthContext";
 import EmailSettingsCard from "@/components/EmailSettingsCard";
 import ProfileCard from "@/components/ProfileCard";
 import NotificationSettingsCard from "@/components/NotificationSettingsCard";
+import DataResetCard from "@/components/DataResetCard";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -68,6 +69,8 @@ export default function Settings() {
       <EmailSettingsCard />
 
       <NotificationSettingsCard />
+
+      <DataResetCard />
 
       <Card className="p-5">
         <h3 className="font-display text-lg font-bold mb-3">Legg til ny klubb</h3>

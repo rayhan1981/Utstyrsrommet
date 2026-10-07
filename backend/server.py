@@ -607,6 +607,7 @@ class UserCreateIn(BaseModel):
     address: Optional[str] = ""
     role: str = "user"
     permissions: Optional[Dict[str, str]] = None
+    reset_permissions: Optional[List[str]] = None  # ["inventory","suppliers","teams","people","users"]
     password: Optional[str] = None
 
 
@@ -616,8 +617,15 @@ class UserUpdateIn(BaseModel):
     address: Optional[str] = None
     role: Optional[str] = None
     permissions: Optional[Dict[str, str]] = None
+    reset_permissions: Optional[List[str]] = None
     active: Optional[bool] = None
     password: Optional[str] = None
+
+
+class ResetSectionIn(BaseModel):
+    password: str
+    confirm: bool = False
+    section: str  # "inventory" | "suppliers" | "teams" | "people" | "users" | "all"
 
 
 class TrainerIn(BaseModel):
@@ -1858,6 +1866,7 @@ async def create_user(data: UserCreateIn, request: Request, admin=Depends(requir
     doc = {
         "id": uid, "email": email, "name": data.name, "phone": data.phone or "", "address": data.address or "",
         "role": data.role, "permissions": perms, "active": True, "is_super_admin": False,
+        "reset_permissions": list(data.reset_permissions or []) if data.role != "admin" else [],
         "tenant_id": tid,
         "password_hash": hash_password(data.password) if data.password else "",
         "created_at": now_iso(),
@@ -1898,6 +1907,95 @@ async def delete_user(user_id: str, request: Request, admin=Depends(require_admi
             raise HTTPException(400, "Kan ikke slette siste admin for kunden")
     await db.users.delete_one({"id": user_id})
     return {"ok": True}
+
+
+# ===================== Database reset (per seksjon) =====================
+VALID_RESET_SECTIONS = ("inventory", "suppliers", "teams", "people", "users", "all")
+
+
+def _can_reset_section(user: dict, section: str) -> bool:
+    if user.get("role") in ("admin", "platform_owner"):
+        return True
+    perms = user.get("reset_permissions") or []
+    return section in perms
+
+
+@api.get("/reset/preview/{section}")
+async def reset_preview(section: str, request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    if section not in VALID_RESET_SECTIONS:
+        raise HTTPException(400, "Ugyldig seksjon")
+    if not _can_reset_section(user, section):
+        raise HTTPException(403, "Du har ikke tilgang til å nullstille denne seksjonen")
+    counts: Dict[str, int] = {}
+    if section in ("inventory", "all"):
+        counts["items"] = await db.items.count_documents({"tenant_id": tid})
+        counts["loans"] = await db.loans.count_documents({"tenant_id": tid})
+    if section in ("suppliers", "all"):
+        counts["suppliers"] = await db.suppliers.count_documents({"tenant_id": tid})
+        counts["purchase_orders"] = await db.purchase_orders.count_documents({"tenant_id": tid})
+        counts["behovsskjema"] = await db.behovsskjema.count_documents({"tenant_id": tid})
+    if section in ("teams", "all"):
+        counts["teams"] = await db.teams.count_documents({"tenant_id": tid})
+    if section in ("people", "all"):
+        counts["people"] = await db.people.count_documents({"tenant_id": tid})
+    if section == "users":
+        counts["users_non_admin"] = await db.users.count_documents({"tenant_id": tid, "role": {"$ne": "admin"}})
+    return {"section": section, "counts": counts}
+
+
+@api.post("/reset/{section}")
+async def reset_section(section: str, data: ResetSectionIn, request: Request, user=Depends(get_current_user)):
+    """Sletter alle data for valgt seksjon innen tenanten. Krever passord-bekreftelse."""
+    tid = await require_tenant(request, user)
+    if section not in VALID_RESET_SECTIONS:
+        raise HTTPException(400, "Ugyldig seksjon")
+    if not _can_reset_section(user, section):
+        raise HTTPException(403, "Du har ikke tilgang til å nullstille denne seksjonen")
+    if not data.confirm:
+        raise HTTPException(400, "Mangler bekreftelse")
+    full_user = await db.users.find_one({"id": user["id"]})
+    if not full_user or not verify_password(data.password, full_user.get("password_hash", "")):
+        raise HTTPException(401, "Feil passord")
+
+    deleted: Dict[str, int] = {}
+
+    async def _del(coll_name: str, filt: dict):
+        r = await db[coll_name].delete_many(filt)
+        deleted[coll_name] = r.deleted_count
+
+    tf = {"tenant_id": tid}
+    if section in ("inventory", "all"):
+        await _del("loans", tf)
+        await _del("items", tf)
+        await db.teams.update_many(tf, {"$set": {"debt": 0}})
+        await db.people.update_many(tf, {"$set": {"debt": 0}})
+    if section in ("suppliers", "all"):
+        await _del("suppliers", tf)
+        await _del("purchase_orders", tf)
+        await _del("behovsskjema", tf)
+    if section in ("teams", "all"):
+        if section == "teams":
+            await db.loans.update_many({**tf, "team_id": {"$ne": None}},
+                                        {"$set": {"team_id": None}})
+        await _del("teams", tf)
+    if section in ("people", "all"):
+        if section == "people":
+            await db.loans.update_many({**tf, "person_id": {"$ne": None}},
+                                        {"$set": {"person_id": None, "picked_up_by": None}})
+        await _del("people", tf)
+    if section in ("users",):
+        r = await db.users.delete_many({"tenant_id": tid, "role": {"$ne": "admin"},
+                                          "id": {"$ne": user["id"]}})
+        deleted["users"] = r.deleted_count
+
+    await db.audit_log.insert_one({
+        "id": new_id(), "tenant_id": tid, "action": "database_reset",
+        "section": section, "by": user.get("email"), "by_user_id": user.get("id"),
+        "deleted": deleted, "at": now_iso(),
+    })
+    return {"ok": True, "section": section, "deleted": deleted}
+
 
 
 @api.post("/users/{user_id}/resend-invitation")
