@@ -103,6 +103,17 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
   - UI: 6 KPI-kort (sesong, linjer, ønsket, dekkes, må bestilles, kostnad*), filtre (alle/dekkes/bestille/alt/mangler pris), tidligere imports m/ dato+bruker+slett
 - Testing: 7 API-tester grønne (seasons, create-receipt +3 10→13, idempotency, zero-qty-400, QR resolve, template 7 DVs, team-ID forhåndsutfylt). E2E screenshot av Varemottak-side viser full UX
 
+### Nov 2026 – Leverandører + Behovsskjema + Bestillinger + Varemottak-flyt
+- **Leverandører** (`/app/leverandorer`): CRUD med Navn (obl.), Adresse, Postnr/Poststed, Land, E-post, Tlf, Kontaktperson, Orgnr, Notater. Søk + deaktivering (bevares ved ordrehistorikk). Ordrehistorikk-visning per leverandør m/ søk på innkjøpsnr/vare
+- **Innkjøpsnummer-sekvens**: `_next_po_number()` genererer unike 5-sifret nummer `NNNNN-YY` per klubb per år via `counters` collection med `findOneAndUpdate` + upsert (thread-safe). Lagerbestillinger får prefiks `LB`
+- **Behovsskjema** (`/app/bestillinger`): Opprett m/ lag+sesong → auto-generert innkjøpsnummer. Status: `ikke_sendt`/`sendt`/`bestilt`/`arkivert`. Last ned Excel-mal, marker som sendt (med e-postmottaker lagret). Arkivering i stedet for sletting hvis bestilling finnes
+- **Purchase Orders**: Opprett bestilling (lagsbestilling bruker behovsskjema's po_number – ingen ny nummer; lagerbestilling får LB-prefiks). Linjer m/ item_id/size/jersey/quantity/unit_price. Status-historikk m/ hver endring
+- **Order Receipt** (`POST /orders/{id}/receive`): Mottar én eller flere linjer, oppdaterer `received_quantity` + `line_status` (ulevert/delvis_levert/levert), auto-oppdaterer order-status (bestilt→delvis_levert→levert), oppdaterer fysisk lager atomisk, idempotent via request_id, krever `confirm_over` ved overmottak
+- **Manuell status**: `POST /orders/{id}/manual-status` m/ obligatorisk begrunnelse (lagres i status_history som manual=true). `POST /orders/{id}/resume-auto-status` beregner på nytt fra mottakstall
+- **Lagshistorikk**: `GET /teams/{id}/purchase-history` grupperer bestillinger per år + måned m/ totalsum i NOK
+- **Statusbadges**: `StatusBadge`-komponent m/ farge+ikon (Bestilt●blå, Delvis▲orange, Levert✓grønn, Manko!rød, Restbestilling■lilla)
+- Testing: 10 API-tester grønne (supplier CRUD, 5-siffer sekvens 00001-26→00002-26, lagsbestilling gjenbruker behovsskjema-nummer, LB-prefiks for lagerbestilling, delmottak oppdaterer status, GET by po_number, team-historikk)
+
 ## Backlog
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall

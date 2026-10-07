@@ -21,6 +21,8 @@ import SubscriptionSuccess from "@/pages/SubscriptionSuccess";
 import OwnerPanel from "@/pages/OwnerPanel";
 import Scan from "@/pages/Scan";
 import Varemottak from "@/pages/Varemottak";
+import Leverandorer from "@/pages/Leverandorer";
+import Bestillinger from "@/pages/Bestillinger";
 import Terms from "@/pages/Terms";
 import { Toaster } from "sonner";
 
@@ -48,6 +50,8 @@ function App() {
             <Route path="kunder" element={<ProtectedRoute ownerOnly><OwnerPanel /></ProtectedRoute>} />
             <Route path="skann" element={<ProtectedRoute module="loans" feature="qr_codes"><Scan /></ProtectedRoute>} />
             <Route path="varemottak" element={<ProtectedRoute module="inventory"><Varemottak /></ProtectedRoute>} />
+            <Route path="leverandorer" element={<ProtectedRoute module="inventory"><Leverandorer /></ProtectedRoute>} />
+            <Route path="bestillinger" element={<ProtectedRoute module="teams"><Bestillinger /></ProtectedRoute>} />
           </Route>
           <Route path="/eier" element={<Navigate to="/app/kunder" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />

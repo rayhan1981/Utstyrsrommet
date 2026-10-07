@@ -3006,6 +3006,379 @@ async def delete_team_need(team_id: str, need_id: str, request: Request, user=De
     return {"ok": True}
 
 
+# ============== LEVERANDØRER ==============
+class SupplierIn(BaseModel):
+    name: str
+    address: str = ""
+    postal_code: str = ""
+    city: str = ""
+    country: str = "Norge"
+    email: str = ""
+    phone: str = ""
+    contact_person: str = ""
+    org_number: str = ""
+    notes: str = ""
+    active: bool = True
+
+
+@api.get("/suppliers")
+async def list_suppliers(request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    return await db.suppliers.find({"tenant_id": tid}, {"_id": 0}).sort("name", 1).to_list(500)
+
+
+@api.post("/suppliers")
+async def create_supplier(data: SupplierIn, request: Request, user=Depends(require_admin)):
+    tid = await require_tenant(request, user)
+    if not data.name.strip():
+        raise HTTPException(400, "Leverandørnavn er obligatorisk")
+    doc = {**data.dict(), "id": new_id(), "tenant_id": tid, "created_at": now_iso()}
+    await db.suppliers.insert_one(doc); doc.pop("_id", None); return doc
+
+
+@api.put("/suppliers/{sid}")
+async def update_supplier(sid: str, data: SupplierIn, request: Request, user=Depends(require_admin)):
+    tid = await require_tenant(request, user)
+    await db.suppliers.update_one({"id": sid, "tenant_id": tid}, {"$set": data.dict()})
+    return await db.suppliers.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+
+
+@api.delete("/suppliers/{sid}")
+async def delete_supplier(sid: str, request: Request, user=Depends(require_admin)):
+    tid = await require_tenant(request, user)
+    orders = await db.purchase_orders.count_documents({"tenant_id": tid, "supplier_id": sid})
+    if orders:
+        await db.suppliers.update_one({"id": sid, "tenant_id": tid}, {"$set": {"active": False}})
+        return {"ok": True, "deactivated": True}
+    await db.suppliers.delete_one({"id": sid, "tenant_id": tid})
+    return {"ok": True}
+
+
+@api.get("/suppliers/{sid}/orders")
+async def supplier_orders(sid: str, request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    return await db.purchase_orders.find({"tenant_id": tid, "supplier_id": sid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+# ============== UNIQUE PO NUMBER ==============
+async def _next_po_number(tid: str, prefix: str = "") -> str:
+    """5-digit sequence per tenant per year, with -YY suffix. Thread-safe."""
+    yr = datetime.now(timezone.utc).strftime("%y")
+    key = f"po_{tid}_{yr}"
+    doc = await db.counters.find_one_and_update(
+        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True
+    )
+    seq = doc.get("seq", 1) if doc else 1
+    return f"{prefix}{seq:05d}-{yr}"
+
+
+# ============== BEHOVSSKJEMA ==============
+class BehovsskjemaIn(BaseModel):
+    team_id: str
+    season: str
+
+
+@api.post("/behovsskjema")
+async def create_behovsskjema(data: BehovsskjemaIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    team = await db.teams.find_one({"id": data.team_id, "tenant_id": tid}, {"_id": 0})
+    if not team:
+        raise HTTPException(404, "Lag finnes ikke")
+    if data.season not in _current_seasons():
+        raise HTTPException(400, f"Ugyldig sesong. Gyldige: {', '.join(_current_seasons())}")
+    po_num = await _next_po_number(tid)
+    doc = {
+        "id": new_id(), "tenant_id": tid, "po_number": po_num,
+        "team_id": data.team_id, "team_name": team.get("team_name"),
+        "age_class": team.get("age_class"), "season": data.season,
+        "status": "ikke_sendt", "sent_at": None, "sent_to": None,
+        "imported_at": None, "last_import_file": None,
+        "notes": "", "created_at": now_iso(),
+        "created_by": user.get("name") or user.get("email"),
+    }
+    await db.behovsskjema.insert_one(doc); doc.pop("_id", None)
+    return doc
+
+
+@api.get("/behovsskjema")
+async def list_behovsskjema(request: Request, user=Depends(require_perm("teams", "read")), team_id: Optional[str] = None):
+    tid = await require_tenant(request, user)
+    q = {"tenant_id": tid}
+    if team_id: q["team_id"] = team_id
+    return await db.behovsskjema.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api.put("/behovsskjema/{sid}")
+async def update_behovsskjema(sid: str, data: dict, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    allowed = {k: data[k] for k in ("notes", "status", "sent_at", "sent_to") if k in data}
+    await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": allowed})
+    return await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+
+
+@api.delete("/behovsskjema/{sid}")
+async def delete_behovsskjema(sid: str, request: Request, user=Depends(require_perm("teams", "admin"))):
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": sid, "tenant_id": tid})
+    if not bs:
+        raise HTTPException(404, "Fant ikke")
+    orders = await db.purchase_orders.count_documents({"tenant_id": tid, "behovsskjema_id": sid})
+    if orders:
+        await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": {"status": "arkivert"}})
+        return {"ok": True, "archived": True}
+    await db.behovsskjema.delete_one({"id": sid, "tenant_id": tid})
+    return {"ok": True}
+
+
+# ============== PURCHASE ORDERS (LEVERANDØRBESTILLINGER) ==============
+class OrderLineIn(BaseModel):
+    item_id: Optional[str] = None
+    item_name: str
+    size: Optional[str] = None
+    jersey_number: Optional[str] = None
+    quantity: int
+    unit_price: float = 0.0
+
+
+class PurchaseOrderIn(BaseModel):
+    supplier_id: str
+    behovsskjema_id: Optional[str] = None  # None for lagerbestilling
+    team_id: Optional[str] = None  # None for lagerbestilling
+    season: Optional[str] = None
+    is_stock_order: bool = False
+    lines: List[OrderLineIn]
+    notes: str = ""
+
+
+@api.post("/orders")
+async def create_order(data: PurchaseOrderIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    supplier = await db.suppliers.find_one({"id": data.supplier_id, "tenant_id": tid}, {"_id": 0})
+    if not supplier:
+        raise HTTPException(404, "Leverandør finnes ikke")
+    if not data.lines:
+        raise HTTPException(400, "Minst én varelinje kreves")
+    # Lagerbestilling: new LB-prefix number. Team order: reuse behovsskjema's po_number.
+    po_number = None
+    behov = None
+    if data.is_stock_order:
+        po_number = await _next_po_number(tid, prefix="LB")
+    else:
+        if not data.behovsskjema_id:
+            raise HTTPException(400, "behovsskjema_id kreves for lagsbestilling")
+        behov = await db.behovsskjema.find_one({"id": data.behovsskjema_id, "tenant_id": tid}, {"_id": 0})
+        if not behov:
+            raise HTTPException(404, "Behovsskjema finnes ikke")
+        po_number = behov["po_number"]
+    total = sum((ln.quantity or 0) * (ln.unit_price or 0) for ln in data.lines)
+    order_lines = []
+    for ln in data.lines:
+        order_lines.append({
+            "id": new_id(), **ln.dict(),
+            "received_quantity": 0, "line_status": "ulevert",
+            "receipts": [], "reserved_from_po": None, "reserved_for_po": None,
+        })
+    doc = {
+        "id": new_id(), "tenant_id": tid, "po_number": po_number,
+        "supplier_id": data.supplier_id, "supplier_name": supplier.get("name"),
+        "behovsskjema_id": data.behovsskjema_id,
+        "team_id": data.team_id or (behov["team_id"] if behov else None),
+        "team_name": behov["team_name"] if behov else None,
+        "age_class": behov["age_class"] if behov else None,
+        "season": data.season or (behov["season"] if behov else None),
+        "is_stock_order": data.is_stock_order,
+        "lines": order_lines, "notes": data.notes,
+        "status": "bestilt",  # bestilt | delvis_levert | levert | manko | restbestilling | arkivert
+        "manual_status": None, "manual_status_reason": None,
+        "status_history": [{"status": "bestilt", "at": now_iso(), "by": user.get("name"), "note": "Opprettet"}],
+        "pdf_versions": [],
+        "sent_at": None, "sent_to": None,
+        "total_amount": total,
+        "created_at": now_iso(), "created_by": user.get("name") or user.get("email"),
+        "ready_for_pickup_notified": False,
+    }
+    await db.purchase_orders.insert_one(doc)
+    if data.behovsskjema_id:
+        await db.behovsskjema.update_one({"id": data.behovsskjema_id, "tenant_id": tid},
+                                         {"$set": {"status": "bestilt"}})
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/orders")
+async def list_orders(request: Request, user=Depends(get_current_user),
+                      team_id: Optional[str] = None, supplier_id: Optional[str] = None,
+                      is_stock_order: Optional[bool] = None):
+    tid = await require_tenant(request, user)
+    q = {"tenant_id": tid}
+    if team_id: q["team_id"] = team_id
+    if supplier_id: q["supplier_id"] = supplier_id
+    if is_stock_order is not None: q["is_stock_order"] = is_stock_order
+    return await db.purchase_orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api.get("/orders/by-po/{po_number}")
+async def get_order_by_po(po_number: str, request: Request, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    o = await db.purchase_orders.find_one({"tenant_id": tid, "po_number": po_number}, {"_id": 0})
+    if not o:
+        raise HTTPException(404, "Fant ingen bestilling med dette nummeret")
+    return o
+
+
+class OrderReceiveLine(BaseModel):
+    line_id: str
+    quantity: int
+    comment: str = ""
+    confirm_over: bool = False
+
+
+class OrderReceiveIn(BaseModel):
+    receipts: List[OrderReceiveLine]
+    request_id: Optional[str] = None
+
+
+@api.post("/orders/{oid}/receive")
+async def receive_order(oid: str, data: OrderReceiveIn, request: Request, user=Depends(require_perm("inventory", "write"))):
+    tid = await require_tenant(request, user)
+    # idempotency
+    if data.request_id:
+        existing = await db.stock_receipts.find_one({"tenant_id": tid, "request_id": data.request_id}, {"_id": 0})
+        if existing:
+            return {"ok": True, "idempotent": True}
+    order = await db.purchase_orders.find_one({"id": oid, "tenant_id": tid})
+    if not order:
+        raise HTTPException(404, "Bestilling finnes ikke")
+    lines = order.get("lines") or []
+    updates = []
+    for rec in data.receipts:
+        if rec.quantity <= 0: continue
+        ln = next((l for l in lines if l["id"] == rec.line_id), None)
+        if not ln:
+            raise HTTPException(400, f"Fant ikke linje {rec.line_id}")
+        remaining = (ln.get("quantity") or 0) - (ln.get("received_quantity") or 0)
+        if rec.quantity > remaining and not rec.confirm_over:
+            raise HTTPException(400, f"Mottatt {rec.quantity} er mer enn restantall {remaining}. Bekreft med confirm_over.")
+        ln["received_quantity"] = (ln.get("received_quantity") or 0) + rec.quantity
+        ln["receipts"] = (ln.get("receipts") or []) + [{
+            "at": now_iso(), "by": user.get("name"), "quantity": rec.quantity, "comment": rec.comment,
+        }]
+        if ln["received_quantity"] >= (ln.get("quantity") or 0):
+            ln["line_status"] = "levert"; ln["delivered_at"] = now_iso()
+        else:
+            ln["line_status"] = "delvis_levert"
+        # Update inventory
+        if ln.get("item_id"):
+            item = await db.items.find_one({"id": ln["item_id"], "tenant_id": tid})
+            if item:
+                if item.get("is_clothing") or item.get("is_ball"):
+                    sizes = item.get("sizes") or []
+                    for s in sizes:
+                        if s.get("size") == ln.get("size"):
+                            s["quantity"] = int(s.get("quantity") or 0) + rec.quantity
+                            break
+                    new_total = sum(int(s.get("quantity") or 0) for s in sizes)
+                    await db.items.update_one({"id": ln["item_id"], "tenant_id": tid},
+                                              {"$set": {"sizes": sizes, "total_stock": new_total}})
+                else:
+                    await db.items.update_one({"id": ln["item_id"], "tenant_id": tid},
+                                              {"$inc": {"total_stock": rec.quantity}})
+        # Also log in stock_receipts for history
+        await db.stock_receipts.insert_one({
+            "id": new_id(), "tenant_id": tid, "request_id": data.request_id,
+            "item_id": ln.get("item_id"), "item_name": ln.get("item_name"),
+            "size": ln.get("size"), "jersey_number": ln.get("jersey_number"),
+            "quantity": rec.quantity, "qty_before": 0, "qty_after": 0,
+            "order_ref": order.get("po_number"), "comment": rec.comment,
+            "order_id": oid, "order_line_id": ln["id"],
+            "user_id": user.get("id"), "user_name": user.get("name"),
+            "created_at": now_iso(),
+        })
+        updates.append(ln["id"])
+    # Order status
+    all_lines = lines
+    total_q = sum(l.get("quantity") or 0 for l in all_lines)
+    recv_q = sum(l.get("received_quantity") or 0 for l in all_lines)
+    new_status = "bestilt"
+    if recv_q >= total_q and total_q > 0: new_status = "levert"
+    elif recv_q > 0: new_status = "delvis_levert"
+    status_entry = {"status": new_status, "at": now_iso(), "by": user.get("name"), "note": f"Mottak {len(updates)} linjer"}
+    await db.purchase_orders.update_one({"id": oid, "tenant_id": tid},
+                                        {"$set": {"lines": lines, "status": new_status},
+                                         "$push": {"status_history": status_entry}})
+    return {"ok": True, "status": new_status, "lines_updated": updates}
+
+
+class ManualStatusIn(BaseModel):
+    status: str
+    reason: str
+
+
+@api.post("/orders/{oid}/manual-status")
+async def set_manual_status(oid: str, data: ManualStatusIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    if not data.reason.strip():
+        raise HTTPException(400, "Begrunnelse er påkrevd ved manuell statusendring")
+    allowed = {"bestilt", "delvis_levert", "levert", "manko", "restbestilling", "arkivert"}
+    if data.status not in allowed:
+        raise HTTPException(400, "Ugyldig status")
+    order = await db.purchase_orders.find_one({"id": oid, "tenant_id": tid})
+    if not order:
+        raise HTTPException(404, "Fant ikke")
+    entry = {"status": data.status, "at": now_iso(), "by": user.get("name"),
+             "note": f"Manuell: {data.reason}", "manual": True, "from_status": order.get("status")}
+    await db.purchase_orders.update_one({"id": oid, "tenant_id": tid},
+                                        {"$set": {"status": data.status,
+                                                  "manual_status": data.status,
+                                                  "manual_status_reason": data.reason},
+                                         "$push": {"status_history": entry}})
+    return {"ok": True}
+
+
+@api.post("/orders/{oid}/resume-auto-status")
+async def resume_auto_status(oid: str, request: Request, user=Depends(require_perm("teams", "write"))):
+    tid = await require_tenant(request, user)
+    order = await db.purchase_orders.find_one({"id": oid, "tenant_id": tid})
+    if not order:
+        raise HTTPException(404, "Fant ikke")
+    lines = order.get("lines") or []
+    total_q = sum(l.get("quantity") or 0 for l in lines)
+    recv_q = sum(l.get("received_quantity") or 0 for l in lines)
+    auto = "bestilt"
+    if total_q > 0 and recv_q >= total_q: auto = "levert"
+    elif recv_q > 0: auto = "delvis_levert"
+    entry = {"status": auto, "at": now_iso(), "by": user.get("name"), "note": "Gjenopptok automatisk status"}
+    await db.purchase_orders.update_one({"id": oid, "tenant_id": tid},
+                                        {"$set": {"status": auto, "manual_status": None, "manual_status_reason": None},
+                                         "$push": {"status_history": entry}})
+    return {"ok": True, "status": auto}
+
+
+@api.get("/teams/{team_id}/purchase-history")
+async def team_purchase_history(team_id: str, request: Request, user=Depends(require_perm("teams", "read"))):
+    """Lagshistorikk: Total innkjøpspris per år og per måned."""
+    tid = await require_tenant(request, user)
+    orders = await db.purchase_orders.find({"tenant_id": tid, "team_id": team_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    years = {}
+    for o in orders:
+        try:
+            dt = datetime.fromisoformat(o.get("created_at").replace("Z", "+00:00") if o.get("created_at") else "")
+        except Exception:
+            continue
+        y = dt.year; m = dt.month
+        total = sum((ln.get("quantity") or 0) * (ln.get("unit_price") or 0) for ln in o.get("lines", []))
+        years.setdefault(y, {"year": y, "total": 0, "months": {i: 0 for i in range(1, 13)}, "orders": []})
+        years[y]["total"] += total
+        years[y]["months"][m] = (years[y]["months"][m] or 0) + total
+        years[y]["orders"].append({
+            "id": o["id"], "po_number": o["po_number"],
+            "supplier_name": o.get("supplier_name"), "status": o.get("status"),
+            "total": total, "created_at": o.get("created_at"),
+            "season": o.get("season"),
+        })
+    return {"years": sorted(years.values(), key=lambda x: -x["year"]), "orders": orders}
+
+
 app.include_router(api)
 
 app.add_middleware(
