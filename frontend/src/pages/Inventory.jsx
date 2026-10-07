@@ -18,7 +18,7 @@ import ViewQrDialog from "@/components/ViewQrDialog";
 import UpgradeCTA from "@/components/UpgradeCTA";
 import { compressImage } from "@/lib/imageUtils";
 
-const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null, supplier_id: "", supplier_number: "", supplier_name: "" };
+const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null, images: [], supplier_id: "", supplier_number: "", supplier_name: "" };
 
 export default function Inventory() {
   const { hasPerm, hasFeature } = useAuth();
@@ -59,26 +59,55 @@ export default function Inventory() {
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
-  const addSize = () => setForm({ ...form, sizes: [...form.sizes, { size: "", jersey_number: "X", quantity: 0, location: "", image_url: null }] });
+  const addSize = () => setForm({ ...form, sizes: [...form.sizes, { size: "", jersey_number: "X", quantity: 0, location: "", image_url: null, images: [] }] });
   const removeSize = (idx) => setForm({ ...form, sizes: form.sizes.filter((_, i) => i !== idx) });
   const updSize = (idx, key, val) => {
     const arr = [...form.sizes]; arr[idx] = { ...arr[idx], [key]: val }; setForm({ ...form, sizes: arr });
   };
 
+  const MAX_MAIN_IMAGES = 5;
+  const MAX_SIZE_IMAGES = 4;
+
   const handleMainImage = async (file) => {
     try {
       const url = await compressImage(file);
-      setForm((f) => ({ ...f, image_url: url }));
-      toast.success("Hovedbilde lastet opp");
+      setForm((f) => {
+        const imgs = [...(f.images || [])];
+        if (imgs.length >= MAX_MAIN_IMAGES) { toast.error(`Maks ${MAX_MAIN_IMAGES} bilder for hovedvare`); return f; }
+        imgs.push(url);
+        return { ...f, images: imgs, image_url: f.image_url || url };
+      });
+      toast.success("Bilde lagt til");
     } catch (e) { toast.error("Kunne ikke lese bildet"); }
+  };
+
+  const removeMainImage = (idx) => {
+    setForm((f) => {
+      const imgs = (f.images || []).filter((_, i) => i !== idx);
+      return { ...f, images: imgs, image_url: imgs[0] || null };
+    });
   };
 
   const handleSizeImage = async (idx, file) => {
     try {
       const url = await compressImage(file);
-      updSize(idx, "image_url", url);
+      const arr = [...form.sizes];
+      const s = { ...arr[idx] };
+      const imgs = [...(s.images || [])];
+      if (imgs.length >= MAX_SIZE_IMAGES) { toast.error(`Maks ${MAX_SIZE_IMAGES} bilder per størrelse`); return; }
+      imgs.push(url);
+      s.images = imgs; s.image_url = s.image_url || url;
+      arr[idx] = s; setForm({ ...form, sizes: arr });
       toast.success("Bilde lagt til størrelsen");
     } catch (e) { toast.error("Kunne ikke lese bildet"); }
+  };
+
+  const removeSizeImage = (idx, imgIdx) => {
+    const arr = [...form.sizes];
+    const s = { ...arr[idx] };
+    const imgs = (s.images || []).filter((_, i) => i !== imgIdx);
+    s.images = imgs; s.image_url = imgs[0] || null;
+    arr[idx] = s; setForm({ ...form, sizes: arr });
   };
 
   const exportInv = () => {
@@ -257,32 +286,33 @@ export default function Inventory() {
           </DialogHeader>
           <div className="space-y-3">
             {hasFeature("product_images") ? (
-              <div className="flex items-start gap-4 border border-slate-200 rounded-md p-3 bg-slate-50">
-                <div className="h-24 w-24 rounded-md overflow-hidden bg-white border border-slate-200 flex items-center justify-center shrink-0">
-                  {form.image_url ? (
-                    <img src={form.image_url} alt="Hovedbilde" className="h-full w-full object-cover" data-testid="main-image-preview" />
-                  ) : (
-                    <ImageIcon className="h-8 w-8 text-slate-300" />
-                  )}
-                </div>
-                <div className="flex-1">
-                  <Label className="text-sm font-semibold">Hovedbilde</Label>
-                  <p className="text-xs text-slate-500 mb-2">Vises i varetabellen og detaljvisning.</p>
-                  <div className="flex gap-2">
-                    <label className="inline-flex">
-                      <Button type="button" variant="outline" size="sm" asChild data-testid="upload-main-image-btn">
-                        <span className="cursor-pointer">
-                          <ImagePlus className="h-4 w-4 mr-1" />{form.image_url ? "Bytt bilde" : "Legg til bilde"}
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleMainImage(e.target.files[0])} />
-                        </span>
-                      </Button>
-                    </label>
-                    {form.image_url && (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, image_url: null })} data-testid="remove-main-image-btn">
-                        <ImageOff className="h-4 w-4 mr-1" />Fjern
-                      </Button>
-                    )}
+              <div className="border border-slate-200 rounded-md p-3 bg-slate-50">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <Label className="text-sm font-semibold">Bilder av varen (inntil {MAX_MAIN_IMAGES})</Label>
+                    <p className="text-xs text-slate-500">Første bilde vises i varetabellen og som hovedbilde.</p>
                   </div>
+                  <span className="text-xs text-slate-500">{(form.images || []).length}/{MAX_MAIN_IMAGES}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {(form.images || []).map((url, idx) => (
+                    <div key={idx} className="relative group h-20 w-20 rounded-md overflow-hidden bg-white border border-slate-200">
+                      <img src={url} alt={`Bilde ${idx+1}`} className="h-full w-full object-cover" data-testid={`main-image-${idx}`} />
+                      {idx === 0 && <span className="absolute top-0.5 left-0.5 bg-red-700 text-white text-[9px] px-1 rounded">HOVED</span>}
+                      <button type="button" onClick={() => removeMainImage(idx)} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded p-0.5 opacity-0 group-hover:opacity-100 transition" data-testid={`remove-main-image-${idx}`}>
+                        <ImageOff className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {(form.images || []).length < MAX_MAIN_IMAGES && (
+                    <label className="inline-flex cursor-pointer">
+                      <span className="h-20 w-20 rounded-md border-2 border-dashed border-slate-300 bg-white flex flex-col items-center justify-center text-slate-400 hover:border-red-500 hover:text-red-600 transition" data-testid="upload-main-image-btn">
+                        <ImagePlus className="h-5 w-5" />
+                        <span className="text-[10px] mt-0.5">Legg til</span>
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleMainImage(e.target.files[0])} />
+                      </span>
+                    </label>
+                  )}
                 </div>
               </div>
             ) : (
@@ -350,13 +380,25 @@ export default function Inventory() {
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end">
                         {hasFeature("product_images") && (
                           <div className="col-span-2 sm:col-span-1">
-                            <Label className="text-[11px] text-slate-500 mb-1 block">Bilde</Label>
-                            <label className="inline-flex cursor-pointer">
-                              <span className="h-10 w-10 rounded-md border border-slate-200 bg-white flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`size-image-btn-${idx}`}>
-                                {s.image_url ? <img src={s.image_url} alt="" className="h-full w-full object-cover" /> : <ImagePlus className="h-4 w-4 text-slate-400" />}
-                                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
-                              </span>
-                            </label>
+                            <Label className="text-[11px] text-slate-500 mb-1 block">Bilder ({(s.images || []).length}/{MAX_SIZE_IMAGES})</Label>
+                            <div className="flex flex-wrap gap-1">
+                              {(s.images || []).map((url, iidx) => (
+                                <div key={iidx} className="relative group h-10 w-10 rounded-md overflow-hidden border border-slate-200 bg-white">
+                                  <img src={url} alt="" className="h-full w-full object-cover" />
+                                  <button type="button" onClick={() => removeSizeImage(idx, iidx)} className="absolute inset-0 bg-black/0 hover:bg-black/50 text-white flex items-center justify-center opacity-0 hover:opacity-100 transition">
+                                    <ImageOff className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              ))}
+                              {(s.images || []).length < MAX_SIZE_IMAGES && (
+                                <label className="inline-flex cursor-pointer">
+                                  <span className="h-10 w-10 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center hover:border-red-500 transition" data-testid={`size-image-btn-${idx}`}>
+                                    <ImagePlus className="h-4 w-4 text-slate-400" />
+                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                                  </span>
+                                </label>
+                              )}
+                            </div>
                           </div>
                         )}
                         <div>
@@ -401,13 +443,25 @@ export default function Inventory() {
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
                           {hasFeature("product_images") && (
                             <div className="col-span-2 sm:col-span-1">
-                              <Label className="text-[11px] text-slate-500 mb-1 block">Bilde</Label>
-                              <label className="inline-flex cursor-pointer">
-                                <span className="h-10 w-10 rounded-md border border-slate-200 bg-white flex items-center justify-center overflow-hidden hover:border-red-500 transition" data-testid={`ball-size-image-btn-${idx}`}>
-                                  {s.image_url ? <img src={s.image_url} alt="" className="h-full w-full object-cover" /> : <ImagePlus className="h-4 w-4 text-slate-400" />}
-                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
-                                </span>
-                              </label>
+                              <Label className="text-[11px] text-slate-500 mb-1 block">Bilder ({(s.images || []).length}/{MAX_SIZE_IMAGES})</Label>
+                              <div className="flex flex-wrap gap-1">
+                                {(s.images || []).map((url, iidx) => (
+                                  <div key={iidx} className="relative group h-10 w-10 rounded-md overflow-hidden border border-slate-200 bg-white">
+                                    <img src={url} alt="" className="h-full w-full object-cover" />
+                                    <button type="button" onClick={() => removeSizeImage(idx, iidx)} className="absolute inset-0 bg-black/0 hover:bg-black/50 text-white flex items-center justify-center opacity-0 hover:opacity-100 transition">
+                                      <ImageOff className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                                {(s.images || []).length < MAX_SIZE_IMAGES && (
+                                  <label className="inline-flex cursor-pointer">
+                                    <span className="h-10 w-10 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center hover:border-red-500 transition" data-testid={`ball-size-image-btn-${idx}`}>
+                                      <ImagePlus className="h-4 w-4 text-slate-400" />
+                                      <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleSizeImage(idx, e.target.files[0])} />
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
                             </div>
                           )}
                           <div>

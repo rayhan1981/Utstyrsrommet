@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShoppingCart, Plus, FileText, Trash2, Download, Send, Package, Bell, FileDown, Pencil } from "lucide-react";
+import { ShoppingCart, Plus, FileText, Trash2, Download, Send, Package, Bell, FileDown, Pencil, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./Leverandorer";
 import OrderDialog from "@/components/OrderDialog";
@@ -30,6 +30,8 @@ export default function Bestillinger() {
   const [editSchema, setEditSchema] = useState(null);
   const [sendSchemaFor, setSendSchemaFor] = useState(null);
   const [sendForm, setSendForm] = useState({ recipient_email: "", recipient_name: "", message: "" });
+  const [sendOrderFor, setSendOrderFor] = useState(null);
+  const [sendOrderForm, setSendOrderForm] = useState({ to: "", cc: "", subject: "", message: "" });
   const [items, setItems] = useState([]);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
@@ -119,6 +121,30 @@ export default function Bestillinger() {
     const u = URL.createObjectURL(b);
     const a = document.createElement("a"); a.href = u; a.download = `bestilling_${o.po_number}.pdf`; a.click();
     URL.revokeObjectURL(u);
+  };
+
+  const openSendOrder = (o) => {
+    const sup = suppliers.find((s) => s.id === o.supplier_id);
+    setSendOrderFor(o);
+    setSendOrderForm({
+      to: sup?.email || "",
+      cc: "",
+      subject: `Bestilling ${o.po_number}`,
+      message: "",
+    });
+  };
+
+  const sendOrderEmail = async () => {
+    if (!sendOrderForm.to) { toast.error("Angi mottakers e-post"); return; }
+    try {
+      const payload = { to: sendOrderForm.to };
+      if (sendOrderForm.cc) payload.cc = sendOrderForm.cc;
+      if (sendOrderForm.subject) payload.subject = sendOrderForm.subject;
+      if (sendOrderForm.message) payload.message = sendOrderForm.message;
+      const { data } = await api.post(`/orders/${sendOrderFor.id}/send`, payload);
+      toast.success(`Bestilling sendt til ${data.sent_to}`);
+      setSendOrderFor(null); load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
   const openNotify = (o) => {
@@ -223,10 +249,14 @@ export default function Bestillinger() {
                     <TableCell><StatusBadge status={o.status} /></TableCell>
                     <TableCell className="text-right">
                       <Button size="sm" variant="outline" onClick={() => dlOrderPdf(o)} title="Last ned PDF"><FileDown className="h-3 w-3" /></Button>
+                      {!o.is_stock_order || o.supplier_id ? (
+                        <Button size="sm" variant="outline" onClick={() => openSendOrder(o)} className="ml-1 bg-sky-50 border-sky-300 text-sky-800" title="Send bestilling på e-post (PDF vedlagt)" data-testid={`send-order-${o.po_number}`}><Mail className="h-3 w-3" /></Button>
+                      ) : null}
                       {canNotify(o) && !o.ready_for_pickup_notified && (
                         <Button size="sm" variant="outline" onClick={() => openNotify(o)} className="ml-1 bg-emerald-50 border-emerald-300 text-emerald-800" title="Varsle lagleder" data-testid={`notify-${o.po_number}`}><Bell className="h-3 w-3" /></Button>
                       )}
                       {o.ready_for_pickup_notified && <span className="ml-1 text-xs text-emerald-700 font-semibold">✓ Varslet</span>}
+                      {o.sent_at && <span className="ml-1 text-[10px] text-slate-500">Sendt {new Date(o.sent_at).toLocaleDateString("nb-NO")}</span>}
                       <Button size="sm" variant="ghost" onClick={() => delOrder(o)} className="ml-1"><Trash2 className="h-3 w-3 text-red-600" /></Button>
                     </TableCell>
                   </TableRow>
@@ -295,6 +325,27 @@ export default function Bestillinger() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setSendSchemaFor(null)}>Avbryt</Button>
             <Button onClick={sendSchemaEmail} className="bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="confirm-send-schema"><Send className="h-4 w-4 mr-1" />Send e-post</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!sendOrderFor} onOpenChange={(o) => !o && setSendOrderFor(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send bestilling {sendOrderFor?.po_number} på e-post</DialogTitle>
+            <DialogDescription>PDF-bestillingen vedlegges automatisk. Kopi sendes til din e-post.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Mottakers e-post *</Label><Input type="email" value={sendOrderForm.to} onChange={(e) => setSendOrderForm({ ...sendOrderForm, to: e.target.value })} placeholder="post@leverandor.no" data-testid="send-order-to" /></div>
+            <div><Label>Kopi til (valgfri)</Label><Input type="email" value={sendOrderForm.cc} onChange={(e) => setSendOrderForm({ ...sendOrderForm, cc: e.target.value })} data-testid="send-order-cc" /></div>
+            <div><Label>Emne</Label><Input value={sendOrderForm.subject} onChange={(e) => setSendOrderForm({ ...sendOrderForm, subject: e.target.value })} data-testid="send-order-subject" /></div>
+            <div><Label>Melding (valgfri)</Label>
+              <textarea className="w-full border rounded-md p-2 min-h-[100px] text-sm" value={sendOrderForm.message} onChange={(e) => setSendOrderForm({ ...sendOrderForm, message: e.target.value })} data-testid="send-order-message" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendOrderFor(null)}>Avbryt</Button>
+            <Button onClick={sendOrderEmail} className="bg-sky-700 hover:bg-sky-800 text-white" data-testid="confirm-send-order"><Mail className="h-4 w-4 mr-1" />Send bestilling</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
