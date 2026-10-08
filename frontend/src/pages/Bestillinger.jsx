@@ -86,6 +86,19 @@ export default function Bestillinger() {
     }
   };
 
+  const quickSendSchema = async (schema) => {
+    const to = schema.recipient_email || schema.sent_to || window.prompt(`Send behovsskjema ${schema.po_number} til hvilken e-post?`, "");
+    if (!to || !to.trim()) return;
+    try {
+      const { data } = await api.post(`/behovsskjema/${schema.id}/send`, {
+        recipient_email: to.trim(),
+        recipient_name: schema.recipient_name || "",
+      });
+      toast.success(`Skjema sendt til ${data.sent_to} med Excel-vedlegg`);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   const openEditSchema = (schema) => {
     setEditSchema({
       ...schema,
@@ -217,10 +230,23 @@ export default function Bestillinger() {
                     <TableCell><StatusBadge status={s.status} /></TableCell>
                     <TableCell className="text-xs">{s.sent_at ? new Date(s.sent_at).toLocaleDateString("nb-NO") : "-"}</TableCell>
                     <TableCell className="text-right">
-                      <Button size="sm" variant="outline" onClick={() => openEditSchema(s)} className="ml-1" title="Rediger mottaker" data-testid={`edit-schema-${s.po_number}`}><Pencil className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="outline" onClick={() => downloadTemplate(s)} title="Last ned Excel-mal"><Download className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="outline" onClick={() => setOrderDialog(s)} className="ml-1 bg-emerald-50 border-emerald-300 text-emerald-800" title="Bestill behovsvarer" data-testid={`order-from-schema-${s.po_number}`}><ShoppingCart className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="ghost" onClick={() => delSchema(s)} className="ml-1"><Trash2 className="h-3 w-3 text-red-600" /></Button>
+                      <div className="inline-flex items-center gap-1 flex-wrap justify-end">
+                        <Button size="sm" variant="outline" onClick={() => openEditSchema(s)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5" data-testid={`edit-schema-${s.po_number}`}>
+                          <Pencil className="h-3 w-3" /><span className="text-[9px]">Rediger</span>
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => downloadTemplate(s)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                          <Download className="h-3 w-3" /><span className="text-[9px]">Last ned</span>
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => quickSendSchema(s)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-sky-50 border-sky-300 text-sky-800" data-testid={`send-schema-${s.po_number}`}>
+                          <Mail className="h-3 w-3" /><span className="text-[9px]">Send e-post</span>
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setOrderDialog(s)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-emerald-50 border-emerald-300 text-emerald-800" data-testid={`order-from-schema-${s.po_number}`}>
+                          <ShoppingCart className="h-3 w-3" /><span className="text-[9px]">Bestill</span>
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => delSchema(s)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                          <Trash2 className="h-3 w-3 text-red-600" /><span className="text-[9px] text-red-600">Slett</span>
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

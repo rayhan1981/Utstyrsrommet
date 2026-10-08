@@ -779,6 +779,13 @@ class StockCountLineIn(BaseModel):
     counted_quantity: int
 
 
+class StockManualAdjustIn(BaseModel):
+    item_id: str
+    size: Optional[str] = None
+    new_quantity: int
+    reason: str
+
+
 class CheckoutIn(BaseModel):
     plan: str
     origin_url: str
@@ -1922,6 +1929,42 @@ async def delete_user(user_id: str, request: Request, admin=Depends(require_admi
     return {"ok": True}
 
 
+async def _log_activity(tid: str, user: dict, action: str, description: str, meta: Optional[dict] = None):
+    """Lagre en aktivitetsoppføring i activity_log. Platform-eier logges ikke."""
+    if not tid or (user and user.get("role") == "platform_owner"):
+        return
+    try:
+        await db.activity_log.insert_one({
+            "id": new_id(), "tenant_id": tid, "at": now_iso(),
+            "action": action, "description": description,
+            "by": (user or {}).get("email"), "by_user_id": (user or {}).get("id"),
+            "by_name": (user or {}).get("name"),
+            "meta": meta or {},
+        })
+    except Exception as e:
+        logger.warning(f"activity_log skrivefeil: {e}")
+
+
+@api.get("/activity-log")
+async def get_activity_log(request: Request, limit: int = 10, user=Depends(get_current_user)):
+    tid = await require_tenant(request, user)
+    limit = max(1, min(int(limit or 10), 500))
+    rows = await db.activity_log.find({"tenant_id": tid}, {"_id": 0}).sort("at", -1).to_list(limit)
+    # Mix in last 50 loans and returns if activity_log er tomt (migration helper)
+    if not rows:
+        loans = await db.loans.find({"tenant_id": tid}, {"_id": 0}).sort("loan_date", -1).to_list(50)
+        for l in loans[:limit]:
+            action = "return_loan" if l.get("status") == "returned" else "create_loan"
+            desc = f"{'Returnert' if action == 'return_loan' else 'Utlånt'} {l.get('quantity')}× {l.get('item_name')}"
+            rows.append({
+                "id": l["id"], "tenant_id": tid,
+                "at": l.get("return_date") or l.get("loan_date"),
+                "action": action, "description": desc,
+                "by": None, "by_name": None, "meta": {"loan_id": l["id"]},
+            })
+    return rows
+
+
 # ===================== Database reset (per seksjon) =====================
 VALID_RESET_SECTIONS = ("inventory", "suppliers", "teams", "people", "users", "all")
 
@@ -2360,6 +2403,42 @@ async def _load_club_logo(tid: str):
     return None
 
 
+class DeleteVariantIn(BaseModel):
+    size: str
+    jersey_number: Optional[str] = None
+
+
+@api.post("/items/{item_id}/delete-variant")
+async def delete_item_variant(item_id: str, data: DeleteVariantIn, request: Request, user=Depends(require_perm("inventory", "admin"))):
+    """Slett én varelinje/variant (størrelse+draktnr) fra en vare. Beholder historikk."""
+    tid = await require_tenant(request, user)
+    item = await db.items.find_one({"id": item_id, "tenant_id": tid})
+    if not item:
+        raise HTTPException(404, "Vare ikke funnet")
+    if not (item.get("is_clothing") or item.get("is_ball")):
+        raise HTTPException(400, "Denne varen har ikke varianter – bruk Slett vare istedenfor")
+    # Hvis aktive utlån finnes på denne varianten
+    active = await db.loans.count_documents({
+        "tenant_id": tid, "item_id": item_id, "size": data.size, "status": "borrowed",
+    })
+    if active > 0:
+        raise HTTPException(409, f"Kan ikke slette: {active} aktive utlån bruker variant {data.size}. Returner dem først.")
+    sizes = item.get("sizes", [])
+    before = len(sizes)
+    sizes = [s for s in sizes if not (s.get("size") == data.size and (data.jersey_number is None or str(s.get("jersey_number") or "") == str(data.jersey_number)))]
+    if len(sizes) == before:
+        raise HTTPException(404, f"Variant {data.size} ikke funnet")
+    total_stock = sum(s.get("quantity", 0) for s in sizes)
+    await db.items.update_one({"id": item_id, "tenant_id": tid},
+                                {"$set": {"sizes": sizes, "total_stock": total_stock,
+                                           "has_qr": any(s.get("has_qr") for s in sizes)}})
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "delete_variant",
+                             f"Slettet variant {data.size} av {item.get('name')}",
+                             {"item_id": item_id, "size": data.size})
+    return {"ok": True, "remaining_sizes": len(sizes)}
+
+
 @api.get("/items/{item_id}/qr-images")
 async def get_item_qr_images(item_id: str, request: Request, user=Depends(require_perm("inventory", "read"))):
     """Returnerer alle genererte QR-koder for en vare som data-URLs for Vis QR-dialog."""
@@ -2412,7 +2491,25 @@ async def update_item(item_id: str, data: ItemIn, request: Request, user=Depends
 @api.delete("/items/{item_id}")
 async def delete_item(item_id: str, request: Request, user=Depends(require_perm("inventory", "admin"))):
     tid = await require_tenant(request, user)
+    item = await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "Vare ikke funnet")
+    # Block if active loans reference this item
+    active_loans = await db.loans.count_documents({
+        "tenant_id": tid, "item_id": item_id, "status": "borrowed",
+    })
+    if active_loans > 0:
+        raise HTTPException(409, f"Kan ikke slette «{item.get('name')}»: {active_loans} aktive utlån bruker denne varen. Returner dem først.")
+    # Block if open purchase orders reference this item (status not final)
+    pending_orders = await db.purchase_orders.count_documents({
+        "tenant_id": tid, "lines.item_id": item_id,
+        "status": {"$nin": ["levert", "arkivert", "annullert"]},
+    })
+    if pending_orders > 0:
+        raise HTTPException(409, f"Kan ikke slette «{item.get('name')}»: {pending_orders} åpne bestillinger inneholder denne varen. Fullfør eller arkiver bestillingene først.")
     await db.items.delete_one({"id": item_id, "tenant_id": tid})
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "delete_item", f"Slettet vare {item.get('name')}", {"item_id": item_id})
     return {"ok": True}
 
 
@@ -2575,12 +2672,16 @@ async def create_loan(data: LoanIn, request: Request, user=Depends(require_perm(
     await _adjust_stock(tid, data.item_id, -data.quantity, data.size)
 
     if charge > 0:
-        # Skyldig beløp styres av loan_target
         target = loan_doc["loan_target"]
         if target == "team" and data.team_id:
             await db.teams.update_one({"id": data.team_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
         elif target == "person" and data.person_id:
             await db.people.update_one({"id": data.person_id, "tenant_id": tid}, {"$inc": {"debt": charge}})
+    if user.get("role") != "platform_owner":
+        verb = "Utlevert" if data.mode == "handout" else "Utlånt"
+        await _log_activity(tid, user, "create_loan",
+                             f"{verb} {data.quantity}× {item.get('name')}" + (f" ({data.size})" if data.size else ""),
+                             {"loan_id": loan_doc["id"], "item_id": data.item_id, "team_id": data.team_id, "person_id": data.person_id})
     return _clean(loan_doc)
 
 
@@ -2606,7 +2707,12 @@ async def return_loan(loan_id: str, data: ReturnIn, request: Request, user=Depen
         await db.loans.update_one({"id": loan_id, "tenant_id": tid}, {"$set": {
             "status": "returned", "return_date": now_iso(),
             "received_by_person_id": data.received_by_person_id, "amount_owed": 0,
+            # for undo-support:
+            "returned_qty": qty, "returned_amount": owed_reduce,
+            "source_loan_id": None, "from_split": False,
         }})
+        if user.get("role") != "platform_owner":
+            await _log_activity(tid, user, "return_loan", f"Returnerte {qty}× {loan.get('item_name')}", {"loan_id": loan_id, "qty": qty})
         return {"ok": True, "status": "returned", "amount_owed": 0}
     else:
         remaining = loan["quantity"] - qty
@@ -2616,11 +2722,77 @@ async def return_loan(loan_id: str, data: ReturnIn, request: Request, user=Depen
         }})
         returned_doc = {**loan}
         returned_doc.pop("_id", None)
-        returned_doc.update({"id": new_id(), "quantity": qty, "status": "returned",
+        new_ret_id = new_id()
+        returned_doc.update({"id": new_ret_id, "quantity": qty, "status": "returned",
                              "return_date": now_iso(),
-                             "received_by_person_id": data.received_by_person_id, "amount_owed": 0})
+                             "received_by_person_id": data.received_by_person_id, "amount_owed": 0,
+                             "returned_qty": qty, "returned_amount": owed_reduce,
+                             "source_loan_id": loan_id, "from_split": True})
         await db.loans.insert_one(returned_doc)
-        return {"ok": True, "status": "partial", "amount_owed": new_owed}
+        if user.get("role") != "platform_owner":
+            await _log_activity(tid, user, "return_loan", f"Delvis retur {qty}× {loan.get('item_name')}", {"loan_id": loan_id, "qty": qty})
+        return {"ok": True, "status": "partial", "amount_owed": new_owed, "returned_loan_id": new_ret_id}
+
+
+class UndoReturnIn(BaseModel):
+    reason: str
+
+
+@api.post("/loans/{loan_id}/undo-return")
+async def undo_return(loan_id: str, data: UndoReturnIn, request: Request, user=Depends(require_perm("loans", "write"))):
+    """Reverser en registrert retur: gjenoppretter utlånet som borrowed og reverserer lagerøkningen."""
+    tid = await require_tenant(request, user)
+    loan = await db.loans.find_one({"id": loan_id, "tenant_id": tid})
+    if not loan:
+        raise HTTPException(404, "Retur ikke funnet")
+    if loan.get("status") != "returned":
+        raise HTTPException(400, "Dette utlånet er ikke registrert som returnert")
+    if loan.get("undo_return_reversed_at"):
+        raise HTTPException(409, "Denne returen er allerede reversert")
+    if not (data.reason or "").strip():
+        raise HTTPException(400, "Begrunnelse må oppgis")
+    qty = int(loan.get("returned_qty") or loan.get("quantity") or 0)
+    amt = float(loan.get("returned_amount") or loan.get("unit_price", 0) * qty or 0)
+    item = await db.items.find_one({"id": loan["item_id"], "tenant_id": tid})
+    if not item:
+        raise HTTPException(409, "Varen finnes ikke lenger – kan ikke reversere på lager")
+    # Konflikt: vi må kunne redusere lager uten å gå negativt
+    if loan.get("size") and (item.get("is_clothing") or item.get("is_ball")):
+        avail = next((s.get("quantity", 0) for s in item.get("sizes", []) if s["size"] == loan["size"]), 0)
+        if qty > avail:
+            raise HTTPException(409, f"Lagerkonflikt: størrelse {loan['size']} har kun {avail} på lager, kan ikke reversere {qty}. Juster lager eller returner varer først.")
+    else:
+        if qty > item.get("total_stock", 0):
+            raise HTTPException(409, f"Lagerkonflikt: kun {item.get('total_stock',0)} på lager, kan ikke reversere {qty}.")
+    # Reverser lager
+    await _adjust_stock(tid, loan["item_id"], -qty, loan.get("size"))
+    # Reverser gjeld
+    if amt > 0:
+        target = loan.get("loan_target") or ("team" if loan.get("team_id") else "person" if loan.get("person_id") else None)
+        if target == "team" and loan.get("team_id"):
+            await db.teams.update_one({"id": loan["team_id"], "tenant_id": tid}, {"$inc": {"debt": amt}})
+        elif target == "person" and loan.get("person_id"):
+            await db.people.update_one({"id": loan["person_id"], "tenant_id": tid}, {"$inc": {"debt": amt}})
+    # Hvis det var en splittet retur (fra delvis retur), slett den og legg mengden tilbake til source-lån
+    if loan.get("from_split") and loan.get("source_loan_id"):
+        source = await db.loans.find_one({"id": loan["source_loan_id"], "tenant_id": tid})
+        if source:
+            await db.loans.update_one({"id": source["id"], "tenant_id": tid}, {"$set": {
+                "quantity": source["quantity"] + qty,
+                "amount_owed": source.get("amount_owed", 0) + amt,
+            }})
+        await db.loans.delete_one({"id": loan_id, "tenant_id": tid})
+    else:
+        # Full retur reverseres til borrowed
+        await db.loans.update_one({"id": loan_id, "tenant_id": tid}, {"$set": {
+            "status": "borrowed", "return_date": None, "received_by_person_id": None,
+            "amount_owed": amt, "undo_return_reversed_at": now_iso(),
+            "undo_return_by": user.get("email"), "undo_return_reason": data.reason.strip(),
+        }})
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "undo_return", f"Reverserte retur av {qty}× {loan.get('item_name')}",
+                             {"loan_id": loan_id, "qty": qty, "reason": data.reason.strip()})
+    return {"ok": True, "restored_quantity": qty, "restored_amount": amt}
 
 
 @api.post("/loans/{loan_id}/extend")
@@ -3139,7 +3311,150 @@ async def apply_stock_count(count_id: str, request: Request, user=Depends(requir
         else:
             await db.items.update_one({"id": item["id"], "tenant_id": tid}, {"$set": {"total_stock": line["counted_quantity"]}})
     await db.stock_counts.update_one({"id": count_id, "tenant_id": tid}, {"$set": {"status": "applied", "applied_at": now_iso()}})
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "apply_stock_count",
+                             f"Anvendte varetelling «{sc.get('name')}»",
+                             {"count_id": count_id})
     return {"ok": True}
+
+
+@api.get("/stock-counts/{count_id}/export")
+async def export_stock_count(count_id: str, request: Request, user=Depends(require_perm("stock_audit", "read"))):
+    """Eksporter varetelling som Excel-telledokument. Åpen varetelling → tomt talt-felt.
+    Anvendt varetelling → ferdig utfylt. Inkluderer system-tall og lokasjon."""
+    tid = await require_feature(request, user, "stock_audit")
+    sc = await db.stock_counts.find_one({"id": count_id, "tenant_id": tid}, {"_id": 0})
+    if not sc:
+        raise HTTPException(404, "Varetelling ikke funnet")
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook(); ws = wb.active; ws.title = "Telledokument"
+    ws["A1"] = "UTSTYRSROMMET – Telledokument"
+    ws["A1"].font = Font(bold=True, size=14, color="7F1D1D")
+    ws["A2"] = f"Varetelling: {sc.get('name') or ''}"
+    ws["A3"] = f"Opprettet: {sc.get('created_at','')[:10]} · Status: {sc.get('status','')}"
+    ws["A4"] = "Fyll ut «Talt antall» og importer tilbake."
+    ws["A4"].font = Font(italic=True, size=10, color="555555")
+    headers = ["Linje-ID", "Lokasjon", "Varenavn", "Størrelse", "System", "Talt antall", "Diff", "Notat"]
+    for ci, h in enumerate(headers, start=1):
+        c = ws.cell(row=6, column=ci, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill(start_color="7F1D1D", end_color="7F1D1D", fill_type="solid")
+        c.alignment = Alignment(horizontal="center")
+    for ri, ln in enumerate(sc.get("lines", []), start=7):
+        ws.cell(row=ri, column=1, value=ln.get("line_id"))
+        ws.cell(row=ri, column=2, value=ln.get("location") or "")
+        ws.cell(row=ri, column=3, value=ln.get("item_name") or "")
+        ws.cell(row=ri, column=4, value=ln.get("size") or "")
+        ws.cell(row=ri, column=5, value=int(ln.get("system_quantity") or 0))
+        ws.cell(row=ri, column=6, value=ln.get("counted_quantity"))
+        diff = (ln.get("counted_quantity") - (ln.get("system_quantity") or 0)) if ln.get("counted_quantity") is not None else None
+        ws.cell(row=ri, column=7, value=diff)
+    widths = [36, 20, 32, 14, 10, 12, 10, 24]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64+i)].width = w
+    ws.column_dimensions["A"].hidden = True  # Linje-ID vises skjult; brukes ved import
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", sc.get("name") or "varetelling")
+    return _xlsx_response(wb, f"telledokument_{safe}.xlsx")
+
+
+@api.post("/stock-counts/{count_id}/import")
+async def import_stock_count(count_id: str, file: UploadFile = File(...),
+                              request: Request = None, user=Depends(require_perm("stock_audit", "write"))):
+    """Importer utfylt telledokument. Oppdaterer counted_quantity for linjer basert på line_id."""
+    tid = await require_feature(request, user, "stock_audit")
+    sc = await db.stock_counts.find_one({"id": count_id, "tenant_id": tid})
+    if not sc:
+        raise HTTPException(404, "Varetelling ikke funnet")
+    if sc.get("status") == "applied":
+        raise HTTPException(409, "Varetellingen er allerede anvendt – kan ikke importere på nytt.")
+    content = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        raise HTTPException(400, "Kunne ikke lese Excel-fil")
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < 7:
+        raise HTTPException(400, "Fil mangler data – fylte linjer starter på rad 7")
+    # Build line-id lookup
+    by_id = {ln.get("line_id"): ln for ln in sc.get("lines", [])}
+    updated = 0; errors = []
+    for ri, row in enumerate(rows[6:], start=7):
+        if not row or not row[0]:
+            continue
+        line_id = str(row[0]).strip()
+        ln = by_id.get(line_id)
+        if not ln:
+            errors.append({"row": ri, "error": f"Linje-ID {line_id} finnes ikke i tellingen"})
+            continue
+        counted = row[5] if len(row) > 5 else None
+        if counted is None or str(counted).strip() == "":
+            continue
+        try:
+            cq = int(counted)
+        except Exception:
+            errors.append({"row": ri, "error": f"Ugyldig talt antall «{counted}»"})
+            continue
+        if cq < 0:
+            errors.append({"row": ri, "error": "Talt antall må være 0 eller mer"})
+            continue
+        ln["counted_quantity"] = cq
+        ln["diff"] = cq - int(ln.get("system_quantity") or 0)
+        ln["counted_at"] = now_iso()
+        updated += 1
+    await db.stock_counts.update_one({"id": count_id, "tenant_id": tid}, {"$set": {"lines": sc["lines"]}})
+    return {"ok": True, "updated": updated, "errors": errors}
+
+
+@api.post("/stock/manual-adjust")
+async def stock_manual_adjust(data: StockManualAdjustIn, request: Request, user=Depends(require_perm("inventory", "write"))):
+    """Manuell justering av beholdning med påkrevd årsak. Logges i audit_log og stock_adjustments."""
+    tid = await require_tenant(request, user)
+    reason = (data.reason or "").strip()
+    if not reason or len(reason) < 3:
+        raise HTTPException(400, "Begrunnelse er påkrevd (minst 3 tegn)")
+    if int(data.new_quantity) < 0:
+        raise HTTPException(400, "Nytt antall må være 0 eller mer")
+    item = await db.items.find_one({"id": data.item_id, "tenant_id": tid})
+    if not item:
+        raise HTTPException(404, "Vare ikke funnet")
+    before = 0
+    if (item.get("is_clothing") or item.get("is_ball")) and data.size:
+        sizes = item.get("sizes", []); updated = False
+        for s in sizes:
+            if s.get("size") == data.size:
+                before = int(s.get("quantity") or 0)
+                s["quantity"] = int(data.new_quantity); updated = True
+        if not updated:
+            raise HTTPException(404, f"Variant {data.size} finnes ikke")
+        total = sum(int(s.get("quantity") or 0) for s in sizes)
+        await db.items.update_one({"id": item["id"], "tenant_id": tid},
+                                   {"$set": {"sizes": sizes, "total_stock": total}})
+    else:
+        before = int(item.get("total_stock") or 0)
+        await db.items.update_one({"id": item["id"], "tenant_id": tid},
+                                   {"$set": {"total_stock": int(data.new_quantity)}})
+    # Record audit log
+    adjustment_id = new_id()
+    await db.stock_adjustments.insert_one({
+        "id": adjustment_id, "tenant_id": tid,
+        "item_id": data.item_id, "item_name": item.get("name"),
+        "size": data.size, "before": before, "after": int(data.new_quantity),
+        "diff": int(data.new_quantity) - before, "reason": reason,
+        "user_email": user.get("email"), "user_name": user.get("name"),
+        "created_at": now_iso(),
+    })
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "stock_manual_adjust",
+                             f"Justerte {item.get('name')}{(' (' + data.size + ')') if data.size else ''}: {before} → {data.new_quantity} ({reason[:40]})",
+                             {"item_id": data.item_id, "before": before, "after": int(data.new_quantity)})
+    return {"ok": True, "adjustment_id": adjustment_id, "before": before, "after": int(data.new_quantity)}
+
+
+@api.get("/stock/adjustments")
+async def list_stock_adjustments(request: Request, user=Depends(require_perm("inventory", "read")), limit: int = 100):
+    tid = await require_tenant(request, user)
+    return await db.stock_adjustments.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 500))
 
 
 # ---------------- Exports ----------------

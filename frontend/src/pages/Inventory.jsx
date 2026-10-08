@@ -17,6 +17,7 @@ import GenerateQrDialog from "@/components/GenerateQrDialog";
 import ViewQrDialog from "@/components/ViewQrDialog";
 import UpgradeCTA from "@/components/UpgradeCTA";
 import { compressImage } from "@/lib/imageUtils";
+import { sortSizesNatural, naturalSizeKey } from "@/lib/sizeSort";
 
 const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null, images: [], supplier_id: "", supplier_number: "", supplier_name: "" };
 
@@ -54,9 +55,19 @@ export default function Inventory() {
   };
 
   const del = async (id) => {
-    if (!window.confirm("Slette denne varen?")) return;
+    if (!window.confirm("Slette denne varen? Varen kan ikke slettes hvis den har aktive utlån eller åpne bestillinger.")) return;
     try { await api.delete(`/items/${id}`); toast.success("Slettet"); load(); }
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const delVariant = async (item, size, jersey_number) => {
+    const label = `${size}${jersey_number && jersey_number !== "X" ? " #" + jersey_number : ""}`;
+    if (!window.confirm(`Slette varelinje ${label} av «${item.name}»?\n\nLinjen kan ikke slettes hvis den har aktive utlån.`)) return;
+    try {
+      await api.post(`/items/${item.id}/delete-variant`, { size, jersey_number });
+      toast.success(`Varelinje ${label} slettet`);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
   const addSize = () => setForm({ ...form, sizes: [...form.sizes, { size: "", jersey_number: "X", quantity: 0, location: "", image_url: null, images: [] }] });
@@ -206,7 +217,8 @@ export default function Inventory() {
         <DataTable
           rows={items.flatMap((i) => {
             if (i.is_clothing || i.is_ball) {
-              return (i.sizes || []).map((s, sidx) => ({
+              const sortedSizes = sortSizesNatural(i.sizes || [], (s) => s.size);
+              return sortedSizes.map((s, sidx) => ({
                 _id: `${i.id}__${sidx}`,
                 _parent: i,
                 _is_variant: true,
@@ -261,18 +273,36 @@ export default function Inventory() {
           actions={(r) => {
             const i = r._parent;
             return (
-            <>
+            <div className="flex items-center gap-1 flex-wrap justify-end">
               {hasFeature("qr_codes") && hasPerm("inventory", "write") && !r._is_variant && (
-                <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}>
-                  <QrCode className="h-3 w-3 mr-1" />QR
+                <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}
+                        className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                  <QrCode className="h-3.5 w-3.5" /><span className="text-[9px]">Opprett QR</span>
                 </Button>
               )}
-              {hasFeature("qr_codes") && anyQr(i) && (
-                <Button variant="ghost" size="icon" onClick={() => viewQr(i)} title="Vis QR"><Eye className="h-4 w-4 text-red-700" /></Button>
+              {hasFeature("qr_codes") && (
+                <Button variant="ghost" size="sm" onClick={() => viewQr(i)} data-testid={`view-qr-${i.id}`}
+                        className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                  <QrCode className="h-3.5 w-3.5 text-red-700" /><span className="text-[9px] text-red-700">Vis QR</span>
+                </Button>
               )}
-              {hasPerm("inventory", "write") && <Button variant="ghost" size="icon" onClick={() => openEdit(i)} title="Rediger"><Pencil className="h-4 w-4" /></Button>}
-              {hasPerm("inventory", "admin") && !r._is_variant && <Button variant="ghost" size="icon" onClick={() => del(i.id)} title="Slett"><Trash2 className="h-4 w-4 text-red-600" /></Button>}
-            </>
+              {hasPerm("inventory", "write") && (
+                <Button variant="ghost" size="sm" onClick={() => openEdit(i)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                  <Pencil className="h-3.5 w-3.5" /><span className="text-[9px]">Rediger</span>
+                </Button>
+              )}
+              {hasPerm("inventory", "admin") && r._is_variant && r.size && (
+                <Button variant="ghost" size="sm" onClick={() => delVariant(i, r.size, r.jersey_number)} data-testid={`del-variant-${i.id}-${r.size}`}
+                        className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                  <Trash2 className="h-3.5 w-3.5 text-red-600" /><span className="text-[9px] text-red-600">Slett linje</span>
+                </Button>
+              )}
+              {hasPerm("inventory", "admin") && !r._is_variant && (
+                <Button variant="ghost" size="sm" onClick={() => del(i.id)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                  <Trash2 className="h-3.5 w-3.5 text-red-600" /><span className="text-[9px] text-red-600">Slett vare</span>
+                </Button>
+              )}
+            </div>
             );
           }}
         />

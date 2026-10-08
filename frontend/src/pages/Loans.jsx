@@ -10,12 +10,68 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Plus, Undo2, Trash2, CalendarIcon } from "lucide-react";
-import { toast } from "sonner";
+import { Plus, Undo2, Trash2, CalendarIcon } from "lucide-react";import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
 import { nb } from "date-fns/locale";
 import { format } from "date-fns";
+
+/**
+ * Grupper returnerte utlån per «Lag (Årsklasse)». Ingen lag → "Uten lag".
+ */
+function ReturnedByTeamGrouped({ returned, teams, people, nok, undoReturn }) {
+  const groups = {};
+  returned.forEach((l) => {
+    const team = teams.find((t) => t.id === l.team_id);
+    const label = team ? `${team.team_name}${team.age_class ? " · " + team.age_class : ""}` : "Uten lag";
+    if (!groups[label]) groups[label] = [];
+    groups[label].push(l);
+  });
+  const sortedKeys = Object.keys(groups).sort();
+  return (
+    <div className="space-y-4" data-testid="returned-grouped">
+      {sortedKeys.map((grpKey) => (
+        <div key={grpKey} className="border border-slate-200 rounded-md overflow-hidden">
+          <div className="bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between">
+            <div className="font-semibold text-sm">{grpKey}</div>
+            <span className="text-xs text-slate-500">{groups[grpKey].length} retur{groups[grpKey].length === 1 ? "" : "er"}</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500 bg-slate-50/60 border-b border-slate-100">
+                <th className="px-3 py-2">Returnert</th>
+                <th className="px-3 py-2">Vare</th>
+                <th className="px-3 py-2 text-right">Antall</th>
+                <th className="px-3 py-2">Hentet av</th>
+                <th className="px-3 py-2">Mottatt av</th>
+                {undoReturn && <th className="px-3 py-2 text-right">Handling</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {groups[grpKey].map((l) => (
+                <tr key={l.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60" data-testid={`returned-row-${l.id}`}>
+                  <td className="px-3 py-2 text-xs">{l.return_date ? new Date(l.return_date).toLocaleDateString("nb-NO") : "-"}</td>
+                  <td className="px-3 py-2 font-semibold">{l.item_name}{l.size ? ` (${l.size})` : ""}{l.jersey_number && l.jersey_number !== "X" ? ` #${l.jersey_number}` : ""}</td>
+                  <td className="px-3 py-2 text-right">{l.quantity}</td>
+                  <td className="px-3 py-2 text-xs">{people.find((p) => p.id === l.person_id)?.name || "-"}</td>
+                  <td className="px-3 py-2 text-xs">{people.find((p) => p.id === l.received_by_person_id)?.name || "-"}</td>
+                  {undoReturn && (
+                    <td className="px-3 py-2 text-right">
+                      <Button variant="outline" size="sm" onClick={() => undoReturn(l)} data-testid={`undo-return-${l.id}`}
+                              className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                        <Trash2 className="h-3.5 w-3.5 text-red-600" /><span className="text-[9px] text-red-600">Slett retur</span>
+                      </Button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const newLine = () => ({
   item_id: "", quantity: 1, size: "", jersey_number: "",
@@ -148,6 +204,17 @@ export default function Loans() {
   };
   const openReturn = (l) => { setReturnFor(l); setReturnQty(l.quantity); setReturnBy(""); };
 
+  const undoReturn = async (l) => {
+    const label = `${l.item_name}${l.size ? " (" + l.size + ")" : ""} × ${l.quantity}`;
+    const reason = window.prompt(`Slette returen av ${label}?\n\nVarene legges tilbake som UTLÅN på laget, og lagerøkningen reverseres.\n\nBegrunnelse:`);
+    if (!reason || !reason.trim()) return;
+    try {
+      const { data } = await api.post(`/loans/${l.id}/undo-return`, { reason: reason.trim() });
+      toast.success(`Retur reversert – ${data.restored_quantity} stk tilbakeført`);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   const active = loans.filter((l) => l.status === "borrowed");
   const returned = loans.filter((l) => l.status === "returned");
 
@@ -201,8 +268,8 @@ export default function Loans() {
               searchPlaceholder="Søk vare, lag, person…"
               columns={loanColumns}
               actions={(l) => hasPerm("loans", "write") ? (
-                <Button variant="outline" size="sm" onClick={() => openReturn(l)} data-testid={`return-btn-${l.id}`}>
-                  <Undo2 className="h-3 w-3 mr-1" />Returner
+                <Button variant="outline" size="sm" onClick={() => openReturn(l)} data-testid={`return-btn-${l.id}`} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                  <Undo2 className="h-3.5 w-3.5" /><span className="text-[9px]">Returner</span>
                 </Button>
               ) : null}
             />
@@ -210,16 +277,17 @@ export default function Loans() {
         </TabsContent>
         <TabsContent value="returned">
           <Card className="p-3">
-            <DataTable
-              rows={returned}
-              emptyLabel="Ingen returnerte utlån."
-              searchPlaceholder="Søk vare, lag, person…"
-              columns={[
-                ...loanColumns,
-                { key: "return_date", label: "Returnert", filter: "text", render: (l) => l.return_date ? new Date(l.return_date).toLocaleDateString("nb-NO") : "-" },
-                { key: "received_by", label: "Mottatt av", filter: "text", accessor: (l) => people.find(p => p.id === l.received_by_person_id)?.name || "" },
-              ]}
-            />
+            {returned.length === 0 ? (
+              <div className="text-center text-slate-500 py-6 text-sm">Ingen returnerte utlån.</div>
+            ) : (
+              <ReturnedByTeamGrouped
+                returned={returned}
+                teams={teams}
+                people={people}
+                nok={nok}
+                undoReturn={hasPerm("loans", "write") ? undoReturn : null}
+              />
+            )}
           </Card>
         </TabsContent>
       </Tabs>

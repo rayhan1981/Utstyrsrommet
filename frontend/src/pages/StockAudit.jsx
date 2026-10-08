@@ -2,23 +2,36 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api, formatError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Check, Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, Check, Trash2, Download, Upload, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import { sortSizesNatural } from "@/lib/sizeSort";
 
 export default function StockAudit() {
   const { hasPerm } = useAuth();
   const [counts, setCounts] = useState([]);
+  const [items, setItems] = useState([]);
+  const [adjustments, setAdjustments] = useState([]);
   const [active, setActive] = useState(null);
   const [filter, setFilter] = useState("");
   const [draft, setDraft] = useState({}); // line_id -> input value
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustForm, setAdjustForm] = useState({ item_id: "", size: "", new_quantity: "", reason: "" });
+  const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
-    const { data } = await api.get("/stock-counts");
-    setCounts(data);
-    if (active) setActive(data.find((x) => x.id === active.id) || null);
+    const [c, i, a] = await Promise.all([
+      api.get("/stock-counts"),
+      api.get("/items").catch(() => ({ data: [] })),
+      api.get("/stock/adjustments").catch(() => ({ data: [] })),
+    ]);
+    setCounts(c.data); setItems(i.data || []); setAdjustments(a.data || []);
+    if (active) setActive(c.data.find((x) => x.id === active.id) || null);
   };
   useEffect(() => { load(); }, []);
 
@@ -62,6 +75,58 @@ export default function StockAudit() {
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
+  const exportTelledokument = (count) => {
+    const token = localStorage.getItem("utr_token");
+    fetch(`${BASE}/api/stock-counts/${count.id}/export`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => r.blob())
+      .then((b) => {
+        const u = URL.createObjectURL(b);
+        const a = document.createElement("a"); a.href = u;
+        a.download = `telledokument_${(count.name || "varetelling").replace(/\s+/g, "_")}.xlsx`;
+        a.click(); URL.revokeObjectURL(u);
+      });
+  };
+
+  const importTelledokument = async (count, file) => {
+    const fd = new FormData(); fd.append("file", file);
+    try {
+      const { data } = await api.post(`/stock-counts/${count.id}/import`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      if (data.errors && data.errors.length) {
+        toast.warning(`${data.updated} linjer oppdatert, ${data.errors.length} feil`);
+        console.warn("Importfeil:", data.errors);
+      } else {
+        toast.success(`${data.updated} tellelinjer importert`);
+      }
+      await load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const openAdjust = () => {
+    setAdjustForm({ item_id: "", size: "", new_quantity: "", reason: "" });
+    setAdjustOpen(true);
+  };
+
+  const submitAdjust = async () => {
+    if (!adjustForm.item_id) { toast.error("Velg vare"); return; }
+    if (adjustForm.new_quantity === "" || isNaN(parseInt(adjustForm.new_quantity))) { toast.error("Angi nytt antall"); return; }
+    if (!adjustForm.reason || adjustForm.reason.trim().length < 3) { toast.error("Begrunnelse er påkrevd (min 3 tegn)"); return; }
+    try {
+      const payload = {
+        item_id: adjustForm.item_id,
+        size: adjustForm.size || null,
+        new_quantity: parseInt(adjustForm.new_quantity),
+        reason: adjustForm.reason.trim(),
+      };
+      const { data } = await api.post("/stock/manual-adjust", payload);
+      toast.success(`Justert: ${data.before} → ${data.after}`);
+      setAdjustOpen(false); await load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const selectedAdjustItem = items.find((i) => i.id === adjustForm.item_id);
+  const needsSize = !!(selectedAdjustItem?.is_clothing || selectedAdjustItem?.is_ball);
+  const availableSizes = needsSize ? sortSizesNatural((selectedAdjustItem?.sizes || []), (s) => s.size) : [];
+
   const filteredLines = useMemo(() => {
     const lines = active?.lines || [];
     if (!filter.trim()) return lines;
@@ -79,9 +144,14 @@ export default function StockAudit() {
           <p className="text-slate-600 text-sm mt-1">Alle varer forhåndsutfylt – sortert på lokasjon og varenavn</p>
         </div>
         {hasPerm("stock_audit", "write") && (
-          <Button onClick={start} data-testid="start-count-btn" className="bg-red-900 hover:bg-red-800">
-            <Plus className="h-4 w-4 mr-2" />Start ny varetelling
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" onClick={openAdjust} data-testid="manual-adjust-btn">
+              <SlidersHorizontal className="h-4 w-4 mr-2" />Manuell justering
+            </Button>
+            <Button onClick={start} data-testid="start-count-btn" className="bg-red-900 hover:bg-red-800">
+              <Plus className="h-4 w-4 mr-2" />Start ny varetelling
+            </Button>
+          </div>
         )}
       </div>
 
@@ -99,6 +169,19 @@ export default function StockAudit() {
                 </div>
               </button>
               <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => exportTelledokument(c)} data-testid={`export-count-${c.id}`} className="flex items-center gap-1">
+                  <Download className="h-3 w-3" /><span className="text-xs">Eksporter</span>
+                </Button>
+                {c.status === "open" && hasPerm("stock_audit", "write") && (
+                  <label className="inline-flex">
+                    <Button variant="outline" size="sm" asChild data-testid={`import-count-${c.id}`}>
+                      <span className="cursor-pointer flex items-center gap-1">
+                        <Upload className="h-3 w-3" /><span className="text-xs">Importer</span>
+                        <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => e.target.files?.[0] && importTelledokument(c, e.target.files[0])} />
+                      </span>
+                    </Button>
+                  </label>
+                )}
                 <span className={`text-xs font-semibold px-2 py-1 rounded ${c.status === "applied" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
                   {c.status === "applied" ? "Anvendt" : "Åpen"}
                 </span>
@@ -120,8 +203,20 @@ export default function StockAudit() {
             </div>
             <div className="flex gap-2">
               <Input placeholder="Søk vare, lokasjon, str…" value={filter} onChange={(e) => setFilter(e.target.value)} className="max-w-xs" data-testid="count-filter" />
+              <Button variant="outline" onClick={() => exportTelledokument(active)} data-testid="export-active-btn">
+                <Download className="h-4 w-4 mr-1" />Eksporter telledokument
+              </Button>
               {active.status === "open" && hasPerm("stock_audit", "write") && (
-                <Button onClick={apply} data-testid="apply-count-btn" className="bg-red-900 hover:bg-red-800"><Check className="h-4 w-4 mr-1" />Anvend og juster beholdning</Button>
+                <>
+                  <label className="inline-flex">
+                    <Button variant="outline" asChild data-testid="import-active-btn">
+                      <span className="cursor-pointer"><Upload className="h-4 w-4 mr-1" />Importer varetelling
+                        <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => e.target.files?.[0] && importTelledokument(active, e.target.files[0])} />
+                      </span>
+                    </Button>
+                  </label>
+                  <Button onClick={apply} data-testid="apply-count-btn" className="bg-red-900 hover:bg-red-800"><Check className="h-4 w-4 mr-1" />Anvend og juster beholdning</Button>
+                </>
               )}
             </div>
           </div>
@@ -182,6 +277,104 @@ export default function StockAudit() {
           </div>
         </Card>
       )}
+
+      {/* Justeringshistorikk */}
+      <Card className="p-4">
+        <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4 text-red-700" />
+          Siste manuelle justeringer
+        </h3>
+        {adjustments.length === 0 ? (
+          <div className="text-sm text-slate-500 py-2">Ingen manuelle justeringer ennå.</div>
+        ) : (
+          <div className="border border-slate-200 rounded-md overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Dato</TableHead>
+                  <TableHead>Vare</TableHead>
+                  <TableHead>Str</TableHead>
+                  <TableHead className="text-right">Før</TableHead>
+                  <TableHead className="text-right">Etter</TableHead>
+                  <TableHead className="text-right">Diff</TableHead>
+                  <TableHead>Begrunnelse</TableHead>
+                  <TableHead>Bruker</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {adjustments.slice(0, 25).map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell className="text-xs">{new Date(a.created_at).toLocaleString("nb-NO")}</TableCell>
+                    <TableCell className="font-semibold">{a.item_name}</TableCell>
+                    <TableCell>{a.size || "-"}</TableCell>
+                    <TableCell className="text-right">{a.before}</TableCell>
+                    <TableCell className="text-right">{a.after}</TableCell>
+                    <TableCell className={`text-right font-semibold ${a.diff === 0 ? "" : "text-red-700"}`}>{a.diff > 0 ? `+${a.diff}` : a.diff}</TableCell>
+                    <TableCell className="text-xs max-w-[260px] truncate" title={a.reason}>{a.reason}</TableCell>
+                    <TableCell className="text-xs">{a.user_name || a.user_email}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </Card>
+
+      {/* Manuell justering-dialog */}
+      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Manuell justering av beholdning</DialogTitle>
+            <DialogDescription>Begrunnelse er påkrevd og lagres i justeringshistorikken.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Vare *</Label>
+              <Select value={adjustForm.item_id} onValueChange={(v) => setAdjustForm({ ...adjustForm, item_id: v, size: "" })}>
+                <SelectTrigger data-testid="adjust-item-select"><SelectValue placeholder="Velg vare" /></SelectTrigger>
+                <SelectContent>
+                  {items.map((i) => (
+                    <SelectItem key={i.id} value={i.id}>{i.name}{i.category ? ` – ${i.category}` : ""}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {needsSize && (
+              <div>
+                <Label>Størrelse *</Label>
+                <Select value={adjustForm.size} onValueChange={(v) => setAdjustForm({ ...adjustForm, size: v })}>
+                  <SelectTrigger data-testid="adjust-size-select"><SelectValue placeholder="Velg størrelse" /></SelectTrigger>
+                  <SelectContent>
+                    {availableSizes.map((s) => (
+                      <SelectItem key={s.size} value={s.size}>
+                        {s.size} (nå: {s.quantity}){s.jersey_number && s.jersey_number !== "X" ? ` – #${s.jersey_number}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div>
+              <Label>Nytt antall *</Label>
+              <Input type="number" min="0" value={adjustForm.new_quantity} onChange={(e) => setAdjustForm({ ...adjustForm, new_quantity: e.target.value })} data-testid="adjust-qty-input" />
+            </div>
+            <div>
+              <Label>Begrunnelse * (min 3 tegn)</Label>
+              <textarea
+                className="w-full border rounded-md p-2 min-h-[80px] text-sm"
+                placeholder="F.eks. svinn, skadet vare, ekstern donasjon…"
+                value={adjustForm.reason}
+                onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })}
+                data-testid="adjust-reason-input"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdjustOpen(false)}>Avbryt</Button>
+            <Button onClick={submitAdjust} className="bg-red-900 hover:bg-red-800" data-testid="confirm-adjust-btn">Utfør justering</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

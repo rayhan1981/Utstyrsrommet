@@ -1,11 +1,12 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Link, NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users as UsersIcon, UserCircle, Package, ArrowLeftRight,
   ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2, QrCode,
-  ChevronDown, ChevronRight, SlidersHorizontal, PackagePlus, Truck, ShoppingCart,
+  ChevronDown, ChevronRight, SlidersHorizontal, PackagePlus, Truck, ShoppingCart, ClipboardList,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import NotificationCenter from "@/components/NotificationCenter";
 import TrialBanner from "@/components/TrialBanner";
@@ -14,6 +15,7 @@ const PRIMARY_NAV = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard, module: "dashboard", feature: null },
   { to: "/app/utstyr", label: "Utstyr", icon: Package, module: "inventory", feature: null },
   { to: "/app/varemottak", label: "Varemottak", icon: PackagePlus, module: "inventory", feature: null },
+  { to: "/app/behov", label: "Behov og behovsmeldinger", icon: ClipboardList, module: "teams", feature: null },
   { to: "/app/bestillinger", label: "Bestillinger", icon: ShoppingCart, module: "teams", feature: null },
   { to: "/app/leverandorer", label: "Leverandører", icon: Truck, module: "inventory", feature: null },
   { to: "/app/utlan", label: "Utlån & Retur", icon: ArrowLeftRight, module: "loans", feature: null },
@@ -34,6 +36,13 @@ const ADMIN_NAV = [
 ];
 
 export default function Layout() {
+  const [clubLogo, setClubLogo] = useState("");
+  useEffect(() => {
+    api.get("/clubs").then((r) => {
+      const c = (r.data || [])[0];
+      if (c?.logo_url) setClubLogo(c.logo_url);
+    }).catch(() => {});
+  }, []);
   const { user, customer, plan, impersonating, logout, hasPerm, hasFeature, stopImpersonate } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
@@ -81,8 +90,13 @@ export default function Layout() {
               {isOwner && !impersonating && <Crown className="h-3 w-3 text-amber-700" />}
               {isOwner && !impersonating ? "Plattformeier - din klubb" : "Kunde"}
             </div>
-            <div className="font-semibold text-sm truncate">{customer.club_name}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Kundenr: <span className="font-mono font-semibold">{customer.customer_number}</span></div>
+            <div className="flex items-center gap-2 mt-1">
+              {clubLogo && <img src={clubLogo} alt={customer.club_name} className="h-9 w-9 rounded-full object-cover border border-slate-300 shrink-0" data-testid="sidebar-club-logo" />}
+              <div className="min-w-0">
+                <div className="font-semibold text-sm truncate">{customer.club_name}</div>
+                <div className="text-xs text-slate-500">Kundenr: <span className="font-mono font-semibold">{customer.customer_number}</span></div>
+              </div>
+            </div>
             {plan && <div className="mt-1 inline-block text-xs font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-800">{plan.name}</div>}
           </div>
         )}
@@ -107,7 +121,7 @@ export default function Layout() {
             </div>
           )}
           {primary.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === "/app"} data-testid={`nav-${n.module || "sub"}`} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
+            <NavLink key={n.to} to={n.to} end={n.to === "/app"} data-testid={`nav-${(n.to.split("/").pop()) || n.module || "sub"}`} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
               <n.icon className="h-4 w-4" />{n.label}
             </NavLink>
           ))}

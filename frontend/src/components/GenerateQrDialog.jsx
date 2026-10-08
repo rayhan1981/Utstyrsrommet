@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { QrCode } from "lucide-react";
+import { sortSizesNatural } from "@/lib/sizeSort";
 
 /**
  * Dialog for å generere QR-koder for en spesifikk vare.
@@ -16,7 +17,7 @@ export default function GenerateQrDialog({ open, onOpenChange, item, onDone }) {
   const [selectedSizes, setSelectedSizes] = useState([]);
 
   const sized = !!(item && (item.is_clothing || item.is_ball));
-  const sizes = item?.sizes || [];
+  const sizes = sortSizesNatural(item?.sizes || [], (s) => s.size);
 
   useEffect(() => {
     if (!open || !item) return;

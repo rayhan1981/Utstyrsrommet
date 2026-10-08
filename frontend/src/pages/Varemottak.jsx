@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PackagePlus, Camera, CheckCircle2, QrCode, Search } from "lucide-react";
 import { toast } from "sonner";
+import { sortSizesNatural } from "@/lib/sizeSort";
 
 export default function Varemottak() {
   const [items, setItems] = useState([]);
@@ -39,7 +40,20 @@ export default function Varemottak() {
       (i.sub_group || "").toLowerCase().includes(q) ||
       (i.sizes || []).some((s) => (s.size || "").toLowerCase().includes(q))
     );
-  }).slice(0, 50);
+  }).slice(0, 200);
+
+  // Gruppere matches per Kategori → Hovedgruppe for ryddigere oversikt
+  const matchesGrouped = (() => {
+    const groups = {};
+    matches.forEach((i) => {
+      const cat = (i.category || "Uten kategori").trim() || "Uten kategori";
+      const grp = (i.main_group || "Uten hovedgruppe").trim() || "Uten hovedgruppe";
+      const key = `${cat} · ${grp}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(i);
+    });
+    return Object.keys(groups).sort().map((k) => ({ key: k, items: groups[k] }));
+  })();
 
   const pickItem = (i, size = null, jersey_number = null) => {
     setPicked({ item: i, size, jersey_number });
@@ -153,7 +167,7 @@ export default function Varemottak() {
               }}>
                 <SelectTrigger data-testid="receipt-size-select"><SelectValue placeholder="Velg størrelse" /></SelectTrigger>
                 <SelectContent>
-                  {(picked.item.sizes || []).map((s) => (
+                  {sortSizesNatural((picked.item.sizes || []), (s) => s.size).map((s) => (
                     <SelectItem key={`${s.size}-${s.jersey_number || ""}`} value={s.size}>
                       {s.size}{picked.item.is_clothing && s.jersey_number && s.jersey_number !== "X" ? ` · #${s.jersey_number}` : ""} (lager: {s.quantity})
                     </SelectItem>
@@ -199,37 +213,44 @@ export default function Varemottak() {
             </TabsList>
             <TabsContent value="list" className="pt-4 space-y-3">
               <Input placeholder="Søk varenavn, kategori, størrelse…" value={search} onChange={(e) => setSearch(e.target.value)} data-testid="receipt-search" />
-              <div className="max-h-[460px] overflow-y-auto border border-slate-200 rounded-md">
-                <Table>
-                  <TableHeader><TableRow><TableHead>Vare</TableHead><TableHead>Kategori</TableHead><TableHead>Varianter</TableHead><TableHead></TableHead></TableRow></TableHeader>
-                  <TableBody>
-                    {matches.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-slate-500 py-6">Ingen treff</TableCell></TableRow>}
-                    {matches.map((i) => (
-                      <TableRow key={i.id}>
-                        <TableCell className="font-semibold">{i.name}</TableCell>
-                        <TableCell className="text-xs text-slate-600">{i.category || "-"}</TableCell>
-                        <TableCell className="text-xs">
-                          {(i.is_clothing || i.is_ball) ? (
-                            <div className="flex flex-wrap gap-1">
-                              {(i.sizes || []).map((s) => (
-                                <button key={`${s.size}-${s.jersey_number || ""}`}
-                                        onClick={() => pickItem(i, s.size, s.jersey_number)}
-                                        className="text-xs px-2 py-0.5 rounded bg-slate-100 hover:bg-red-100 hover:text-red-800">
-                                  {s.size}{i.is_clothing && s.jersey_number && s.jersey_number !== "X" ? `·#${s.jersey_number}` : ""} ({s.quantity})
-                                </button>
-                              ))}
-                            </div>
-                          ) : <span className="text-slate-500">Lager: {i.total_stock}</span>}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {!(i.is_clothing || i.is_ball) && (
-                            <Button size="sm" variant="outline" onClick={() => pickItem(i)}>Velg</Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <p className="text-xs text-slate-500">💡 Varer gruppert etter Kategori · Hovedgruppe. Klikk størrelse for å velge variant.</p>
+              <div className="max-h-[520px] overflow-y-auto space-y-3">
+                {matchesGrouped.length === 0 && <div className="text-center text-slate-500 py-6 border border-dashed rounded-md">Ingen treff</div>}
+                {matchesGrouped.map((g) => (
+                  <div key={g.key} className="border border-slate-200 rounded-md overflow-hidden">
+                    <div className="bg-red-50/60 border-b border-red-100 px-3 py-2 font-semibold text-xs text-red-900">{g.key} <span className="text-slate-500">({g.items.length})</span></div>
+                    <Table>
+                      <TableHeader><TableRow><TableHead>Vare</TableHead><TableHead>Undergruppe</TableHead><TableHead>Varianter / Beholdning</TableHead><TableHead></TableHead></TableRow></TableHeader>
+                      <TableBody>
+                        {g.items.map((i) => (
+                          <TableRow key={i.id}>
+                            <TableCell className="font-semibold">{i.name}</TableCell>
+                            <TableCell className="text-xs text-slate-600">{i.sub_group || "-"}</TableCell>
+                            <TableCell className="text-xs">
+                              {(i.is_clothing || i.is_ball) ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {sortSizesNatural((i.sizes || []), (s) => s.size).map((s) => (
+                                    <button key={`${s.size}-${s.jersey_number || ""}`}
+                                            onClick={() => pickItem(i, s.size, s.jersey_number)}
+                                            className="text-xs px-2 py-0.5 rounded bg-slate-100 hover:bg-red-100 hover:text-red-800"
+                                            data-testid={`pick-variant-${i.id}-${s.size}`}>
+                                      {s.size}{i.is_clothing && s.jersey_number && s.jersey_number !== "X" ? `·#${s.jersey_number}` : ""} ({s.quantity})
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : <span className="text-slate-500">Lager: {i.total_stock}</span>}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {!(i.is_clothing || i.is_ball) && (
+                                <Button size="sm" variant="outline" onClick={() => pickItem(i)} data-testid={`pick-item-${i.id}`}>Velg</Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ))}
               </div>
             </TabsContent>
             <TabsContent value="qr" className="pt-4 space-y-3">

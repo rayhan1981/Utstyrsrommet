@@ -12,6 +12,7 @@ import { Plus, Trash2, CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 import { nb } from "date-fns/locale";
 import { format } from "date-fns";
+import { sortSizesNatural } from "@/lib/sizeSort";
 
 const newLine = () => ({ item_id: "", quantity: 1, size: "", jersey_number: "", due_date: null, notes: "" });
 const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
@@ -266,7 +267,7 @@ export default function LoanDialog({ open, onOpenChange, items = [], teams = [],
                             setLines(arr);
                           }}>
                             <SelectTrigger aria-label="Velg størrelse"><SelectValue placeholder="Str" /></SelectTrigger>
-                            <SelectContent>{(item.sizes || []).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} ({s.quantity})</SelectItem>)}</SelectContent>
+                            <SelectContent>{sortSizesNatural((item.sizes || []), (s) => s.size).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} ({s.quantity})</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
                       )}

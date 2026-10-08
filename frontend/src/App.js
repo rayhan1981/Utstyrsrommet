@@ -23,6 +23,7 @@ import Scan from "@/pages/Scan";
 import Varemottak from "@/pages/Varemottak";
 import Leverandorer from "@/pages/Leverandorer";
 import Bestillinger from "@/pages/Bestillinger";
+import Behov from "@/pages/Behov";
 import Terms from "@/pages/Terms";
 import { Toaster } from "sonner";
 
@@ -52,6 +53,7 @@ function App() {
             <Route path="varemottak" element={<ProtectedRoute module="inventory"><Varemottak /></ProtectedRoute>} />
             <Route path="leverandorer" element={<ProtectedRoute module="inventory"><Leverandorer /></ProtectedRoute>} />
             <Route path="bestillinger" element={<ProtectedRoute module="teams"><Bestillinger /></ProtectedRoute>} />
+            <Route path="behov" element={<ProtectedRoute module="teams"><Behov /></ProtectedRoute>} />
           </Route>
           <Route path="/eier" element={<Navigate to="/app/kunder" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
