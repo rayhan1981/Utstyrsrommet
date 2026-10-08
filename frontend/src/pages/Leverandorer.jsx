@@ -7,13 +7,16 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Pencil, Trash2, Truck, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Truck, Search, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
+import StockOrderDialog from "@/components/StockOrderDialog";
+import OrderActionDialog from "@/components/OrderActionDialog";
 
 const EMPTY = { name: "", address: "", postal_code: "", city: "", country: "Norge", email: "", phone: "", contact_person: "", org_number: "", notes: "", active: true };
 
 export default function Leverandorer() {
   const [list, setList] = useState([]);
+  const [items, setItems] = useState([]);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -21,8 +24,16 @@ export default function Leverandorer() {
   const [detailFor, setDetailFor] = useState(null);
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState("");
+  const [quickOrderFor, setQuickOrderFor] = useState(null);
+  const [actionOrder, setActionOrder] = useState(null);
 
-  const load = () => api.get("/suppliers").then((r) => setList(r.data));
+  const load = async () => {
+    const [a, b] = await Promise.all([
+      api.get("/suppliers"),
+      api.get("/items").catch(() => ({ data: [] })),
+    ]);
+    setList(a.data); setItems(b.data || []);
+  };
   useEffect(() => { load(); }, []);
 
   const openNew = () => { setEditId(null); setForm(EMPTY); setOpen(true); };
@@ -92,8 +103,26 @@ export default function Leverandorer() {
                 <TableCell className="text-xs">{s.email}<br/>{s.phone}</TableCell>
                 <TableCell><span className={`text-xs font-semibold px-2 py-0.5 rounded ${s.active === false ? "bg-slate-200 text-slate-600" : "bg-emerald-100 text-emerald-800"}`}>{s.active === false ? "Deaktivert" : "Aktiv"}</span></TableCell>
                 <TableCell className="text-right">
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(s)}><Pencil className="h-4 w-4" /></Button>
-                  <Button variant="ghost" size="icon" onClick={() => del(s)}><Trash2 className="h-4 w-4 text-red-600" /></Button>
+                  <div className="inline-flex items-center gap-1 flex-wrap justify-end">
+                    {s.active !== false && (
+                      <Button variant="outline" size="sm" onClick={() => setQuickOrderFor(s)}
+                              className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-emerald-50 border-emerald-300 text-emerald-800"
+                              data-testid={`quick-order-${s.supplier_number}`}
+                              title={`Opprett ny bestilling for ${s.name} (kun varer knyttet til denne leverandøren)`}>
+                        <ShoppingCart className="h-3.5 w-3.5" /><span className="text-[9px]">Bestill varer</span>
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => openEdit(s)}
+                            className="flex flex-col items-center h-auto py-1 px-2 gap-0.5"
+                            data-testid={`edit-supplier-${s.supplier_number}`}>
+                      <Pencil className="h-3.5 w-3.5" /><span className="text-[9px]">Rediger</span>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => del(s)}
+                            className="flex flex-col items-center h-auto py-1 px-2 gap-0.5"
+                            data-testid={`del-supplier-${s.supplier_number}`}>
+                      <Trash2 className="h-3.5 w-3.5 text-red-600" /><span className="text-[9px] text-red-600">Slett</span>
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -149,6 +178,27 @@ export default function Leverandorer() {
           <DialogFooter><Button variant="outline" onClick={() => setDetailFor(null)}>Lukk</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <StockOrderDialog
+        open={!!quickOrderFor}
+        onClose={() => setQuickOrderFor(null)}
+        suppliers={list}
+        items={items}
+        lockedSupplierId={quickOrderFor?.id}
+        onDone={(data) => {
+          setQuickOrderFor(null);
+          // data = { id, po_number, ... } fra POST /orders. Vi trenger supplier-ref for e-post-default.
+          setActionOrder({ order: data, supplier: quickOrderFor });
+          load();
+        }}
+      />
+
+      <OrderActionDialog
+        open={!!actionOrder}
+        order={actionOrder?.order}
+        supplier={actionOrder?.supplier}
+        onClose={() => setActionOrder(null)}
+      />
     </div>
   );
 }

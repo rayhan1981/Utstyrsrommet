@@ -7,10 +7,11 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClipboardList, Plus, Trash2, Download, Mail, ShoppingCart, Pencil } from "lucide-react";
+import { ClipboardList, Plus, Trash2, Download, Mail, ShoppingCart, Pencil, Upload, CheckCircle2, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./Leverandorer";
 import OrderDialog from "@/components/OrderDialog";
+import EditBehovLinesDialog from "@/components/EditBehovLinesDialog";
 
 /**
  * Dedikert side for Behov og behovsmeldinger.
@@ -24,22 +25,25 @@ export default function Behov() {
   const [teams, setTeams] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [seasons, setSeasons] = useState([]);
+  const [items, setItems] = useState([]);
   const [newOpen, setNewOpen] = useState(false);
   const [newForm, setNewForm] = useState({ team_id: "", season: "" });
   const [editSchema, setEditSchema] = useState(null);
+  const [editLinesSchema, setEditLinesSchema] = useState(null);
   const [sendFor, setSendFor] = useState(null);
   const [sendForm, setSendForm] = useState({ recipient_email: "", recipient_name: "", message: "" });
   const [orderDialog, setOrderDialog] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
-    const [a, c, d, e] = await Promise.all([
+    const [a, c, d, e, f] = await Promise.all([
       api.get("/behovsskjema"),
       api.get("/teams"),
       api.get("/suppliers"),
       api.get("/needs/seasons"),
+      api.get("/items").catch(() => ({ data: [] })),
     ]);
-    setSchemas(a.data); setTeams(c.data); setSuppliers(d.data); setSeasons(e.data.seasons);
+    setSchemas(a.data); setTeams(c.data); setSuppliers(d.data); setSeasons(e.data.seasons); setItems(f.data || []);
   };
   useEffect(() => { load(); }, []);
 
@@ -109,6 +113,31 @@ export default function Behov() {
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
+  const importFilled = async (schema, file) => {
+    if (!file) return;
+    const fd = new FormData(); fd.append("file", file);
+    try {
+      const { data } = await api.post(`/behovsskjema/${schema.id}/import`, fd,
+                                       { headers: { "Content-Type": "multipart/form-data" } });
+      const errText = data.errors && data.errors.length ? ` – ${data.errors.length} advarsler` : "";
+      toast.success(`Importerte ${data.total} linjer${errText}. Åpner redigering…`);
+      // Re-last skjemaet og åpne editor
+      const { data: fresh } = await api.get("/behovsskjema");
+      const updated = fresh.find((s) => s.id === schema.id);
+      setSchemas(fresh);
+      if (updated) setEditLinesSchema(updated);
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const unlock = async (schema) => {
+    if (!window.confirm(`Låse opp ${schema.po_number}? Bekreftet behov slettes og linjene kan redigeres igjen.`)) return;
+    try {
+      await api.post(`/behovsskjema/${schema.id}/unlock`);
+      toast.success("Behovsskjema låst opp – kan redigeres igjen");
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   return (
     <div className="space-y-5" data-testid="behov-page">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -163,6 +192,32 @@ export default function Behov() {
                     <Button size="sm" variant="outline" onClick={() => openSend(s)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-sky-50 border-sky-300 text-sky-800" data-testid={`send-behov-${s.po_number}`}>
                       <Mail className="h-3 w-3" /><span className="text-[9px]">Send e-post</span>
                     </Button>
+                    {s.status !== "bekreftet" && (
+                      <label className="inline-flex">
+                        <Button size="sm" variant="outline" asChild data-testid={`import-behov-${s.po_number}`}
+                                className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-amber-50 border-amber-300 text-amber-800">
+                          <span className="cursor-pointer">
+                            <Upload className="h-3 w-3 inline-block" /><span className="text-[9px] block">Importer utfylt</span>
+                            <input type="file" accept=".xlsx,.xls" className="hidden"
+                                   onChange={(e) => e.target.files?.[0] && importFilled(s, e.target.files[0])} />
+                          </span>
+                        </Button>
+                      </label>
+                    )}
+                    {(s.status === "importert" || (s.draft_lines || []).length > 0) && s.status !== "bekreftet" && (
+                      <Button size="sm" variant="outline" onClick={() => setEditLinesSchema(s)}
+                              className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-indigo-50 border-indigo-300 text-indigo-800"
+                              data-testid={`edit-lines-${s.po_number}`}>
+                        <Pencil className="h-3 w-3" /><span className="text-[9px]">Rediger linjer</span>
+                      </Button>
+                    )}
+                    {s.status === "bekreftet" && (
+                      <Button size="sm" variant="outline" onClick={() => unlock(s)}
+                              className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-slate-100 border-slate-300"
+                              data-testid={`unlock-behov-${s.po_number}`}>
+                        <Unlock className="h-3 w-3" /><span className="text-[9px]">Lås opp</span>
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => setOrderDialog(s)} className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-emerald-50 border-emerald-300 text-emerald-800" data-testid={`order-from-behov-${s.po_number}`}>
                       <ShoppingCart className="h-3 w-3" /><span className="text-[9px]">Bestill</span>
                     </Button>
@@ -255,6 +310,14 @@ export default function Behov() {
       </Dialog>
 
       <OrderDialog open={!!orderDialog} onClose={() => setOrderDialog(null)} schema={orderDialog} suppliers={suppliers} onDone={() => load()} />
+      <EditBehovLinesDialog
+        open={!!editLinesSchema}
+        schema={editLinesSchema}
+        items={items}
+        onClose={() => setEditLinesSchema(null)}
+        onSaved={() => load()}
+        onConfirmed={() => { setEditLinesSchema(null); load(); }}
+      />
     </div>
   );
 }

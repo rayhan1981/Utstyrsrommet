@@ -11,7 +11,7 @@ import { toast } from "sonner";
 
 const nok = (v) => (v || 0).toLocaleString("nb-NO", { style: "currency", currency: "NOK", maximumFractionDigits: 0 });
 
-export default function StockOrderDialog({ open, onClose, suppliers, items, onDone }) {
+export default function StockOrderDialog({ open, onClose, suppliers, items, onDone, lockedSupplierId }) {
   const [supplierId, setSupplierId] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [lines, setLines] = useState([]);
@@ -21,7 +21,8 @@ export default function StockOrderDialog({ open, onClose, suppliers, items, onDo
 
   useEffect(() => {
     if (!open) { setSupplierId(""); setLines([]); setDeliveryDate(""); setNotes(""); }
-  }, [open]);
+    else if (lockedSupplierId) { setSupplierId(lockedSupplierId); }
+  }, [open, lockedSupplierId]);
 
   const addLine = (item) => {
     if (!item) return;
@@ -62,12 +63,15 @@ export default function StockOrderDialog({ open, onClose, suppliers, items, onDo
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto" data-testid="stock-order-dialog">
-        <DialogHeader><DialogTitle>+ Opprett ny lagerordre</DialogTitle><DialogDescription>Lagerbestilling – ikke knyttet til et lag</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>+ Opprett ny lagerordre{lockedSupplierId ? ` for #${suppliers.find((s) => s.id === lockedSupplierId)?.supplier_number || ""} ${suppliers.find((s) => s.id === lockedSupplierId)?.name || ""}` : ""}</DialogTitle>
+          <DialogDescription>{lockedSupplierId ? "Kun varer knyttet til denne leverandøren kan velges." : "Lagerbestilling – ikke knyttet til et lag"}</DialogDescription>
+        </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <Label>Leverandør</Label>
-              <Select value={supplierId} onValueChange={(v) => { setSupplierId(v); setLines([]); }}>
+              <Label>Leverandør{lockedSupplierId && " (låst)"}</Label>
+              <Select value={supplierId} onValueChange={(v) => { setSupplierId(v); setLines([]); }} disabled={!!lockedSupplierId}>
                 <SelectTrigger data-testid="stock-supplier-select"><SelectValue placeholder="Velg leverandør" /></SelectTrigger>
                 <SelectContent>
                   {suppliers.filter((s) => s.active !== false).map((s) => (

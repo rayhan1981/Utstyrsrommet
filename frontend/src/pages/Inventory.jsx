@@ -147,6 +147,28 @@ export default function Inventory() {
   const generateQr = (item) => setGenFor(item);
   const viewQr = (item) => setViewFor(item);
 
+  /**
+   * Direkte-generer QR for én spesifikk varelinje (variant eller enkeltvare).
+   * Kan kun kalles én gang pr linje – backend ignorerer re-generering men UI blokkerer også.
+   */
+  const generateQrForLine = async (row) => {
+    if (row._has_qr) {
+      toast.info("QR-kode finnes allerede for denne varelinjen – kan ikke genereres på nytt");
+      return;
+    }
+    const i = row._parent;
+    const label = row._is_variant
+      ? `${i.name} (${row.size || "–"}${row.jersey_number && row.jersey_number !== "X" ? " · #" + row.jersey_number : ""})`
+      : i.name;
+    if (!window.confirm(`Generer QR-kode for ${label}?\n\nQR-koden kan kun genereres én gang pr varelinje.`)) return;
+    try {
+      const body = row._is_variant && row.size ? { sizes: [row.size] } : {};
+      await api.post(`/items/${i.id}/generate-qr`, body);
+      toast.success(`QR-kode generert for ${label}`);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   const bulkGenerateQr = async () => {
     if (!window.confirm("Aktiver QR-koder for ALLE varer og størrelser som ikke har det ennå?")) return;
     try {
@@ -222,6 +244,7 @@ export default function Inventory() {
                 _id: `${i.id}__${s.size || "nosize"}__${s.jersey_number || "x"}__${sidx}`,
                 _parent: i,
                 _is_variant: true,
+                _has_qr: !!s.has_qr,
                 id: i.id,
                 image_url: s.image_url || i.image_url,
                 name: i.name,
@@ -237,7 +260,7 @@ export default function Inventory() {
               }));
             }
             return [{
-              _id: i.id, _parent: i, _is_variant: false,
+              _id: i.id, _parent: i, _is_variant: false, _has_qr: !!i.has_qr,
               id: i.id, image_url: i.image_url, name: i.name,
               category: i.category || "", main_group: i.main_group || "",
               sub_group: i.sub_group || "", type: "vare",
@@ -276,11 +299,21 @@ export default function Inventory() {
             const i = r._parent;
             return (
             <div className="flex items-center gap-1 flex-wrap justify-end">
-              {hasFeature("qr_codes") && hasPerm("inventory", "write") && !r._is_variant && (
-                <Button variant="outline" size="sm" onClick={() => generateQr(i)} data-testid={`gen-qr-${i.id}`}
-                        className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
-                  <QrCode className="h-3.5 w-3.5" /><span className="text-[9px]">Opprett QR</span>
-                </Button>
+              {hasFeature("qr_codes") && hasPerm("inventory", "write") && (
+                r._has_qr ? (
+                  <Button variant="outline" size="sm" disabled
+                          data-testid={`gen-qr-done-${r._id}`}
+                          title="QR-kode er allerede generert for denne varelinjen"
+                          className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 opacity-60 cursor-not-allowed">
+                    <QrCode className="h-3.5 w-3.5 text-emerald-700" /><span className="text-[9px] text-emerald-700">✓ QR laget</span>
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => generateQrForLine(r)}
+                          data-testid={`gen-qr-line-${r._id}`}
+                          className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 bg-red-50 hover:bg-red-100 border-red-200 text-red-800">
+                    <QrCode className="h-3.5 w-3.5" /><span className="text-[9px]">Generer QR</span>
+                  </Button>
+                )
               )}
               {hasFeature("qr_codes") && (
                 <Button variant="ghost" size="sm" onClick={() => viewQr(i)} data-testid={`view-qr-${i.id}`}

@@ -2304,14 +2304,6 @@ async def create_item(data: ItemIn, request: Request, user=Depends(require_perm(
         for s in doc.get("sizes", []):
             s["images"] = (s.get("images") or [])[:4]
             if s["images"] and not s.get("image_url"): s["image_url"] = s["images"][0]
-    # Auto-mark has_qr for new items on Deluxe plan
-    if is_deluxe:
-        if doc.get("is_clothing") or doc.get("is_ball"):
-            for s in doc.get("sizes", []):
-                s["has_qr"] = True
-            doc["has_qr"] = True  # samle-flag: all sizes har QR
-        else:
-            doc["has_qr"] = True
     doc.update({"id": new_id(), "tenant_id": tid, "created_at": now_iso()})
     await db.items.insert_one(doc)
     return _clean(doc)
@@ -2355,6 +2347,10 @@ async def generate_item_qr(item_id: str, data: GenerateQrIn, request: Request, u
     if item.get("is_clothing") or item.get("is_ball"):
         sizes = item.get("sizes", [])
         chosen = set(data.sizes) if data.sizes is not None else {s["size"] for s in sizes}
+        # Blokker re-generering: QR kan kun lages én gang pr varelinje
+        already_locked = [s["size"] for s in sizes if s["size"] in chosen and s.get("has_qr")]
+        if already_locked:
+            raise HTTPException(409, f"QR-kode finnes allerede for størrelse(r) {', '.join(already_locked)}. Hver varelinje kan kun ha én QR-kode.")
         for s in sizes:
             if s["size"] in chosen:
                 s["has_qr"] = True
@@ -2362,6 +2358,8 @@ async def generate_item_qr(item_id: str, data: GenerateQrIn, request: Request, u
         item["has_qr"] = any(s.get("has_qr") for s in sizes)
         await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"sizes": sizes, "has_qr": item["has_qr"]}})
     else:
+        if item.get("has_qr"):
+            raise HTTPException(409, "QR-kode finnes allerede for denne varen. Hver vare kan kun ha én QR-kode.")
         await db.items.update_one({"id": item_id, "tenant_id": tid}, {"$set": {"has_qr": True}})
         item["has_qr"] = True
     return _clean(item)
@@ -4602,6 +4600,196 @@ async def delete_behovsskjema(sid: str, request: Request, user=Depends(require_p
         await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": {"status": "arkivert"}})
         return {"ok": True, "archived": True}
     await db.behovsskjema.delete_one({"id": sid, "tenant_id": tid})
+    return {"ok": True}
+
+
+@api.post("/behovsskjema/{sid}/import")
+async def import_behovsskjema(sid: str, file: UploadFile = File(...), request: Request = None,
+                                user=Depends(require_perm("teams", "write"))):
+    """Importer utfylt Excel-behovsskjema tilbake. Parser linjer og lagrer som draft_lines
+    som kan redigeres i app før bekreftelse. Status settes til 'importert'."""
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+    if not bs:
+        raise HTTPException(404, "Fant ikke")
+    if bs.get("status") == "bekreftet":
+        raise HTTPException(409, "Behovsskjema er allerede bekreftet – kan ikke importeres på nytt. Slett bekreftelsen først.")
+    content = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        raise HTTPException(400, "Kunne ikke lese Excel-fil")
+    ws = wb.active
+    file_team_id = str(ws["B7"].value or "").strip()
+    file_season = str(ws["B6"].value or "").strip()
+    if file_team_id and file_team_id != bs["team_id"]:
+        raise HTTPException(400, f"Filen tilhører et annet lag enn behovsskjemaet. Last ned riktig mal på nytt.")
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    items_by_name = {i["name"].lower(): i for i in items if i.get("name")}
+    draft_lines = []; errors = []
+    for ridx, row in enumerate(ws.iter_rows(min_row=10, values_only=True), start=10):
+        if row is None or all(v is None or (isinstance(v, str) and not v.strip()) for v in (row[:6] if row else [])):
+            continue
+        vtype = (str(row[0]) if row[0] else "").strip()
+        iname = (str(row[1]) if row[1] else "").strip()
+        size = (str(row[2]) if row[2] else "").strip()
+        jersey = (str(row[3]) if row[3] else "").strip()
+        qty_raw = row[4] if len(row) > 4 else None
+        comment = (str(row[5]) if len(row) > 5 and row[5] else "").strip()
+        line_err = []
+        if vtype and vtype not in NEED_RULES:
+            line_err.append(f"Ukjent varetype «{vtype}»")
+        rule = NEED_RULES.get(vtype, {})
+        try:
+            qty = int(qty_raw) if qty_raw not in (None, "") else 0
+        except Exception:
+            qty = 0; line_err.append("Antall må være heltall")
+        if rule and (qty < rule.get("min", 1) or qty > rule.get("max", 50)):
+            line_err.append(f"Antall {qty} ugyldig for {vtype} (må være {rule.get('min')}-{rule.get('max')})")
+        if rule.get("size_required") and not size:
+            line_err.append("Størrelse er påkrevd")
+        if rule.get("jersey_required") and not jersey:
+            line_err.append("Draktnummer er påkrevd")
+        it = items_by_name.get(iname.lower()) if iname else None
+        if not iname:
+            line_err.append("Vare mangler")
+        elif not it:
+            line_err.append(f"Fant ikke vare «{iname}» i katalogen")
+        draft_lines.append({
+            "line_id": new_id(),
+            "row": ridx, "item_type": vtype, "item_name": iname,
+            "item_id": it["id"] if it else None,
+            "size": size or None, "jersey_number": jersey or None,
+            "quantity": qty, "comment": comment, "errors": line_err,
+        })
+        if line_err:
+            errors.extend([f"Rad {ridx}: {e}" for e in line_err])
+    await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": {
+        "status": "importert", "imported_at": now_iso(),
+        "last_import_file": file.filename, "draft_lines": draft_lines,
+        "import_season": file_season or bs.get("season"),
+    }})
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "import_behovsskjema",
+                             f"Importerte utfylt behovsskjema {bs.get('po_number')} ({len(draft_lines)} linjer, {len(errors)} feil)",
+                             {"sid": sid, "lines": len(draft_lines)})
+    return {"ok": True, "lines": draft_lines, "errors": errors, "total": len(draft_lines)}
+
+
+@api.put("/behovsskjema/{sid}/lines")
+async def update_behovsskjema_lines(sid: str, data: dict, request: Request,
+                                     user=Depends(require_perm("teams", "write"))):
+    """Erstatt draft_lines med redigert liste. Lar bruker endre antall, str, draktnr, kommentar, vare."""
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+    if not bs:
+        raise HTTPException(404, "Fant ikke")
+    if bs.get("status") == "bekreftet":
+        raise HTTPException(409, "Behovsskjema er bekreftet – kan ikke redigeres. Slett bekreftelsen først.")
+    raw_lines = data.get("lines") or []
+    items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    items_by_id = {i["id"]: i for i in items}
+    items_by_name = {i["name"].lower(): i for i in items if i.get("name")}
+    clean = []
+    for ln in raw_lines:
+        it = None
+        if ln.get("item_id"):
+            it = items_by_id.get(ln["item_id"])
+        if not it and ln.get("item_name"):
+            it = items_by_name.get(ln["item_name"].lower())
+        line_err = []
+        qty = int(ln.get("quantity") or 0)
+        vtype = (ln.get("item_type") or "").strip()
+        rule = NEED_RULES.get(vtype, {})
+        if vtype and vtype not in NEED_RULES:
+            line_err.append(f"Ukjent varetype «{vtype}»")
+        if rule and (qty < rule.get("min", 1) or qty > rule.get("max", 50)):
+            line_err.append(f"Antall {qty} ugyldig for {vtype}")
+        if rule.get("size_required") and not ln.get("size"):
+            line_err.append("Størrelse er påkrevd")
+        if rule.get("jersey_required") and not ln.get("jersey_number"):
+            line_err.append("Draktnummer er påkrevd")
+        if not it:
+            line_err.append("Vare finnes ikke i katalogen")
+        clean.append({
+            "line_id": ln.get("line_id") or new_id(),
+            "item_type": vtype, "item_name": it.get("name") if it else (ln.get("item_name") or ""),
+            "item_id": it["id"] if it else None,
+            "size": (ln.get("size") or "").strip() or None,
+            "jersey_number": (str(ln.get("jersey_number") or "")).strip() or None,
+            "quantity": qty, "comment": (ln.get("comment") or "").strip(),
+            "errors": line_err,
+        })
+    await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": {"draft_lines": clean}})
+    return {"ok": True, "lines": clean, "total": len(clean), "errors_count": sum(1 for l in clean if l["errors"])}
+
+
+@api.post("/behovsskjema/{sid}/confirm")
+async def confirm_behovsskjema(sid: str, request: Request, user=Depends(require_perm("teams", "write"))):
+    """Bekreft behovsskjema som fullført behov for laget. Oppretter team_needs-rad og
+    låser behovsskjemaet med status='bekreftet'. Krever at alle linjer er feilfrie."""
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+    if not bs:
+        raise HTTPException(404, "Fant ikke")
+    if bs.get("status") == "bekreftet":
+        raise HTTPException(409, "Behovsskjema er allerede bekreftet")
+    draft_lines = bs.get("draft_lines") or []
+    if not draft_lines:
+        raise HTTPException(400, "Ingen linjer å bekrefte – importer utfylt skjema først")
+    err_count = sum(1 for l in draft_lines if l.get("errors"))
+    if err_count:
+        raise HTTPException(400, f"{err_count} linjer har valideringsfeil – fiks dem før du bekrefter")
+    season = bs.get("import_season") or bs.get("season")
+    # Fjern eventuelle tidligere bekreftede behov for samme lag+sesong
+    await db.team_needs.delete_many({"tenant_id": tid, "team_id": bs["team_id"], "season": season,
+                                      "behovsskjema_id": sid})
+    confirmed_lines = []
+    for ln in draft_lines:
+        confirmed_lines.append({
+            "id": new_id(),
+            "item_type": ln.get("item_type"),
+            "item_id": ln.get("item_id"),
+            "item_name": ln.get("item_name"),
+            "size": ln.get("size"),
+            "jersey_number": ln.get("jersey_number"),
+            "quantity": int(ln.get("quantity") or 0),
+            "comment": ln.get("comment") or "",
+            "original_item_id": ln.get("item_id"),
+        })
+    doc = {
+        "id": new_id(), "tenant_id": tid, "team_id": bs["team_id"], "season": season,
+        "behovsskjema_id": sid, "behovsskjema_po": bs.get("po_number"),
+        "filename": bs.get("last_import_file") or "", "lines": confirmed_lines,
+        "imported_by": user.get("name") or user.get("email"), "created_at": now_iso(),
+    }
+    await db.team_needs.insert_one(doc)
+    await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": {
+        "status": "bekreftet", "confirmed_at": now_iso(),
+        "confirmed_by": user.get("name") or user.get("email"),
+        "team_need_id": doc["id"],
+    }})
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "confirm_behovsskjema",
+                             f"Bekreftet behovsskjema {bs.get('po_number')} som behov for {bs.get('team_name')} ({len(confirmed_lines)} linjer)",
+                             {"sid": sid, "team_need_id": doc["id"]})
+    return {"ok": True, "team_need_id": doc["id"], "lines_count": len(confirmed_lines)}
+
+
+@api.post("/behovsskjema/{sid}/unlock")
+async def unlock_behovsskjema(sid: str, request: Request, user=Depends(require_perm("teams", "admin"))):
+    """Fjern bekreftelsen slik at linjene kan redigeres igjen. Fjerner tilhørende team_needs-rad."""
+    tid = await require_tenant(request, user)
+    bs = await db.behovsskjema.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
+    if not bs:
+        raise HTTPException(404, "Fant ikke")
+    if bs.get("status") != "bekreftet":
+        raise HTTPException(400, "Behovsskjema er ikke bekreftet")
+    if bs.get("team_need_id"):
+        await db.team_needs.delete_one({"id": bs["team_need_id"], "tenant_id": tid})
+    await db.behovsskjema.update_one({"id": sid, "tenant_id": tid}, {"$set": {
+        "status": "importert", "confirmed_at": None, "confirmed_by": None, "team_need_id": None,
+    }})
     return {"ok": True}
 
 
