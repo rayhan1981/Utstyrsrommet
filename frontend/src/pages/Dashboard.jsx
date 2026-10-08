@@ -88,7 +88,7 @@ export default function Dashboard() {
 
       {/* Hurtignavigasjon */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <NavTile icon={Building2} title="KLUBB" subtitle="Logo, kontaktinfo og klubbinnstillinger" to="/app/klubb" testid="nav-tile-klubb" />
+        <NavTile icon={Building2} title="KLUBB" subtitle="Logo, kontaktinfo og klubbinnstillinger" to="/app/innstillinger" testid="nav-tile-klubb" />
         <NavTile icon={UserCircle} title="PERSONER" subtitle="Medlemmer, spillere og trenere" to="/app/personer" testid="nav-tile-personer" />
         <NavTile icon={Users2} title="LAG" subtitle="Lag, trenere og lagledere" to="/app/lag" testid="nav-tile-lag" />
       </div>
