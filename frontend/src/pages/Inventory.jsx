@@ -348,6 +348,10 @@ export default function Inventory() {
           <DialogHeader>
             <DialogTitle>{editId ? "Rediger vare" : "Nytt utstyr"}</DialogTitle>
             <DialogDescription>Legg til varen med kategori, pris, beholdning og lokasjon.</DialogDescription>
+            <div className="flex gap-2 pt-3 border-t border-slate-100 mt-2">
+              <Button variant="outline" onClick={() => setOpen(false)} data-testid="cancel-item-top">Avbryt</Button>
+              <Button onClick={save} data-testid="save-item-top" className="bg-red-900 hover:bg-red-800">Lagre vare</Button>
+            </div>
           </DialogHeader>
           <div className="space-y-3">
             {hasFeature("product_images") ? (
@@ -485,7 +489,13 @@ export default function Inventory() {
                             <Label className="text-[11px] text-slate-500 mb-1 block">Lokasjon</Label>
                             <Input placeholder="B2" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
                           </div>
-                          <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)} title="Fjern linje"><X className="h-4 w-4 text-red-600" /></Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => removeSize(idx)}
+                                  className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 border-red-200 bg-red-50 hover:bg-red-100"
+                                  data-testid={`del-size-${idx}`}
+                                  title="Slett denne varelinjen">
+                            <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                            <span className="text-[9px] text-red-700">Slett str</span>
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -549,7 +559,13 @@ export default function Inventory() {
                               <Label className="text-[11px] text-slate-500 mb-1 block">Lokasjon</Label>
                               <Input placeholder="Ballbur" value={s.location || ""} onChange={(e) => updSize(idx, "location", e.target.value)} />
                             </div>
-                            <Button type="button" variant="ghost" size="icon" onClick={() => removeSize(idx)} title="Fjern linje"><X className="h-4 w-4 text-red-600" /></Button>
+                            <Button type="button" variant="outline" size="sm" onClick={() => removeSize(idx)}
+                                    className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 border-red-200 bg-red-50 hover:bg-red-100"
+                                    data-testid={`del-ball-size-${idx}`}
+                                    title="Slett denne ballstørrelsen">
+                              <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                              <span className="text-[9px] text-red-700">Slett str</span>
+                            </Button>
                           </div>
                         </div>
                       </div>

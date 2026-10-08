@@ -48,8 +48,10 @@ export default function TaxonomyPicker({ value, onChange }) {
                 {(tree.categories || []).map((c) => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" size="icon" onClick={() => { setCustomCat(true); setCat(""); }} title="Legg til ny kategori" data-testid="cat-add-btn">
-              <Plus className="h-4 w-4" />
+            <Button type="button" variant="outline" size="sm" onClick={() => { setCustomCat(true); setCat(""); }}
+                    title="Legg til ny kategori" data-testid="cat-add-btn"
+                    className="bg-emerald-50 border-emerald-300 text-emerald-800 whitespace-nowrap">
+              <Plus className="h-4 w-4 mr-1" />Ny
             </Button>
           </div>
         )}
@@ -71,8 +73,10 @@ export default function TaxonomyPicker({ value, onChange }) {
                 {(catObj?.main_groups || []).map((m) => <SelectItem key={m.name} value={m.name}>{m.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" size="icon" onClick={() => { setCustomMg(true); setMg(""); }} disabled={!value.category} title="Legg til ny hovedgruppe" data-testid="mg-add-btn">
-              <Plus className="h-4 w-4" />
+            <Button type="button" variant="outline" size="sm" onClick={() => { setCustomMg(true); setMg(""); }} disabled={!value.category}
+                    title="Legg til ny hovedgruppe" data-testid="mg-add-btn"
+                    className="bg-emerald-50 border-emerald-300 text-emerald-800 whitespace-nowrap">
+              <Plus className="h-4 w-4 mr-1" />Ny
             </Button>
           </div>
         )}
@@ -94,8 +98,10 @@ export default function TaxonomyPicker({ value, onChange }) {
                 {(mgObj?.sub_groups || []).map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" size="icon" onClick={() => { setCustomSg(true); setSg(""); }} disabled={!value.main_group} title="Legg til ny undergruppe" data-testid="sg-add-btn">
-              <Plus className="h-4 w-4" />
+            <Button type="button" variant="outline" size="sm" onClick={() => { setCustomSg(true); setSg(""); }} disabled={!value.main_group}
+                    title="Legg til ny undergruppe" data-testid="sg-add-btn"
+                    className="bg-emerald-50 border-emerald-300 text-emerald-800 whitespace-nowrap">
+              <Plus className="h-4 w-4 mr-1" />Ny
             </Button>
           </div>
         )}

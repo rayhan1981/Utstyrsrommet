@@ -224,6 +224,12 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Backend uendret**: Gjenbruker eksisterende endepunkter `POST /api/orders` (allerede støtter is_stock_order=true), `GET /api/orders/{id}/pdf` (PDF-generering via `_build_order_pdf`), `POST /api/orders/{id}/send` (sender PDF som vedlegg via Resend/send_tenant_email med CC til brukeren).
 - **Verifisert**: curl-flyt bekreftet: POST /orders → 200, GET /pdf → 2355 bytes PDF-fil, POST /send → 200 (med dummy e-post).
 
+### Feb 2026 – Dialogbrukervennlighet + Drakt-undergrupper (iter 16)
+- **Hjemmedrakter / Bortedrakter som egne undergrupper**: `DEFAULT_TAXONOMY_SEEDS` oppdatert fra «Hjemme/Borte» til «Hjemmedrakter/Bortedrakter». Migrasjonsscript endret eksisterende items.sub_group fra Hjemme→Hjemmedrakter og Borte→Bortedrakter (1 item migrert i preview-DB).
+- **TaxonomyPicker m/ tydelige «+ Ny»-knapper**: Hvert nivå (Kategori, Hovedgruppe, Undergruppe) har nå en grønn «+ Ny»-knapp i stedet for liten ikonknapp. Bytter til tekstfelt når klikket. «X» for å gå tilbake til dropdown. Tillater å opprette kategorier/grupper direkte i Nytt utstyr-dialog uten å forlate siden.
+- **Lagre/Avbryt øverst OG nederst**: Dialog-headeren i Inventory har nå en handlings-rad direkte under tittelen (Avbryt + Lagre vare), i tillegg til samme knapper i DialogFooter nederst. Reduserer scrolling for lange skjemaer.
+- **Slett varelinje per størrelse**: Erstattet ikon-X med tydelig «🗑️ Slett str»-knapp (rød outline) på hver størrelse/ballstørrelse-rad i item-dialogen. Lar bruker fjerne feil innlagt variant før lagring.
+
 ## Backlog
 - P1: **Server-refaktor** – Splitt `/app/backend/server.py` (5256 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). Krever først å flytte shared deps (db, require_tenant, require_perm, _log_activity, now_iso, new_id, _xlsx_response, BALL_SIZES, _parse_import_rows) til `/app/backend/deps.py`. Dir `/app/backend/routers/` opprettet som placeholder. KRITISK før flere features for å unngå search_replace-mismatch og lastetid.
 - P2: Punkt 4 (iter11-restpost) – Full-featured strict-mode UI der bruker kan velge «Avbryt hvis feil» på import.
