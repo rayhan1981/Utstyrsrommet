@@ -237,6 +237,7 @@ export default function Inventory() {
       <Card className="p-2 sm:p-3">
         <DataTable
           initialGroupBy={["category", "main_group", "sub_group"]}
+          getRowId={(r) => r._id}
           onDropToGroup={async (rowId, target) => {
             // rowId er vårt _id (f.eks. "ITEM__size__jersey__idx") – mapper tilbake til item.id
             const parentId = rowId.split("__")[0];
