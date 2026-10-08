@@ -12,6 +12,7 @@ import EmailSettingsCard from "@/components/EmailSettingsCard";
 import ProfileCard from "@/components/ProfileCard";
 import NotificationSettingsCard from "@/components/NotificationSettingsCard";
 import DataResetCard from "@/components/DataResetCard";
+import TaxonomyAdminCard from "@/components/TaxonomyAdminCard";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -69,6 +70,8 @@ export default function Settings() {
       <EmailSettingsCard />
 
       <NotificationSettingsCard />
+
+      <TaxonomyAdminCard />
 
       <DataResetCard />
 

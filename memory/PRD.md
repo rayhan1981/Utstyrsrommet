@@ -236,6 +236,14 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Hierarki fiks**: Default seeds oppdatert fra "Klaer -> Drakt -> Hjemmedrakter/Bortedrakter" til **"Klaer -> Spillertroye -> Hjemmedrakter/Bortedrakter"**. Migrasjonsscript endret 3 eksisterende items fra main_group=Drakt -> Spillertroye.
 - **Verifisert via Playwright**: dropdown aapner korrekt, viser "+ Opprett ny kategori..." som roedt alternativ oeverst + separator + eksisterende Klaer/Vare.
 
+### Feb 2026 – Taxonomy-admin + drag-drop + routers (iter 18)
+- **Routers-ekstraksjon startet**: Ny `/app/backend/routers/` med `_shared.py` (re-eksporterer db, api, require_tenant, require_perm, _log_activity fra server.py) og `taxonomy_admin.py` (ny router med 3 endepunkter). Importeres i server.py FØR `app.include_router(api)` slik at endepunktene monteres korrekt. Fungerer som trygt mellomsteg i server-refaktoren.
+- **Omdøp/slett kategorier**: Ny `POST /api/items/taxonomy/rename` og `POST /api/items/taxonomy/delete`. Admin-level tilgang. Omdøp oppdaterer alle items med `category/main_group/sub_group` i én `update_many`. Slett setter nivåfeltene til tom streng. Loggføres i audit_log.
+- **Bulk-move**: Ny `POST /api/items/bulk-move` tar `item_ids[]` + `target_category/main_group/sub_group`. Brukes for dra-og-slipp i Inventory.
+- **TaxonomyAdminCard**: Ny komponent i Settings-siden med utvidbart tre over Kategori → Hovedgruppe → Undergruppe. Omdøp- og slett-knapper per node. Modal for omdøping bekrefter sti.
+- **Drag-and-drop i DataTable**: Ny `onDropToGroup`-prop. Når aktivert gjør hver rad draggable og hver gruppe-rad til droppmål. Target highlightes med grønn ring og «↓ Slipp her for å flytte»-tekst. Inventory bruker denne til å flytte varer mellom Kategori/Hovedgruppe.
+- **Verifisert**: curl-flyt: rename 404 ved ukjent, bulk-move 400 på tom liste, bulk-move 200 på reell flytting + taxonomy oppdateres, rename sub_group 200 → oppdatert.
+
 ## Backlog
 - P1: **Server-refaktor** – Splitt `/app/backend/server.py` (5256 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). Krever først å flytte shared deps (db, require_tenant, require_perm, _log_activity, now_iso, new_id, _xlsx_response, BALL_SIZES, _parse_import_rows) til `/app/backend/deps.py`. Dir `/app/backend/routers/` opprettet som placeholder. KRITISK før flere features for å unngå search_replace-mismatch og lastetid.
 - P2: Punkt 4 (iter11-restpost) – Full-featured strict-mode UI der bruker kan velge «Avbryt hvis feil» på import.

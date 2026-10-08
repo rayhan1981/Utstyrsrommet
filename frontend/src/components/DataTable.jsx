@@ -11,13 +11,15 @@ import { ArrowUpDown, ArrowUp, ArrowDown, Search, Filter, X, Layers, ChevronRigh
  *            options: [{value,label}], accessor: row => value, render: row => node, className?,
  *            groupable?: boolean, groupLabel?: (val)=>string }]
  */
-export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", getRowId = (r) => r.id, actions, searchPlaceholder = "Søk…", initialSort, initialGroupBy }) {
+export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", getRowId = (r) => r.id, actions, searchPlaceholder = "Søk…", initialSort, initialGroupBy, onDropToGroup, groupPathToTarget }) {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState(initialSort || null);
   const [filters, setFilters] = useState({});
   // groupBy er nå en array av kolonne-nøkler for nøstet gruppering (f.eks. ["category","main_group"]).
   const [groupBy, setGroupBy] = useState(initialGroupBy || []);
   const [collapsed, setCollapsed] = useState({});
+  const [draggedId, setDraggedId] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
 
   const get = (col, row) => (col.accessor ? col.accessor(row) : row[col.key]);
 
@@ -111,8 +113,15 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
   const clearFilters = () => { setFilters({}); setSearch(""); setSort(null); setGroupBy([]); };
   const filterableCols = columns.filter((c) => c.filter);
 
-  const renderRow = (r, depth = 0) => (
-    <TableRow key={getRowId(r)} data-testid={`dt-row-${getRowId(r)}`}>
+  const renderRow = (r, depth = 0) => {
+    const id = getRowId(r);
+    const draggable = !!onDropToGroup;
+    return (
+      <TableRow key={id} data-testid={`dt-row-${id}`}
+                draggable={draggable}
+                onDragStart={draggable ? (e) => { setDraggedId(id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", id); } : undefined}
+                onDragEnd={draggable ? () => { setDraggedId(null); setDropTarget(null); } : undefined}
+                className={draggedId === id ? "opacity-40" : ""}>
       {columns.map((c, idx) => (
         <TableCell key={c.key} className={c.className}
                    style={idx === 0 && depth > 0 ? { paddingLeft: `${12 + depth * 20}px` } : undefined}>
@@ -121,7 +130,8 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
       ))}
       {actions && <TableCell className="text-right space-x-1">{actions(r)}</TableCell>}
     </TableRow>
-  );
+    );
+  };
 
   // Rekursiv rendering av nøstede mapper
   const renderGroupNode = (node, parentPath = "") => {
@@ -129,13 +139,35 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
     const path = parentPath ? `${parentPath} › ${node._label}` : node._label;
     const isOpen = !collapsed[path];
     const depth = node._depth || 0;
+    const isDropTarget = dropTarget === path;
     // Fargekoding per dybde
     const bgClass = depth === 0 ? "bg-red-50 hover:bg-red-100 border-l-4 border-red-700"
                    : depth === 1 ? "bg-amber-50/70 hover:bg-amber-100/70 border-l-4 border-amber-500"
                    : "bg-sky-50/60 hover:bg-sky-100/60 border-l-4 border-sky-400";
+    const highlight = isDropTarget ? "ring-2 ring-emerald-500 bg-emerald-50/60" : "";
+    const canDrop = !!onDropToGroup;
+    const handleDragOver = canDrop ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDropTarget(path); } : undefined;
+    const handleDragLeave = canDrop ? (e) => { if (dropTarget === path) setDropTarget(null); } : undefined;
+    const handleDrop = canDrop ? async (e) => {
+      e.preventDefault();
+      setDropTarget(null);
+      const itemId = e.dataTransfer.getData("text/plain") || draggedId;
+      if (!itemId) return;
+      // Beregn mål fra path og groupBy-kolonner
+      const parts = path.split(" › ");
+      const target = {};
+      groupBy.forEach((k, idx) => { target[k] = parts[idx] === "(Uten)" ? "" : (parts[idx] || ""); });
+      if (groupPathToTarget) {
+        Object.assign(target, groupPathToTarget(parts, groupBy) || {});
+      }
+      await onDropToGroup(itemId, target, path);
+      setDraggedId(null);
+    } : undefined;
     return (
       <React.Fragment key={path}>
-        <TableRow className={`${bgClass} cursor-pointer`} onClick={() => toggleGroup(path)} data-testid={`dt-group-${path.replace(/[^A-Za-z0-9]+/g, "_")}`}>
+        <TableRow className={`${bgClass} ${highlight} cursor-pointer`} onClick={() => toggleGroup(path)}
+                  onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+                  data-testid={`dt-group-${path.replace(/[^A-Za-z0-9]+/g, "_")}`}>
           <TableCell colSpan={columns.length + (actions ? 1 : 0)}
                      className="font-semibold text-sm"
                      style={{ paddingLeft: `${12 + depth * 20}px` }}>
@@ -145,6 +177,7 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
                 {node._label}
               </span>
               <span className="text-xs text-slate-500 font-normal">({node._count})</span>
+              {isDropTarget && <span className="text-xs text-emerald-700 font-semibold ml-2">↓ Slipp her for å flytte</span>}
             </span>
           </TableCell>
         </TableRow>

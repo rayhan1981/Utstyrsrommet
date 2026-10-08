@@ -237,6 +237,20 @@ export default function Inventory() {
       <Card className="p-3">
         <DataTable
           initialGroupBy={["category", "main_group"]}
+          onDropToGroup={async (rowId, target) => {
+            // rowId er vårt _id (f.eks. "ITEM__size__jersey__idx") – mapper tilbake til item.id
+            const parentId = rowId.split("__")[0];
+            try {
+              await api.post("/items/bulk-move", {
+                item_ids: [parentId],
+                target_category: target.category ?? null,
+                target_main_group: target.main_group ?? null,
+                target_sub_group: target.sub_group ?? null,
+              });
+              toast.success("Flyttet til ny mappe");
+              load();
+            } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+          }}
           rows={items.flatMap((i) => {
             if (i.is_clothing || i.is_ball) {
               const sortedSizes = sortSizesNatural(i.sizes || [], (s) => s.size);

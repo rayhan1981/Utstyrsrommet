@@ -5463,6 +5463,10 @@ async def team_purchase_history(team_id: str, request: Request, user=Depends(req
     return {"years": sorted(years.values(), key=lambda x: -x["year"]), "orders": orders}
 
 
+# Import router modules (de monterer sine endepunkter på `api`-router).
+# Må være etter at `api` er definert, før `app.include_router(api)`.
+from routers import taxonomy_admin  # noqa: F401 (import for side effect: registers routes)
+
 app.include_router(api)
 
 app.add_middleware(
