@@ -2613,7 +2613,7 @@ async def _parse_import_rows(tid: str, content: bytes):
 
 DEFAULT_TAXONOMY_SEEDS = [
     {"name": "Klær", "main_groups": [
-        {"name": "Drakt", "sub_groups": ["Hjemmedrakter", "Bortedrakter", "Tredjedrakt"]},
+        {"name": "Spillertrøye", "sub_groups": ["Hjemmedrakter", "Bortedrakter", "Tredjedrakt"]},
         {"name": "Trening", "sub_groups": ["Overdel", "Shorts", "Treningsjakke"]},
         {"name": "Målvakt", "sub_groups": ["Drakt", "Hansker"]},
     ]},

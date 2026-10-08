@@ -230,6 +230,12 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Lagre/Avbryt øverst OG nederst**: Dialog-headeren i Inventory har nå en handlings-rad direkte under tittelen (Avbryt + Lagre vare), i tillegg til samme knapper i DialogFooter nederst. Reduserer scrolling for lange skjemaer.
 - **Slett varelinje per størrelse**: Erstattet ikon-X med tydelig «🗑️ Slett str»-knapp (rød outline) på hver størrelse/ballstørrelse-rad i item-dialogen. Lar bruker fjerne feil innlagt variant før lagring.
 
+### Feb 2026 – Taxonomy-fix: dropdown-basert + Spillertroye-hierarki (iter 17)
+- **"+ Opprett ny"-knapp fjernet som sibling-button**: Erstattet med inline-alternativ "+ Opprett ny kategori/hovedgruppe/undergruppe..." OVERST i hver Select-dropdown. Dette fjerner race-conditioner som fikk Dialog til aa lukke naar bruker klikket paa knappen.
+- **onPointerDown=stopPropagation** paa wrapperen rundt hver dropdown, pluss Enter-prevention i input-feltet, hindrer at Dialog eller eventuelt form fanger opp eventet.
+- **Hierarki fiks**: Default seeds oppdatert fra "Klaer -> Drakt -> Hjemmedrakter/Bortedrakter" til **"Klaer -> Spillertroye -> Hjemmedrakter/Bortedrakter"**. Migrasjonsscript endret 3 eksisterende items fra main_group=Drakt -> Spillertroye.
+- **Verifisert via Playwright**: dropdown aapner korrekt, viser "+ Opprett ny kategori..." som roedt alternativ oeverst + separator + eksisterende Klaer/Vare.
+
 ## Backlog
 - P1: **Server-refaktor** – Splitt `/app/backend/server.py` (5256 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). Krever først å flytte shared deps (db, require_tenant, require_perm, _log_activity, now_iso, new_id, _xlsx_response, BALL_SIZES, _parse_import_rows) til `/app/backend/deps.py`. Dir `/app/backend/routers/` opprettet som placeholder. KRITISK før flere features for å unngå search_replace-mismatch og lastetid.
 - P2: Punkt 4 (iter11-restpost) – Full-featured strict-mode UI der bruker kan velge «Avbryt hvis feil» på import.
