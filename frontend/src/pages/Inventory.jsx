@@ -18,6 +18,8 @@ import ViewQrDialog from "@/components/ViewQrDialog";
 import UpgradeCTA from "@/components/UpgradeCTA";
 import { compressImage } from "@/lib/imageUtils";
 import { sortSizesNatural, naturalSizeKey } from "@/lib/sizeSort";
+import TaxonomyPicker from "@/components/TaxonomyPicker";
+import ImportPreviewDialog from "@/components/ImportPreviewDialog";
 
 const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null, images: [], supplier_id: "", supplier_number: "", supplier_name: "" };
 
@@ -32,6 +34,8 @@ export default function Inventory() {
   const [form, setForm] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
+  const [importPreview, setImportPreview] = useState(null);
+  const [pendingImportFile, setPendingImportFile] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
@@ -169,14 +173,9 @@ export default function Inventory() {
   const importFile = async (file) => {
     const fd = new FormData(); fd.append("file", file);
     try {
-      const { data } = await api.post("/items/import", fd, { headers: { "Content-Type": "multipart/form-data" } });
-      if (data.errors && data.errors.length) {
-        toast.warning(`${data.created} varer importert med ${data.errors.length} feil`);
-        console.warn("Importfeil:", data.errors);
-      } else {
-        toast.success(`${data.created} varer importert`);
-      }
-      load();
+      const { data } = await api.post("/items/import/preview", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setPendingImportFile(file);
+      setImportPreview(data);
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
@@ -355,10 +354,12 @@ export default function Inventory() {
               </div>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div><Label>Varenavn</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-              <div><Label>Kategori</Label><Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></div>
-              <div><Label>Hovedgruppe</Label><Input value={form.main_group} onChange={(e) => setForm({ ...form, main_group: e.target.value })} /></div>
-              <div><Label>Undergruppe</Label><Input value={form.sub_group} onChange={(e) => setForm({ ...form, sub_group: e.target.value })} /></div>
+              <div><Label>Varenavn *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="item-name-input" /></div>
+              <div className="hidden sm:block"></div>
+              <TaxonomyPicker
+                value={{ category: form.category, main_group: form.main_group, sub_group: form.sub_group }}
+                onChange={(v) => setForm({ ...form, category: v.category, main_group: v.main_group, sub_group: v.sub_group })}
+              />
               <div><Label>Pris / salg (NOK)</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
               <div><Label>Innkjøpspris (NOK)</Label><Input type="number" step="0.01" placeholder="(valgfri)" value={form.purchase_price ?? ""} onChange={(e) => setForm({ ...form, purchase_price: e.target.value })} data-testid="purchase-price-input" /></div>
               <div className="sm:col-span-2">
@@ -532,6 +533,13 @@ export default function Inventory() {
       <QrExportDialog open={qrOpen} onOpenChange={setQrOpen} />
       <GenerateQrDialog open={!!genFor} onOpenChange={(o) => !o && setGenFor(null)} item={genFor} onDone={load} />
       <ViewQrDialog open={!!viewFor} onOpenChange={(o) => !o && setViewFor(null)} item={viewFor} />
+      <ImportPreviewDialog
+        open={!!importPreview}
+        preview={importPreview}
+        file={pendingImportFile}
+        onClose={() => { setImportPreview(null); setPendingImportFile(null); }}
+        onDone={() => { load(); setImportPreview(null); setPendingImportFile(null); }}
+      />
 
       {!hasFeature("qr_codes") && hasPerm("inventory", "read") && (
         <UpgradeCTA feature="qr_codes" inline />

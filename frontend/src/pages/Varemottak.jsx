@@ -22,7 +22,19 @@ export default function Varemottak() {
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [openOrders, setOpenOrders] = useState([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
   const scannerRef = useRef(null);
+
+  // Hent åpne bestillinger for valgt vare for å vise bestilt vs mottatt
+  useEffect(() => {
+    if (!picked?.item?.id) { setOpenOrders([]); return; }
+    setLoadingOrders(true);
+    api.get(`/items/${picked.item.id}/open-orders`)
+      .then((r) => setOpenOrders(r.data.orders || []))
+      .catch(() => setOpenOrders([]))
+      .finally(() => setLoadingOrders(false));
+  }, [picked?.item?.id]);
 
   const load = async () => {
     const [it, rc] = await Promise.all([api.get("/items"), api.get("/stock-receipts")]);
@@ -157,6 +169,60 @@ export default function Varemottak() {
               </div>
             </div>
           </div>
+
+          {/* Bestilt vs mottatt - åpne bestillinger */}
+          {(() => {
+            const relevant = picked.size
+              ? openOrders.filter((o) => o.size === picked.size)
+              : openOrders;
+            if (loadingOrders) return <div className="text-xs text-slate-500">Henter åpne bestillinger…</div>;
+            if (relevant.length === 0) return (
+              <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-md p-2" data-testid="no-open-orders">
+                Ingen åpne bestillinger for denne varen{picked.size ? ` (str ${picked.size})` : ""}.
+              </div>
+            );
+            const totalRemaining = relevant.reduce((s, o) => s + o.remaining, 0);
+            return (
+              <div className="border border-amber-200 bg-amber-50/60 rounded-md overflow-hidden" data-testid="open-orders-panel">
+                <div className="px-3 py-2 bg-amber-100 border-b border-amber-200 flex items-center justify-between">
+                  <span className="font-semibold text-sm text-amber-900">📦 Åpne bestillinger ({relevant.length})</span>
+                  <span className="text-xs text-amber-900">Gjenstår: <span className="font-bold">{totalRemaining}</span></span>
+                </div>
+                <div className="max-h-[160px] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left bg-amber-50 border-b border-amber-200">
+                        <th className="px-3 py-1.5">Bestilling</th>
+                        <th className="px-3 py-1.5">Leverandør</th>
+                        {!picked.size && <th className="px-3 py-1.5">Str</th>}
+                        <th className="px-3 py-1.5 text-right">Bestilt</th>
+                        <th className="px-3 py-1.5 text-right">Mottatt</th>
+                        <th className="px-3 py-1.5 text-right">Gjenstår</th>
+                        <th className="px-3 py-1.5">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {relevant.map((o, i) => (
+                        <tr key={i} className="border-b border-amber-100 last:border-0" data-testid={`open-order-row-${o.po_number}`}>
+                          <td className="px-3 py-1.5 font-mono text-xs cursor-pointer hover:underline"
+                              onClick={() => setOrderRef(o.po_number)} title="Klikk for å bruke som bestillingsreferanse">
+                            {o.po_number}
+                          </td>
+                          <td className="px-3 py-1.5">{o.supplier_name || "-"}</td>
+                          {!picked.size && <td className="px-3 py-1.5 font-mono">{o.size || "-"}</td>}
+                          <td className="px-3 py-1.5 text-right">{o.ordered}</td>
+                          <td className="px-3 py-1.5 text-right">{o.received}</td>
+                          <td className="px-3 py-1.5 text-right font-bold text-amber-900">{o.remaining}</td>
+                          <td className="px-3 py-1.5"><span className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-amber-200">{o.line_status}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-3 py-1.5 text-[10px] text-amber-800 bg-amber-50 border-t border-amber-200">💡 Klikk bestillingsnummeret for å kopiere det til referanse-feltet.</div>
+              </div>
+            );
+          })()}
 
           {(picked.item.is_clothing || picked.item.is_ball) && !picked.size && (
             <div>
