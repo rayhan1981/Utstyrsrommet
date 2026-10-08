@@ -26,7 +26,7 @@ export default function Users() {
   const [users, setUsers] = useState([]);
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], can_view_login_history: false, active: true, password: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", role: "user", role_title: "", permissions: defaultPerms("read"), reset_permissions: [], can_view_login_history: false, active: true, password: "" });
   const [sendInvite, setSendInvite] = useState(true);
   const [historyFor, setHistoryFor] = useState(null);
   const [history, setHistory] = useState([]);
@@ -50,24 +50,24 @@ export default function Users() {
 
   const openNew = () => {
     setEditId(null); setSendInvite(true);
-    setForm({ name: "", email: "", phone: "", address: "", role: "user", permissions: defaultPerms("read"), reset_permissions: [], can_view_login_history: false, active: true, password: "" });
+    setForm({ name: "", email: "", phone: "", address: "", role: "user", role_title: "", permissions: defaultPerms("read"), reset_permissions: [], can_view_login_history: false, active: true, password: "" });
     setOpen(true);
   };
   const openEdit = (u) => {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, phone: u.phone || "", address: u.address || "", role: u.role, permissions: u.permissions || defaultPerms(), reset_permissions: u.reset_permissions || [], can_view_login_history: !!u.can_view_login_history, active: u.active, password: "" });
+    setForm({ name: u.name, email: u.email, phone: u.phone || "", address: u.address || "", role: u.role, role_title: u.role_title || "", permissions: u.permissions || defaultPerms(), reset_permissions: u.reset_permissions || [], can_view_login_history: !!u.can_view_login_history, active: u.active, password: "" });
     setOpen(true);
   };
 
   const save = async () => {
     try {
       if (editId) {
-        const payload = { name: form.name, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, can_view_login_history: form.role === "admin" ? true : form.can_view_login_history, active: form.active };
+        const payload = { name: form.name, phone: form.phone, address: form.address, role: form.role, role_title: form.role_title, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, can_view_login_history: form.role === "admin" ? true : form.can_view_login_history, active: form.active };
         if (form.password) payload.password = form.password;
         await api.put(`/users/${editId}`, payload);
         toast.success("Oppdatert");
       } else {
-        const payload = { name: form.name, email: form.email, phone: form.phone, address: form.address, role: form.role, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, can_view_login_history: form.role === "admin" ? true : form.can_view_login_history };
+        const payload = { name: form.name, email: form.email, phone: form.phone, address: form.address, role: form.role, role_title: form.role_title, permissions: form.permissions, reset_permissions: form.role === "admin" ? [] : form.reset_permissions, can_view_login_history: form.role === "admin" ? true : form.can_view_login_history };
         if (!sendInvite && form.password) payload.password = form.password;
         const { data } = await api.post("/users", payload);
         toast.success(data.invitation_sent ? "Bruker opprettet - invitasjon sendt på e-post" : "Bruker opprettet");
@@ -116,6 +116,7 @@ export default function Users() {
               </span>
             ) },
             { key: "email", label: "E-post", filter: "text" },
+            { key: "role_title", label: "Rolle/Tittel", filter: "text", render: (u) => u.role_title ? <span className="text-xs text-slate-700">{u.role_title}</span> : <span className="text-xs text-slate-400 italic">–</span> },
             { key: "online", label: "Pålogget", filter: "boolean", accessor: (u) => !!u.online, render: (u) => (
               <span className={`text-xs font-semibold px-2 py-1 rounded ${u.online ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-600"}`}>{u.online ? "Pålogget" : "Avlogget"}</span>
             ) },
@@ -153,6 +154,16 @@ export default function Users() {
               <div><Label>E-post</Label><Input type="email" disabled={!!editId} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="user-email" /></div>
               <div><Label>Telefon</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
               <div><Label>Adresse</Label><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></div>
+              <div className="sm:col-span-2">
+                <Label className="flex items-center gap-1">
+                  Rolle/Tittel <span className="text-[10px] font-normal text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">Kun admin kan endre</span>
+                </Label>
+                <Input value={form.role_title}
+                       placeholder="F.eks. Daglig leder, Lagleder G12, Materialforvalter"
+                       onChange={(e) => setForm({ ...form, role_title: e.target.value })}
+                       data-testid="user-role-title" />
+                <p className="text-[11px] text-slate-500 mt-1">Vises i e-postsignaturer og i brukerlisten. Brukeren selv kan ikke endre dette.</p>
+              </div>
               <div>
                 <Label>Rolle</Label>
                 <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v, permissions: v === "admin" ? defaultPerms("admin") : defaultPerms("read") })}>

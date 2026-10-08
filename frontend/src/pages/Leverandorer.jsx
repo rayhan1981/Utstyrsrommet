@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Pencil, Trash2, Truck, Search, ShoppingCart } from "lucide-react";
+import { Plus, Pencil, Trash2, Truck, Search, ShoppingCart, Trash, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import StockOrderDialog from "@/components/StockOrderDialog";
 import OrderActionDialog from "@/components/OrderActionDialog";
@@ -26,6 +26,8 @@ export default function Leverandorer() {
   const [search, setSearch] = useState("");
   const [quickOrderFor, setQuickOrderFor] = useState(null);
   const [actionOrder, setActionOrder] = useState(null);
+  const [trash, setTrash] = useState([]);
+  const [trashOpen, setTrashOpen] = useState(false);
 
   const load = async () => {
     const [a, b] = await Promise.all([
@@ -34,7 +36,7 @@ export default function Leverandorer() {
     ]);
     setList(a.data); setItems(b.data || []);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadTrash(); }, []);
 
   const openNew = () => { setEditId(null); setForm(EMPTY); setOpen(true); };
   const openEdit = (s) => { setEditId(s.id); setForm({ ...EMPTY, ...s }); setOpen(true); };
@@ -49,9 +51,46 @@ export default function Leverandorer() {
   };
 
   const del = async (s) => {
-    if (!window.confirm(`Slette ${s.name}? Hvis ordrehistorikk finnes blir leverandøren deaktivert.`)) return;
-    try { const { data } = await api.delete(`/suppliers/${s.id}`);
-      toast.success(data.deactivated ? "Deaktivert (har historikk)" : "Slettet"); load();
+    if (!window.confirm(`Slette ${s.name}? Du kan angre innen 30 dager via "Papirkurv"-knappen.`)) return;
+    try {
+      const { data } = await api.delete(`/suppliers/${s.id}`);
+      // Vis angre-toast i 10 sekunder
+      toast.success(
+        data.had_orders
+          ? `${s.name} slettet (hadde ordrehistorikk). Klikk Angre for å gjenopprette.`
+          : `${s.name} slettet. Klikk Angre for å gjenopprette.`,
+        {
+          duration: 10000,
+          action: {
+            label: "Angre",
+            onClick: async () => {
+              try {
+                await api.post(`/suppliers/${s.id}/restore`);
+                toast.success(`${s.name} gjenopprettet`);
+                load();
+                loadTrash();
+              } catch (err) { toast.error(formatError(err.response?.data?.detail)); }
+            },
+          },
+        }
+      );
+      load();
+      loadTrash();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const loadTrash = async () => {
+    try {
+      const { data } = await api.get("/suppliers/trash");
+      setTrash(data);
+    } catch (e) { /* non-admin: silently ignore */ }
+  };
+
+  const restoreFromTrash = async (s) => {
+    try {
+      await api.post(`/suppliers/${s.id}/restore`);
+      toast.success(`${s.name} gjenopprettet`);
+      load(); loadTrash();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
@@ -83,6 +122,12 @@ export default function Leverandorer() {
           <p className="text-slate-600 text-sm mt-1">Registrer, rediger og vis ordrehistorikk per leverandør</p>
         </div>
         <Button onClick={openNew} className="bg-red-700 hover:bg-red-800" data-testid="new-supplier-btn"><Plus className="h-4 w-4 mr-1" />Ny leverandør</Button>
+        {trash.length > 0 && (
+          <Button onClick={() => setTrashOpen(true)} variant="outline" className="border-amber-400 text-amber-800 hover:bg-amber-50"
+                  data-testid="open-trash-btn" title="Vis slettede leverandører (siste 30 dager)">
+            <Trash className="h-4 w-4 mr-1" />Papirkurv ({trash.length})
+          </Button>
+        )}
       </div>
 
       <Card className="p-3">
@@ -176,6 +221,37 @@ export default function Leverandorer() {
             </TableBody>
           </Table>
           <DialogFooter><Button variant="outline" onClick={() => setDetailFor(null)}>Lukk</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={trashOpen} onOpenChange={setTrashOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-800"><Trash className="h-5 w-5" />Papirkurv – slettede leverandører</DialogTitle>
+            <DialogDescription>Slettede leverandører fra siste 30 dager. Klikk <strong>Gjenopprett</strong> for å angre sletting.</DialogDescription>
+          </DialogHeader>
+          <Table>
+            <TableHeader><TableRow><TableHead>Nr</TableHead><TableHead>Navn</TableHead><TableHead>Slettet</TableHead><TableHead>Av</TableHead><TableHead></TableHead></TableRow></TableHeader>
+            <TableBody>
+              {trash.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-slate-500 py-6">Ingen slettede leverandører</TableCell></TableRow>}
+              {trash.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="font-mono text-xs text-slate-600">#{s.supplier_number || "-"}</TableCell>
+                  <TableCell className="font-semibold">{s.name}</TableCell>
+                  <TableCell className="text-xs text-slate-500">{s.deleted_at ? new Date(s.deleted_at).toLocaleString("nb-NO") : "-"}</TableCell>
+                  <TableCell className="text-xs text-slate-500">{s.deleted_by_name || "-"}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="outline" size="sm" onClick={() => restoreFromTrash(s)}
+                            className="flex flex-col items-center h-auto py-1 px-2 gap-0.5 border-emerald-300 text-emerald-800 bg-emerald-50"
+                            data-testid={`restore-supplier-${s.supplier_number}`}>
+                      <RotateCcw className="h-3.5 w-3.5" /><span className="text-[9px]">Gjenopprett</span>
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <DialogFooter><Button variant="outline" onClick={() => setTrashOpen(false)}>Lukk</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

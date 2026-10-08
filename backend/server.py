@@ -301,6 +301,29 @@ def require_platform_owner(user=Depends(get_current_user)):
 
 
 # ---------------- Email ----------------
+def _build_user_signature_html(user: Optional[dict]) -> str:
+    """Bygg standard HTML-signatur fra pålogget bruker. Navn + rolle/tittel + telefon + e-post."""
+    if not user:
+        return ""
+    name = (user.get("name") or "").strip()
+    title = (user.get("role_title") or "").strip()
+    phone = (user.get("phone") or "").strip()
+    email = (user.get("email") or "").strip()
+    lines = []
+    if name: lines.append(f'<strong style="color:#1e293b">{name}</strong>')
+    if title: lines.append(f'<span style="color:#64748b">{title}</span>')
+    if phone: lines.append(f'<span style="color:#64748b">Tlf: {phone}</span>')
+    if email: lines.append(f'<a href="mailto:{email}" style="color:#991b1b;text-decoration:none">{email}</a>')
+    if not lines:
+        return ""
+    return (
+        '<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px 0" />'
+        '<p style="font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;color:#475569">'
+        + "<br/>".join(lines) +
+        '</p>'
+    )
+
+
 async def send_invitation_email(to: str, name: str, token: str):
     if not EMAIL_KEY:
         return None
@@ -401,11 +424,15 @@ async def send_payment_receipt_email(to: str, club_name: str, amount_nok: float,
         return None
 
 
-async def _send_email_with_attachment(to: str, subject: str, body_text: str, filename: str, pdf_b64: str):
-    """Send email via Emergent-managed email service with PDF attachment."""
+async def _send_email_with_attachment(to: str, subject: str, body_text: str, filename: str, pdf_b64: str, sender_user: Optional[dict] = None):
+    """Send email via Emergent-managed email service with PDF attachment.
+    sender_user: Hvis gitt, legges HTML-signatur til nederst."""
     if not EMAIL_KEY:
         raise RuntimeError("E-posttjeneste ikke konfigurert")
     html = f'<pre style="font-family:Arial,sans-serif;font-size:14px;white-space:pre-wrap">{body_text}</pre>'
+    if sender_user:
+        # Signatur bygges via samme helper (defineres lenger ned, men funksjoner er evaluert ved kall-tid)
+        html += _build_user_signature_html(sender_user)
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
                          headers={"X-Email-Key": EMAIL_KEY},
@@ -554,16 +581,23 @@ async def _send_emergent(to: List[str], subject: str, html: str,
         return {"ok": False, "error": str(e)}
 
 
+def _build_user_signature_html_placeholder():
+    pass
+
+
 async def send_tenant_email(tid: Optional[str], to, subject: str, html: str,
                              attachments: Optional[List[dict]] = None,
-                             cc=None) -> dict:
+                             cc=None, sender_user: Optional[dict] = None) -> dict:
     """Unified email send: uses tenant's own SMTP/Resend if configured, else Emergent default.
 
     attachments format: [{"filename": str, "content": base64_str, "content_type": mime}]
+    sender_user: Hvis gitt, legges en HTML-signatur (navn, rolle/tittel, tlf, e-post) til nederst.
     Returns: {ok, provider_id, error, method}
     """
     if isinstance(to, str): to = [to]
     if isinstance(cc, str): cc = [cc]
+    if sender_user:
+        html = html + _build_user_signature_html(sender_user)
     cfg = await _get_tenant_email_cfg(tid) if tid else {}
     method = (cfg.get("method") or "default").lower()
     from_name = cfg.get("from_name") or EMAIL_FROM_NAME
@@ -609,6 +643,7 @@ class UserCreateIn(BaseModel):
     phone: Optional[str] = ""
     address: Optional[str] = ""
     role: str = "user"
+    role_title: Optional[str] = ""  # Admin-styrt fritekst (f.eks. "Daglig leder", "Lagleder G12")
     permissions: Optional[Dict[str, str]] = None
     reset_permissions: Optional[List[str]] = None  # ["inventory","suppliers","teams","people","users"]
     can_view_login_history: Optional[bool] = False
@@ -620,6 +655,7 @@ class UserUpdateIn(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     role: Optional[str] = None
+    role_title: Optional[str] = None  # Kun admin kan endre
     permissions: Optional[Dict[str, str]] = None
     reset_permissions: Optional[List[str]] = None
     can_view_login_history: Optional[bool] = None
@@ -992,11 +1028,13 @@ class MyProfileIn(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    # Merk: `role_title` kan IKKE endres av bruker selv – kun av admin via PUT /users/{id}
 
 
 @api.put("/auth/me/profile")
 async def update_my_profile(data: MyProfileIn, request: Request, user=Depends(get_current_user)):
-    """Oppdater egen profil (navn, telefon, adresse). Brukes bl.a. for å få telefon på utstyrs-PDFen."""
+    """Oppdater egen profil (navn, telefon, adresse). Brukes bl.a. for å få telefon på utstyrs-PDFen.
+    role_title er admin-styrt og kan ikke endres her."""
     update = {}
     if data.name is not None: update["name"] = data.name.strip()
     if data.phone is not None: update["phone"] = data.phone.strip()
@@ -1884,7 +1922,8 @@ async def create_user(data: UserCreateIn, request: Request, admin=Depends(requir
     perms = data.permissions if data.permissions else (admin_perms() if data.role == "admin" else default_perms("read"))
     doc = {
         "id": uid, "email": email, "name": data.name, "phone": data.phone or "", "address": data.address or "",
-        "role": data.role, "permissions": perms, "active": True, "is_super_admin": False,
+        "role": data.role, "role_title": (data.role_title or "").strip(),
+        "permissions": perms, "active": True, "is_super_admin": False,
         "reset_permissions": list(data.reset_permissions or []) if data.role != "admin" else [],
         "can_view_login_history": bool(data.can_view_login_history) if data.role != "admin" else True,
         "tenant_id": tid,
@@ -3234,6 +3273,7 @@ async def send_invoice_email(invoice_id: str, data: InvoiceSendIn, request: Requ
             f"Faktura {inv['invoice_number']} - NOK {inv['total']:.2f}",
             f"Hei {inv.get('recipient_name', '')},\n\nVedlagt følger faktura nr {inv['invoice_number']} på NOK {inv['total']:.2f}.\nForfall: {datetime.fromisoformat(inv['due_date']).strftime('%d.%m.%Y')}\nKID: {inv.get('kid', '')}\n\nMvh,\nUTSTYRSROMMET",
             f"faktura-{inv['invoice_number']}.pdf", pdf_b64,
+            sender_user=user,
         )
     except Exception as e:
         logger.error(f"Faktura-sending feilet: {e}")
@@ -3775,7 +3815,8 @@ async def send_team_equipment_list(team_id: str, data: TeamSendEquipmentIn, requ
     attachments = [{"filename": filename, "content": pdf_b64, "type": "application/pdf"}]
     res = await send_tenant_email(tid, to_email,
                                    f"Utstyrsoversikt – {team.get('team_name')}",
-                                   html, attachments=attachments, cc=cc_list or None)
+                                   html, attachments=attachments, cc=cc_list or None,
+                                   sender_user=user)
     if not res.get("ok"):
         raise HTTPException(502, f"E-post feilet: {res.get('error')}")
     await db.teams.update_one({"id": team_id, "tenant_id": tid}, {"$set": {
@@ -4432,12 +4473,41 @@ async def _next_supplier_number(tid: str) -> str:
 @api.get("/suppliers")
 async def list_suppliers(request: Request, user=Depends(get_current_user)):
     tid = await require_tenant(request, user)
-    # Backfill any suppliers missing supplier_number
-    missing = await db.suppliers.find({"tenant_id": tid, "supplier_number": {"$in": [None, ""]}}, {"_id": 0}).to_list(500)
+    not_deleted = {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}
+    # Backfill any suppliers missing supplier_number (men ikke slettede)
+    missing = await db.suppliers.find({"tenant_id": tid, "supplier_number": {"$in": [None, ""]}, **not_deleted}, {"_id": 0}).to_list(500)
     for m in missing:
         num = await _next_supplier_number(tid)
         await db.suppliers.update_one({"id": m["id"], "tenant_id": tid}, {"$set": {"supplier_number": num}})
-    return await db.suppliers.find({"tenant_id": tid}, {"_id": 0}).sort("name", 1).to_list(500)
+    return await db.suppliers.find({"tenant_id": tid, **not_deleted}, {"_id": 0}).sort("name", 1).to_list(500)
+
+
+@api.get("/suppliers/trash")
+async def list_deleted_suppliers(request: Request, user=Depends(require_admin)):
+    """Soft-slettede leverandører fra siste 30 dager. Kun admin."""
+    tid = await require_tenant(request, user)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    docs = await db.suppliers.find({
+        "tenant_id": tid,
+        "deleted_at": {"$ne": None, "$gte": cutoff},
+    }, {"_id": 0}).sort("deleted_at", -1).to_list(200)
+    return docs
+
+
+@api.post("/suppliers/{sid}/restore")
+async def restore_supplier(sid: str, request: Request, user=Depends(require_admin)):
+    """Gjenopprett en soft-slettet leverandør. Kun admin."""
+    tid = await require_tenant(request, user)
+    doc = await db.suppliers.find_one({"id": sid, "tenant_id": tid})
+    if not doc:
+        raise HTTPException(404, "Fant ikke leverandør")
+    if not doc.get("deleted_at"):
+        raise HTTPException(400, "Leverandøren er ikke slettet")
+    await db.suppliers.update_one({"id": sid, "tenant_id": tid}, {
+        "$unset": {"deleted_at": "", "deleted_by_user_id": "", "deleted_by_name": ""},
+        "$set": {"active": True, "restored_at": now_iso(), "restored_by_name": user.get("name") or user.get("email")},
+    })
+    return await db.suppliers.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
 
 
 @api.post("/suppliers")
@@ -4460,13 +4530,19 @@ async def update_supplier(sid: str, data: SupplierIn, request: Request, user=Dep
 
 @api.delete("/suppliers/{sid}")
 async def delete_supplier(sid: str, request: Request, user=Depends(require_admin)):
+    """Soft-delete leverandør. Admin kan angre innen 30 dager via POST /suppliers/{sid}/restore."""
     tid = await require_tenant(request, user)
+    doc = await db.suppliers.find_one({"id": sid, "tenant_id": tid})
+    if not doc:
+        raise HTTPException(404, "Fant ikke leverandør")
     orders = await db.purchase_orders.count_documents({"tenant_id": tid, "supplier_id": sid})
-    if orders:
-        await db.suppliers.update_one({"id": sid, "tenant_id": tid}, {"$set": {"active": False}})
-        return {"ok": True, "deactivated": True}
-    await db.suppliers.delete_one({"id": sid, "tenant_id": tid})
-    return {"ok": True}
+    await db.suppliers.update_one({"id": sid, "tenant_id": tid}, {"$set": {
+        "deleted_at": now_iso(),
+        "deleted_by_user_id": user.get("id"),
+        "deleted_by_name": user.get("name") or user.get("email"),
+        "active": False,
+    }})
+    return {"ok": True, "soft_deleted": True, "had_orders": orders > 0}
 
 
 @api.get("/suppliers/{sid}/orders")
@@ -4577,6 +4653,7 @@ async def send_behovsskjema(sid: str, data: dict, request: Request, user=Depends
         tid, to_email,
         f"Behovsskjema {bs.get('po_number')} – {bs.get('team_name')}",
         html, attachments=attachments, cc=cc_list,
+        sender_user=user,
     )
     if not res.get("ok"):
         raise HTTPException(502, f"E-post feilet: {res.get('error')}")
@@ -5304,7 +5381,7 @@ async def test_email_settings(data: EmailTestIn, request: Request, user=Depends(
         f'<p>Hvis du har fått denne, fungerer e-postoppsettet.</p>'
         f'<p style="color:#64748b;font-size:12px">Sendt {now_iso()}</p>'
     )
-    res = await send_tenant_email(tid, to, "Test-epost fra Utstyrsrommet", html)
+    res = await send_tenant_email(tid, to, "Test-epost fra Utstyrsrommet", html, sender_user=user)
     await db.tenant_email_settings.update_one({"tenant_id": tid}, {"$set": {
         "last_test_at": now_iso(),
         "last_test_ok": bool(res.get("ok")),
@@ -5374,7 +5451,8 @@ async def notify_lagleder(oid: str, data: NotifyIn, request: Request, user=Depen
         r = await send_tenant_email(tid, recipient["email"],
                                     f"Utstyret for {order['team_name']} er klart",
                                     html, attachments=attachments,
-                                    cc=[user_email] if user_email else None)
+                                    cc=[user_email] if user_email else None,
+                                    sender_user=user)
         log.append({"channel": "email", "to": recipient["email"], "at": now_iso(), **r})
     any_ok = any(x.get("ok") for x in log)
     update = {"$push": {"notification_log": {"$each": log}}}
@@ -5428,7 +5506,8 @@ async def send_order_email(oid: str, data: OrderSendIn, request: Request, user=D
     if user_email and user_email not in cc_list and user_email != data.to: cc_list.append(user_email)
     attachments = [{"filename": filename, "content": pdf_b64, "content_type": "application/pdf"}]
     res = await send_tenant_email(tid, data.to, subject, html,
-                                   attachments=attachments, cc=cc_list or None)
+                                   attachments=attachments, cc=cc_list or None,
+                                   sender_user=user)
     if not res.get("ok"):
         raise HTTPException(502, f"E-post feilet: {res.get('error')}")
     await db.purchase_orders.update_one({"id": oid, "tenant_id": tid}, {"$set": {
