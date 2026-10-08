@@ -112,6 +112,8 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
   const toggleGroup = (path) => setCollapsed((c) => ({ ...c, [path]: !c[path] }));
   const clearFilters = () => { setFilters({}); setSearch(""); setSort(null); setGroupBy([]); };
   const filterableCols = columns.filter((c) => c.filter);
+  // Under aktivt søk eller filter: tving alle grupper åpne så treff vises uten å måtte klikke seg nedover
+  const isSearching = search.trim() !== "" || activeFilterCount > 0;
 
   const renderRow = (r, depth = 0) => {
     const id = getRowId(r);
@@ -137,7 +139,7 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
   const renderGroupNode = (node, parentPath = "") => {
     if (node._row) return renderRow(node._row, (parentPath.match(/›/g) || []).length);
     const path = parentPath ? `${parentPath} › ${node._label}` : node._label;
-    const isOpen = !collapsed[path];
+    const isOpen = isSearching ? true : !collapsed[path];
     const depth = node._depth || 0;
     const isDropTarget = dropTarget === path;
     // Fargekoding per dybde
@@ -271,6 +273,13 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
         )}
         <span className="text-xs text-slate-500 ml-auto">{filteredSorted.length} av {rows.length} rader</span>
       </div>
+
+      {isSearching && groupBy && groupBy.length > 0 && (
+        <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded px-2 py-1 inline-flex items-center gap-1.5" data-testid="dt-search-hint">
+          <Search className="h-3 w-3 text-red-700" />
+          <span>Mapper er auto-åpne under søk/filter · <strong>{filteredSorted.length}</strong> treff på tvers av hierarkiet</span>
+        </div>
+      )}
 
       <div className="border border-slate-200 rounded-md overflow-x-auto bg-white">
         <Table>

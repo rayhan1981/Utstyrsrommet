@@ -20,72 +20,26 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - Plans: `basic` 399/mnd, `pro` 599/mnd, `deluxe` 999/mnd. `free` kun manuelt av plattformeier.
 - Subscription statuses: `trial`, `active`, `expired`, `cancelled`
 
-## Implemented
-### Feb 2026 – Oversikt (seneste iterasjoner)
+## Implemented (seneste iterasjoner)
 
-### Feb 2026 – 11-punkts forbedring (iter 11)
-- **Punkt 3 — Varediagnostikk & tekstlabels**: `DELETE /api/items/{id}` blokkerer 409 ved aktive utlån/åpne bestillinger. `delVariant`-funksjon kaller `POST /api/items/{id}/delete-variant`. Tekstlabels under alle action-ikoner.
-- **Punkt 6 — Dedikert sidebar-fane**: Ny `/app/behov` med Layout.jsx entry. Full CRUD, redigering, send e-post med reell Excel-vedlegg.
-- **Punkt 9 — Varetelling Excel-flyt**: `GET /api/stock-counts/{id}/export`, `POST /api/stock-counts/{id}/import` med line_id-match. applied blokkerer import. `POST /api/stock/manual-adjust` krever reason+size.
-- **Punkt 8 — Returer gruppert per Lag · Årsklasse**: `ReturnedByTeamGrouped`-komponent + `POST /api/loans/{id}/undo-return`.
-- **Punkt 5 — Varemottak restrukturert**: Gruppert per Kategori · Hovedgruppe.
-- **Punkt 1 — Naturlig størrelsessortering**: `/app/frontend/src/lib/sizeSort.js`.
-- **Punkt 2 — QR per variant**: Verifisert payload `{item_id}#{size}`.
-- Testing: iteration_11.json – 13/13 backend pytest + 11/11 UI.
+### Feb 2026 – iter 11-18 (tidligere)
+Se CHANGELOG via git log. Full historie: 11-punkts forbedring, Excel-preview, Varemottak-vs-bestilling, mappe-visning i DataTable, Behovsskjema import+rediger+bekreft, Quick-order per leverandør med PDF-action-modal, taxonomy-fix, drag-and-drop + startet routers-ekstraksjon.
 
-### Feb 2026 – Kategori-hierarki, Excel-preview, Varemottak-vs-bestilling (iter 12)
-- **Kategori-hierarki**: `TaxonomyPicker.jsx` – 3 cascading dropdowns basert på `GET /api/items/taxonomy`. DEFAULT_TAXONOMY_SEEDS for tomme tenants.
-- **Excel-import-mal + preview**: `GET /api/items/import/template`, `POST /api/items/import/preview`, `ImportPreviewDialog.jsx`. Upsert-mode.
-- **Varemottak vs bestilling**: `GET /api/items/{item_id}/open-orders`, gult panel i Varemottak.jsx.
-- Testing: iteration_12.json – 10/10 backend.
-
-### Feb 2026 – Mappe-visning (iter 13)
-- **DataTable nøstet gruppering**: `groupBy` er array, nøstede foldere med fargekodet venstrebord.
-- **Inventory folder-view**: default `initialGroupBy={["category","main_group"]}`.
-
-### Feb 2026 – Behovsskjema import+rediger+bekreft (iter 14)
-- `POST /api/behovsskjema/{sid}/import`, `PUT /lines`, `POST /confirm`, `POST /unlock`.
-- `EditBehovLinesDialog.jsx` + Behov.jsx UI.
-- QR per varelinje blokkerer re-generering 409.
-
-### Feb 2026 – Quick-order per leverandør + PDF-action-modal (iter 15)
-- `Leverandorer.jsx` «Bestill varer»-knapp pr rad → `StockOrderDialog` med `lockedSupplierId`.
-- `OrderActionDialog.jsx` – Lagre lokalt / Skriv ut / Send e-post.
-
-### Feb 2026 – Dialogbrukervennlighet + Drakt-undergrupper (iter 16)
-- `DEFAULT_TAXONOMY_SEEDS` oppdatert: Hjemmedrakter / Bortedrakter som egne undergrupper.
-- TaxonomyPicker m/ tydelige «+ Ny»-knapper.
-- Lagre/Avbryt øverst OG nederst i Inventory-dialog.
-- «🗑️ Slett str»-knapp per variant.
-
-### Feb 2026 – Taxonomy-fix: dropdown-basert + Spillertroye-hierarki (iter 17)
-- «+ Opprett ny» inline øverst i Select-dropdown (ikke sibling-button) – fjerner race condition.
-- Default seeds: «Klær → Spillertrøye → Hjemmedrakter/Bortedrakter».
-- Migrasjonsscript: 3 items main_group=Drakt → Spillertrøye.
-
-### Feb 2026 – Taxonomy-admin + drag-drop + routers (iter 18)
-- Routers-ekstraksjon startet: `/app/backend/routers/_shared.py` + `taxonomy_admin.py`.
-- `POST /api/items/taxonomy/rename`, `POST /api/items/taxonomy/delete`, `POST /api/items/bulk-move`.
-- `TaxonomyAdminCard` i Settings-siden.
-- Drag-and-drop i DataTable: `onDropToGroup`-prop.
-
-### Feb 2026 – 3-nivå hierarki + Mobilvennlig vareliste (iter 19 - denne økten) ✅
-- **Fullt 3-nivå kategorihierarki**: `initialGroupBy` i Inventory.jsx endret fra `["category","main_group"]` → `["category","main_group","sub_group"]`. Items vises kun i det dypeste nivået (sub_group), aldri direkte under hovedgruppe eller kategori.
-- **Empty-bucket labels**: GroupLabel pr nivå viser `(Uten kategori)`, `(Uten hovedgruppe)`, `(Uten undergruppe)` når feltet mangler – holder varer i korrekt gruppe uten å blande.
-- **Antall i parentes**: `_count` i DataTable er total deep count under hvert nivå (f.eks. Klær (3) teller alle rader under hele Klær-grenen).
-- **Mobilvennlig vareliste**: Responsive Tailwind-klasser pr kolonne (`hidden sm/md/lg/xl:table-cell`) skjuler mindre viktige kolonner på smale skjermer. Mobile radstruktur: image + varenavn på én linje m/ size+jersey-badge inline, pris/antall/lokasjon på andre linje – `(Mangler leverandør)` badge på tredje linje ved behov.
-- **Kompakte rader**: Redusert cell-padding (py-1 vs py-2) + mindre gap i actions-cell + mindre indentasjon pr nøstet nivå (14px vs 20px).
-- **Null horisontal scroll på mobil**: `document.body.scrollWidth === clientWidth` på 390px.
-- **getRowId-fix**: Variants av samme item delte `id`, nå bruker DataTable `_id` som er unik.
-- Testing: iteration_19.json – 100% frontend pass, 11/11 krav verifisert, 0 UI-bugs. 0 horisontal overflow på mobil 390x844.
+### Feb 2026 – iter 19: 3-nivå hierarki + Mobilvennlig + Hierarki-søk ✅
+- **Fullt 3-nivå kategorihierarki**: `initialGroupBy` i Inventory.jsx = `["category","main_group","sub_group"]`. Items vises **kun** i den dypeste undergruppen, aldri direkte under hovedgruppe. Hjemmedrakter/Bortedrakter alltid adskilt.
+- **Empty-bucket labels**: `(Uten kategori)` / `(Uten hovedgruppe)` / `(Uten undergruppe)` holder item i korrekt gruppe uten å blande.
+- **Antall i parentes**: `_count` = deep count over alle underliggende nivåer.
+- **Mobilvennlig vareliste**: Responsive Tailwind-klasser (`hidden sm/md/lg/xl:table-cell`) skjuler mindre viktige kolonner på smale skjermer. Kompakt radstruktur: bilde + navn + size/jerseynr-badge inline, pris · antall · lokasjon på andre linje. Padding `py-1` for data-rader. Null horisontal scroll på 390px.
+- **getRowId-fix**: Variants av samme item delte `id`, nå bruker DataTable `_id`.
+- **Hierarki-søk (Søk på tvers av hierarki)**: `isSearching = search || activeFilterCount > 0` i DataTable. Når aktivt tvinger `isOpen = true` på alle mapper så treff vises på tvers av hele hierarkiet uten å åpne manuelt. Hint-banner viser `Mapper er auto-åpne under søk/filter · N treff på tvers av hierarkiet`. Når søk tømmes beholdes brukerens originale collapsed-state.
+- Testing: iteration_19.json – 100% frontend pass, 0 UI-bugs, 0 React-warnings.
 
 ## Backlog
-- **P1: Server-refaktor** – Splitt `/app/backend/server.py` (5480 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). Krever først å flytte shared deps til `/app/backend/deps.py`. Dir `/app/backend/routers/` opprettet med `_shared.py` og `taxonomy_admin.py` som placeholder. KRITISK før flere features for å unngå search_replace-mismatch og lastetid.
+- **P1: Server-refaktor** – Splitt `/app/backend/server.py` (5480 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). Flytt shared deps til `/app/backend/deps.py`. `/app/backend/routers/` har `_shared.py` + `taxonomy_admin.py`. KRITISK før flere features.
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall
-- P2: Punkt 4 (iter11-restpost) – Full-featured strict-mode UI der bruker kan velge «Avbryt hvis feil» på import.
+- P2: Punkt 4 – Full-featured strict-mode UI «Avbryt hvis feil» på import.
 - P2: Dangling refs – `DELETE /items` sjekker ikke behovsskjema-linjer.
-- P2: ImportPreviewDialog laster filen 2 ganger – kan optimaliseres med `/items/import/commit` som bruker preview-token.
-- P2: Punkt 4 – Dedikert Excel-import for lagerbeholdning med forhåndsvisning + leverandør-dropdown-matching.
-- P2: Punkt 1 – Streng hierarki Kategori → Hovedgruppe → Undergruppe (cascading dropdowns) – nåværende er fri tekst.
+- P2: ImportPreviewDialog laster filen 2 ganger – optimaliser med `/items/import/commit` preview-token.
+- P2: Dedikert Excel-import for lagerbeholdning m/ forhåndsvisning + leverandør-dropdown-matching.
 - P2: Cache subscription-status, KID MOD10/11, Faktura GridFS, TTL login_history
