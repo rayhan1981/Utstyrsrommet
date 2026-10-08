@@ -581,10 +581,6 @@ async def _send_emergent(to: List[str], subject: str, html: str,
         return {"ok": False, "error": str(e)}
 
 
-def _build_user_signature_html_placeholder():
-    pass
-
-
 async def send_tenant_email(tid: Optional[str], to, subject: str, html: str,
                              attachments: Optional[List[dict]] = None,
                              cc=None, sender_user: Optional[dict] = None) -> dict:
@@ -1877,6 +1873,9 @@ async def list_users(request: Request, user=Depends(require_admin)):
     for u in users:
         last_seen = u.get("last_seen")
         u["online"] = bool(last_seen and last_seen >= threshold)
+        # Sikre at role_title alltid er med i responsen (default-tom for eldre brukere)
+        if "role_title" not in u:
+            u["role_title"] = ""
     return users
 
 

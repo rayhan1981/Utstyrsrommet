@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 20 testing complete. Validated 3 features: (1) Supplier soft-delete + trash + restore (admin-only, 403 for users). (2) role_title field on User (admin can set/update via POST/PUT /users; non-admin cannot change it via PUT /auth/me/profile - verified ignored). (3) Email signature code (_build_user_signature_html + sender_user kwarg) wired into send_tenant_email across all user-triggered emails. Backend: 7/7 pytest tests pass. Frontend: full Playwright flow passed - create supplier, delete+Angre undo, delete+Papirkurv restore, create user with role_title, edit updates role_title, column displays correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/users", "issue": "Pre-existing users (e.g. super admin raymond.d.hansen) do not include a 'role_title' key in the response because the field was added later and never backfilled in MongoDB docs. Frontend handles this gracefully (shows '–'), but spec implies the key should always be present. Suggest adding a .get default in the serializer or a one-shot backfill: db.users.update_many({'role_title': {'$exists': False}}, {'$set': {'role_title': ''}})."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/tests/test_iteration20.py", "/app/test_reports/pytest/iter20.xml"],
+  "action_items": [
+    "(Minor) Backfill or default role_title='' for legacy users so GET /api/users always returns the key; or coerce in list_users serializer."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 5560 lines - well above the 700-line guideline. Consider splitting into modules (auth, users, suppliers, emails, orders, invoices).",
+    "_build_user_signature_html is defined once at ~line 304 and a stray placeholder _build_user_signature_html_placeholder exists at ~line 584 - safe to delete to avoid confusion.",
+    "/api/email-settings/test deliberately raises HTTPException(502,...) on provider failure; the k8s/Cloudflare layer replaces the response body with its own HTML 502 page, so the frontend sees generic Bad Gateway instead of the actionable 'Test-epost feilet: ...' detail. Consider returning 200 with {ok:false,error:'...'} so the UI can surface the real reason."
+  ],
+  "updated_files": ["/app/tests/test_iteration20.py"],
+  "success_rate": {"backend": "100% (7/7 pytest)", "frontend": "100% (all Playwright assertions passed)"},
+  "test_credentials": "Admin: raymond.d.hansen@gmail.com / Snowboard1!. Dynamic test users created and cleaned up each run.",
+  "seed_data_creation": "Test suppliers (TSupX_*, TEST_SupplierX_*, TEST_NA_*) are soft-deleted at the end of each run; they remain in /suppliers/trash for 30 days (expected). Test users (test_iter20_*, testll_*, TestLagleder) are hard-deleted at end of run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The 'Papirkurv' trash list may accumulate TEST_* and TSupX_* soft-deleted suppliers from prior runs (30-day window). This is expected and does not break anything. All frontend data-testids used: suppliers-page, new-supplier-btn, supplier-name, save-supplier-btn, del-supplier-{num}, open-trash-btn, restore-supplier-{num}, users-page, new-user-btn, user-name, user-email, user-role-title, save-user-btn. Backend endpoints verified: POST/DELETE /api/suppliers, GET /api/suppliers/trash, POST /api/suppliers/{sid}/restore, POST /api/users, PUT /api/users/{id}, PUT /api/auth/me/profile, GET /api/users, POST /api/email-settings/test. The /api/email-settings/test 502 'Bad Gateway' from CF is actually an expected provider rejection masked by the ingress proxy — see critical code review comment #3."
+}
