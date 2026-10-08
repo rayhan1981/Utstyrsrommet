@@ -124,11 +124,11 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
                 className={draggedId === id ? "opacity-40" : ""}>
       {columns.map((c, idx) => (
         <TableCell key={c.key} className={c.className}
-                   style={idx === 0 && depth > 0 ? { paddingLeft: `${12 + depth * 20}px` } : undefined}>
+                   style={idx === 0 && depth > 0 ? { paddingLeft: `${8 + depth * 14}px`, paddingTop: "4px", paddingBottom: "4px" } : { paddingTop: "4px", paddingBottom: "4px" }}>
           {c.render ? c.render(r) : get(c, r)}
         </TableCell>
       ))}
-      {actions && <TableCell className="text-right space-x-1">{actions(r)}</TableCell>}
+      {actions && <TableCell className="text-right py-1 px-1 sm:px-2">{actions(r)}</TableCell>}
     </TableRow>
     );
   };
@@ -169,11 +169,11 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
                   onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
                   data-testid={`dt-group-${path.replace(/[^A-Za-z0-9]+/g, "_")}`}>
           <TableCell colSpan={columns.length + (actions ? 1 : 0)}
-                     className="font-semibold text-sm"
-                     style={{ paddingLeft: `${12 + depth * 20}px` }}>
-            <span className="inline-flex items-center gap-2">
-              {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              <span className={depth === 0 ? "text-red-900 uppercase tracking-wide text-xs" : depth === 1 ? "text-amber-800" : "text-sky-800"}>
+                     className="font-semibold text-sm py-1.5"
+                     style={{ paddingLeft: `${8 + depth * 14}px` }}>
+            <span className="inline-flex items-center gap-1.5 flex-wrap">
+              {isOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+              <span className={depth === 0 ? "text-red-900 uppercase tracking-wide text-xs" : depth === 1 ? "text-amber-800 text-sm" : "text-sky-800 text-xs"}>
                 {node._label}
               </span>
               <span className="text-xs text-slate-500 font-normal">({node._count})</span>

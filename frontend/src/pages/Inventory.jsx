@@ -234,9 +234,9 @@ export default function Inventory() {
         </div>
       </div>
 
-      <Card className="p-3">
+      <Card className="p-2 sm:p-3">
         <DataTable
-          initialGroupBy={["category", "main_group"]}
+          initialGroupBy={["category", "main_group", "sub_group"]}
           onDropToGroup={async (rowId, target) => {
             // rowId er vårt _id (f.eks. "ITEM__size__jersey__idx") – mapper tilbake til item.id
             const parentId = rowId.split("__")[0];
@@ -285,29 +285,45 @@ export default function Inventory() {
           emptyLabel="Ingen varer."
           searchPlaceholder="Søk vare, kategori, størrelse, draktnr, lokasjon…"
           columns={[
-            { key: "image", label: "", render: (r) => (
-                <div className="h-10 w-10 rounded-md overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+            { key: "image", label: "", className: "w-10 py-1 px-1 sm:px-2", render: (r) => (
+                <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-md overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
                   {r.image_url ? <img src={r.image_url} alt={r.name} className="h-full w-full object-cover" /> : <ImageIcon className="h-4 w-4 text-slate-300" />}
                 </div>
             ) },
-            { key: "name", label: "Varenavn", filter: "text", render: (r) => (
-              <div className="font-semibold truncate max-w-[180px] flex items-center gap-1.5">
-                {r.name}
-                {!r._parent.supplier_id && <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded whitespace-nowrap" title="Mangler leverandør – rediger varen">⚠ Mangler leverandør</span>}
+            { key: "name", label: "Varenavn", filter: "text", className: "py-1 px-1 sm:px-2", render: (r) => (
+              <div className="min-w-0 max-w-[220px] sm:max-w-[260px]">
+                <div className="font-semibold text-sm truncate flex items-center gap-1.5">
+                  <span className="truncate">{r.name}</span>
+                  {r.size && <span className="sm:hidden font-mono text-[10px] bg-slate-100 px-1 py-0.5 rounded shrink-0">{r.size}</span>}
+                  {r.jersey_number && r.jersey_number !== "X" && <span className="sm:hidden font-mono text-[10px] text-slate-500 shrink-0">#{r.jersey_number}</span>}
+                </div>
+                <div className="sm:hidden flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-500">
+                  <span>{nok(r.price)}</span>
+                  <span className="text-slate-300">·</span>
+                  <span className={r.quantity <= 3 ? "text-amber-700 font-semibold" : ""}>{r.quantity} stk</span>
+                  {r.location && <><span className="text-slate-300">·</span><span className="text-red-700 truncate">{r.location}</span></>}
+                </div>
+                {!r._parent.supplier_id && <span className="inline-block text-[9px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5" title="Mangler leverandør – rediger varen">⚠ Mangler leverandør</span>}
               </div>
             ), accessor: (r) => `${r.name} ${r._parent.supplier_name || ""} ${r._parent.supplier_number || ""}` },
-            { key: "size", label: "Str", filter: "text", render: (r) => r.size ? <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">{r.size}</span> : <span className="text-slate-400">–</span> },
-            { key: "jersey_number", label: "Draktnr", filter: "text", render: (r) => (r.jersey_number && r.jersey_number !== "X") ? <span className="font-mono text-xs">#{r.jersey_number}</span> : <span className="text-slate-400">–</span> },
-            { key: "category", label: "Kategori", filter: "text", groupable: true, render: (r) => <span className="text-xs">{r.category || "-"}</span> },
-            { key: "main_group", label: "Hovedgruppe", filter: "text", groupable: true, accessor: (r) => r.main_group || "", render: (r) => <span className="text-xs text-slate-600">{r.main_group || "-"}</span> },
-            { key: "sub_group", label: "Undergruppe", filter: "text", groupable: true, accessor: (r) => r.sub_group || "", render: (r) => <span className="text-xs text-slate-500">{r.sub_group || "-"}</span> },
-            { key: "type", label: "Type", filter: "select",
+            { key: "size", label: "Str", filter: "text", className: "hidden sm:table-cell py-1 px-2", render: (r) => r.size ? <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">{r.size}</span> : <span className="text-slate-400">–</span> },
+            { key: "jersey_number", label: "Draktnr", filter: "text", className: "hidden md:table-cell py-1 px-2", render: (r) => (r.jersey_number && r.jersey_number !== "X") ? <span className="font-mono text-xs">#{r.jersey_number}</span> : <span className="text-slate-400">–</span> },
+            { key: "category", label: "Kategori", filter: "text", groupable: true, className: "hidden xl:table-cell py-1 px-2",
+              groupLabel: (v) => (v == null || v === "" ? "(Uten kategori)" : String(v)),
+              render: (r) => <span className="text-xs">{r.category || "-"}</span> },
+            { key: "main_group", label: "Hovedgruppe", filter: "text", groupable: true, className: "hidden xl:table-cell py-1 px-2", accessor: (r) => r.main_group || "",
+              groupLabel: (v) => (v == null || v === "" ? "(Uten hovedgruppe)" : String(v)),
+              render: (r) => <span className="text-xs text-slate-600">{r.main_group || "-"}</span> },
+            { key: "sub_group", label: "Undergruppe", filter: "text", groupable: true, className: "hidden xl:table-cell py-1 px-2", accessor: (r) => r.sub_group || "",
+              groupLabel: (v) => (v == null || v === "" ? "(Uten undergruppe)" : String(v)),
+              render: (r) => <span className="text-xs text-slate-500">{r.sub_group || "-"}</span> },
+            { key: "type", label: "Type", filter: "select", className: "hidden lg:table-cell py-1 px-2",
               options: [{value:"vare",label:"Vare"},{value:"klær",label:"Klær"},{value:"ball",label:"Ball"}],
               accessor: (r) => r.type,
               render: (r) => <span className="text-xs">{r.type === "klær" ? "Klær" : r.type === "ball" ? "Ball" : "Vare"}</span> },
-            { key: "price", label: "Pris", filter: "number", accessor: (r) => r.price, render: (r) => <span className="text-xs">{nok(r.price)}</span> },
-            { key: "quantity", label: "Antall", filter: "number", render: (r) => <span className={r.quantity <= 3 ? "text-amber-700 font-semibold" : "font-semibold"}>{r.quantity}</span> },
-            { key: "location", label: "Lokasjon", filter: "text", render: (r) => <span className="text-xs text-red-700">{r.location || "-"}</span> },
+            { key: "price", label: "Pris", filter: "number", className: "hidden md:table-cell py-1 px-2", accessor: (r) => r.price, render: (r) => <span className="text-xs">{nok(r.price)}</span> },
+            { key: "quantity", label: "Antall", filter: "number", className: "hidden sm:table-cell py-1 px-2", render: (r) => <span className={r.quantity <= 3 ? "text-amber-700 font-semibold" : "font-semibold"}>{r.quantity}</span> },
+            { key: "location", label: "Lokasjon", filter: "text", className: "hidden lg:table-cell py-1 px-2", render: (r) => <span className="text-xs text-red-700">{r.location || "-"}</span> },
           ]}
           actions={(r) => {
             const i = r._parent;
