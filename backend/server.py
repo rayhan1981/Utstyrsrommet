@@ -2613,9 +2613,27 @@ async def _parse_import_rows(tid: str, content: bytes):
     return grouped, errors
 
 
+DEFAULT_TAXONOMY_SEEDS = [
+    {"name": "Klær", "main_groups": [
+        {"name": "Drakt", "sub_groups": ["Hjemme", "Borte", "Tredjedrakt"]},
+        {"name": "Trening", "sub_groups": ["Overdel", "Shorts", "Treningsjakke"]},
+        {"name": "Målvakt", "sub_groups": ["Drakt", "Hansker"]},
+    ]},
+    {"name": "Baller", "main_groups": [
+        {"name": "Trening", "sub_groups": ["Håndball", "Fotball"]},
+        {"name": "Kamp", "sub_groups": ["Håndball", "Fotball"]},
+    ]},
+    {"name": "Utstyr", "main_groups": [
+        {"name": "Trening", "sub_groups": ["Markering", "Kjegler", "Vester"]},
+        {"name": "Førstehjelp", "sub_groups": ["Førstehjelpsskrin", "Tape"]},
+    ]},
+]
+
+
 @api.get("/items/taxonomy")
 async def get_items_taxonomy(request: Request, user=Depends(require_perm("inventory", "read"))):
-    """Returnerer hierarki Kategori → Hovedgruppe → Undergruppe basert på eksisterende varer."""
+    """Returnerer hierarki Kategori → Hovedgruppe → Undergruppe basert på eksisterende varer.
+    Hvis tenanten ikke har noen varer ennå, returneres DEFAULT_TAXONOMY_SEEDS som startforslag."""
     tid = await require_tenant(request, user)
     items = await db.items.find({"tenant_id": tid}, {"category": 1, "main_group": 1, "sub_group": 1, "_id": 0}).to_list(5000)
     tree: Dict[str, Dict[str, set]] = {}
@@ -2637,7 +2655,9 @@ async def get_items_taxonomy(request: Request, user=Depends(require_perm("invent
         for mg in sorted(tree[cat].keys()):
             main_groups.append({"name": mg, "sub_groups": sorted(tree[cat][mg])})
         categories.append({"name": cat, "main_groups": main_groups})
-    return {"categories": categories}
+    if not categories:
+        return {"categories": DEFAULT_TAXONOMY_SEEDS, "is_seed": True}
+    return {"categories": categories, "is_seed": False}
 
 
 @api.post("/items/import/preview")
@@ -2748,22 +2768,35 @@ async def items_import_template(request: Request, user=Depends(require_perm("inv
 
 
 @api.post("/items/import")
-async def items_import(request: Request, file: UploadFile = File(...), strict: bool = False, user=Depends(require_perm("inventory", "write"))):
-    """Importer Excel. Standard: lager nye varer. Hvis strict=True returnerer 400 ved validerings-feil."""
+async def items_import(request: Request, file: UploadFile = File(...), strict: bool = False,
+                        mode: str = "upsert", user=Depends(require_perm("inventory", "write"))):
+    """Importer Excel. mode='upsert' (default): oppdaterer eksisterende varer m/samme navn+kategori.
+    mode='insert': feiler hvis vare med samme navn finnes. strict=True returnerer 400 ved valideringsfeil."""
     tid = await require_feature(request, user, "excel_import")
     content = await file.read()
     grouped, errors = await _parse_import_rows(tid, content)
     if strict and errors:
         raise HTTPException(400, {"message": f"{len(errors)} valideringsfeil – rett opp og prøv igjen", "errors": errors})
-    created = 0
+    created = 0; updated = 0
     for doc in grouped.values():
-        # Fjern interne hjelpefelt
-        doc.pop("_will_update", None); doc.pop("_existing_id", None)
-        await db.items.insert_one(doc)
-        created += 1
+        will_update = doc.pop("_will_update", False)
+        existing_id = doc.pop("_existing_id", None)
+        if will_update and existing_id:
+            if mode == "insert":
+                errors.append({"row": 0, "field": "Varenavn", "error": f"«{doc['name']}» finnes allerede – bruk mode=upsert eller endre navn"})
+                continue
+            # Behold eksisterende id, oppdater resten
+            doc_update = {k: v for k, v in doc.items() if k not in ("id", "tenant_id", "created_at")}
+            await db.items.update_one({"id": existing_id, "tenant_id": tid}, {"$set": doc_update})
+            updated += 1
+        else:
+            await db.items.insert_one(doc)
+            created += 1
     if user.get("role") != "platform_owner":
-        await _log_activity(tid, user, "items_import", f"Importerte {created} varer fra Excel", {"created": created, "errors": len(errors)})
-    return {"created": created, "errors": errors}
+        await _log_activity(tid, user, "items_import",
+                             f"Importerte {created} nye + {updated} oppdaterte varer fra Excel",
+                             {"created": created, "updated": updated, "errors": len(errors)})
+    return {"created": created, "updated": updated, "errors": errors}
 
 
 @api.get("/items/{item_id}/open-orders")

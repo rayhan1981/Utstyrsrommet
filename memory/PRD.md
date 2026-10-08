@@ -199,7 +199,17 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Punkt 2 — QR per variant**: Verifisert at `/items/{id}/qr-images` lager payload `{item_id}#{size}` per størrelse. ViewQrDialog sorterer QR-grid naturlig.
 - **Testing**: iteration_11.json – 13/13 backend pytest + 11/11 UI-elementer verifisert. 2 LOW-priority fixet: (a) manual-adjust 400 ved klær uten size, (b) React duplicate-key fix i Varemottak.
 
+### Feb 2026 – Kategori-hierarki, Excel-preview, Varemottak-vs-bestilling (iter 12)
+- **Kategori-hierarki**: Nytt `/app/frontend/src/components/TaxonomyPicker.jsx` – 3 cascading dropdowns (Kategori → Hovedgruppe → Undergruppe) basert på `GET /api/items/taxonomy`. «+»-knapp pr nivå bytter til tekstfelt for ny verdi, «x» tilbake til dropdown. For tomme tenants returneres `DEFAULT_TAXONOMY_SEEDS` (Klær, Baller, Utstyr m/ underkategorier) så dialogen aldri er tom.
+- **Excel-import-mal + preview**: Ny `GET /api/items/import/template` returnerer stilet .xlsx med header-fargekoding, datavalidering på Type-kolonne, 12 kolonner (ny: `Leverandørnr`), eget Instruksjoner-ark m/ feltbeskrivelser og liste over klubbens eksisterende leverandører. Ny `POST /api/items/import/preview` parser + validerer uten å commit. Ny `/app/frontend/src/components/ImportPreviewDialog.jsx` viser statistikk-cards, feil-tabell og items-tabell m/ supplier-match (f.eks. «#00001 Select Sport AS») FØR brukeren bekrefter. `POST /api/items/import` endret til `upsert`-modus (oppdaterer eksisterende varer med samme navn+kategori) + `mode=insert` for feile ved duplikater + `strict=true` for 400-respons ved valideringsfeil. Returnerer `{created, updated, errors}`.
+- **Varemottak vs bestilling**: Nytt `GET /api/items/{item_id}/open-orders` returnerer åpne bestillinger (status ∉ {levert, arkivert, annullert}) m/ bestilt/mottatt/gjenstår per linje. Varemottak.jsx viser nytt gult «📦 Åpne bestillinger»-panel når bruker velger en vare, filtrert på picked størrelse. Klikkbart `po_number` → kopierer til Bestillingsreferanse-feltet.
+- **Testing**: iteration_12.json – 10/10 backend pytest + alle UI-testids. Fikset: duplicate-item-creation ved re-import, empty-tenant UX, duplicate React-nøkler på Inventory grouped-rader.
+
 ## Backlog
+- P1: **Server-refaktor** – Splitt `/app/backend/server.py` (5256 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). Krever først å flytte shared deps (db, require_tenant, require_perm, _log_activity, now_iso, new_id, _xlsx_response, BALL_SIZES, _parse_import_rows) til `/app/backend/deps.py`. Dir `/app/backend/routers/` opprettet som placeholder. KRITISK før flere features for å unngå search_replace-mismatch og lastetid.
+- P2: Punkt 4 (iter11-restpost) – Full-featured strict-mode UI der bruker kan velge «Avbryt hvis feil» på import.
+- P2: Dangling refs – `DELETE /items` sjekker ikke behovsskjema-linjer.
+- P2: ImportPreviewDialog laster filen 2 ganger – kan optimaliseres med `/items/import/commit` som bruker preview-token.
 - P2: Punkt 4 – Dedikert Excel-import for lagerbeholdning med forhåndsvisning + leverandør-dropdown-matching (nåværende import-template fungerer, men kan utvides).
 - P2: Punkt 1 – Streng hierarki Kategori → Hovedgruppe → Undergruppe (cascading dropdowns). Nåværende er fri tekst.
 - P2: Splitt /app/backend/server.py (5063 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). KRITISK før flere features.

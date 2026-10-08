@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 12 - Verified all 3 Next-Action-Items: Taxonomy hierarchy, Excel import preview/validate, and Varemottak open-orders panel. BACKEND: 10/10 pytest cases PASS (test_iteration12.py). Verified: (1) GET /items/taxonomy returns {categories:[{name, main_groups:[{name, sub_groups:[]}]}]} with at least 1 category and includes 'Klær' once items exist; (2) GET /items/import/template returns valid xlsx (>5000 bytes) with 'Varer' + 'Instruksjoner' sheets, 12 header columns ending with 'Leverandørnr', first data row 'Kjegler', and supplier list in Instruksjoner incl. 00001; (3) POST /items/import/preview with template returns {ok:true, items:3, total_items:3, total_variants:4, errors:[]} and matches 'Håndball Select' to supplier 00001 Select Sport AS; (4) Invalid Type 'xyz' -> errors with field='Type' error referencing valid types; (5) Non-existent Leverandørnr 99999 -> errors field='Leverandørnr' error 'finnes ikke'; (6) Missing Kategori -> errors field='Kategori' error='Kategori er påkrevd'; (7) POST /items/import commits 3 items; Håndball Select has supplier_id, supplier_number='00001', supplier_name='Select Sport AS', 2 size variants; (8) GET /items/{id}/open-orders returns {orders:[]} for item with no PO; (9) Returns orders array w/ order_id, po_number, supplier_name, size, jersey_number, ordered, received, remaining, line_status, status on item with open PO; (10) Filters out orders with status='levert' (verified via /orders/{oid}/manual-status). FRONTEND via playwright on prod URL: /app/utstyr 'Nytt utstyr' dialog opens with cat-select, mg-select, sg-select testids and cat-add-btn, mg-add-btn, sg-add-btn. Clicking cat-add-btn switches to cat-custom-input (visible=true). 'Importer Excel' button present. /app/varemottak: varemottak-page loads, 12 pick buttons present; picking item (Hjemmedrakt S) shows no-open-orders testid with text 'Ingen åpne bestillinger for denne varen (str 164).' as expected (demo tenant has no open PO for that variant). Backend tests already cover the populated-panel case. React duplicate-key console warnings persist on all pages (carried over from iter 11, already reported).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Global (seen on /app/utstyr, /app/varemottak)", "issue": "React 'Encountered two children with the same key' warning fires repeatedly (10+ times per page). Reported in iter_11 and NOT yet fixed. Non-blocking but should fix map keys (likely composite key item_id+variant_id+size).", "selector": "varemottak/utstyr tables", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12.py",
+    "/app/test_reports/pytest/iteration12.xml"
+  ],
+  "action_items": [
+    "LOW (unresolved from iter_11): Fix React duplicate-key warnings on grouped item/variant lists. Use composite key e.g. `${item.id}-${variant.size}-${variant.jersey_number}` in Inventory.jsx and Varemottak.jsx."
+  ],
+  "critical_code_review_comments": [
+    "server.py still 5256 lines – iter_11 recommendation to split into modules remains unaddressed. P1 in backlog per request.",
+    "items_import endpoint ALWAYS INSERTS, never updates. _parse_import_rows computes `_will_update` and `_existing_id` from existing_names, but items_import() just inserts the doc – resulting in duplicate items with same name/category. If 'Hjemmedrakt' already exists and user re-imports template, two 'Hjemmedrakt' documents will exist. Either (a) honor _will_update and do upsert via existing_id, or (b) add validation rejecting duplicate names when not strict, or (c) remove the misleading _will_update field.",
+    "items_import endpoint silently ignores validation errors by default (non-strict). The default UX is dangerous: if user has 50 bad rows and 10 good ones, 50 rows are silently dropped and user only sees 'created: 10'. Preview flow mitigates this in UI but a direct API caller could lose data. Consider defaulting strict=True.",
+    "/items/taxonomy builds tree only from existing items. Empty tenants (no items yet) return `{categories: []}` and 'Nytt utstyr' dialog will have NO options at all – forcing user to use the '+ ny kategori' path. Consider seeding a few default categories (Klær, Baller, Utstyr) or returning common defaults when tree is empty.",
+    "/items/{id}/open-orders final_statuses set includes 'levert', 'arkivert', 'annullert' but NOT 'manko' or 'restbestilling' – is that intentional? A 'manko' order may still be partially open – OK to keep but worth a code comment explaining.",
+    "ImportPreviewDialog.jsx uploads file twice (preview + commit). If user edits original Excel between preview and commit click, backend will import the edited version silently. Consider either (a) passing preview grouped-dict to a /items/import/commit endpoint with a token, or (b) hashing filename+mtime in preview response.",
+    "TaxonomyPicker + button is a one-way switch: once user clicks '+ ny kategori' they cannot go back to the dropdown without reopening the dialog. Add a small 'x' or 'tilbake' button to revert to dropdown mode."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration12.py", "/app/test_reports/iteration_12.json"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all required testids verified)"},
+  "test_credentials": "raymond.d.hansen@gmail.com / Snowboard1! (platform_owner). Backend tests create TEST_It12_* tenants via /api/signup, cleaned up in fixture teardown.",
+  "seed_data_creation": "test_iteration12.py creates 1 TEST_It12_* tenant per run. Includes items (simple + clothing), suppliers (00001 Select Sport AS + random high-number suppliers for open-orders tests), and purchase orders. Auto-cleanup via owner_session.delete.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Testids added this iteration: cat-select, mg-select, sg-select, cat-add-btn, mg-add-btn, sg-add-btn, cat-custom-input, mg-custom-input, sg-custom-input, preview-item-count, preview-error-count, confirm-import-btn, open-orders-panel, no-open-orders, open-order-row-{po_number}. Order status transitions use POST /orders/{oid}/manual-status with {status, reason} (reason required). Backend parallel pytest (xdist, 2 workers, loadscope) is enabled by pytest.ini; use `-n 0` to run sequentially if cross-worker supplier-number collisions appear. In the demo tenant 'Egen klubb', no items have open POs so Varemottak panel-with-orders path requires a test tenant.",
+  "rca of the issue": "N/A - no critical bugs. The main concerns are the silent duplicate-item creation on re-import (items_import always inserts), and the empty-taxonomy UX gap for brand new tenants. Neither blocks the current iteration's feature set but should be addressed before public release."
+}

@@ -218,7 +218,7 @@ export default function Inventory() {
             if (i.is_clothing || i.is_ball) {
               const sortedSizes = sortSizesNatural(i.sizes || [], (s) => s.size);
               return sortedSizes.map((s, sidx) => ({
-                _id: `${i.id}__${sidx}`,
+                _id: `${i.id}__${s.size || "nosize"}__${s.jersey_number || "x"}__${sidx}`,
                 _parent: i,
                 _is_variant: true,
                 id: i.id,
