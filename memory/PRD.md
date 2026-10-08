@@ -205,6 +205,10 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Varemottak vs bestilling**: Nytt `GET /api/items/{item_id}/open-orders` returnerer åpne bestillinger (status ∉ {levert, arkivert, annullert}) m/ bestilt/mottatt/gjenstår per linje. Varemottak.jsx viser nytt gult «📦 Åpne bestillinger»-panel når bruker velger en vare, filtrert på picked størrelse. Klikkbart `po_number` → kopierer til Bestillingsreferanse-feltet.
 - **Testing**: iteration_12.json – 10/10 backend pytest + alle UI-testids. Fikset: duplicate-item-creation ved re-import, empty-tenant UX, duplicate React-nøkler på Inventory grouped-rader.
 
+### Feb 2026 – Mappe-visning Utstyr & Beholdning (iter 13)
+- **DataTable nøstet gruppering**: `/app/frontend/src/components/DataTable.jsx` – `groupBy` er nå array (`["category","main_group"]`), støtter nøstede foldere med farge-kodet venstrebord (rød=Kategori nivå 0, gul=Hovedgruppe nivå 1, blå=Undergruppe nivå 2). Innrykk per nivå. Ny «chip»-selector lar brukeren klikke på/av gruppe-nivåer og se rekkefølge (#1, #2…). Ny prop `initialGroupBy`.
+- **Inventory folder-view**: `/app/frontend/src/pages/Inventory.jsx` – kolonner `category`, `main_group`, `sub_group` er alle `groupable:true`. `initialGroupBy={["category","main_group"]}` gir mappe-visning som default. Brukeren kan klikke chips for å endre gruppering eller «Flatt» for å få tilbake flat tabell.
+
 ## Backlog
 - P1: **Server-refaktor** – Splitt `/app/backend/server.py` (5256 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). Krever først å flytte shared deps (db, require_tenant, require_perm, _log_activity, now_iso, new_id, _xlsx_response, BALL_SIZES, _parse_import_rows) til `/app/backend/deps.py`. Dir `/app/backend/routers/` opprettet som placeholder. KRITISK før flere features for å unngå search_replace-mismatch og lastetid.
 - P2: Punkt 4 (iter11-restpost) – Full-featured strict-mode UI der bruker kan velge «Avbryt hvis feil» på import.

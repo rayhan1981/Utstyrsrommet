@@ -11,11 +11,12 @@ import { ArrowUpDown, ArrowUp, ArrowDown, Search, Filter, X, Layers, ChevronRigh
  *            options: [{value,label}], accessor: row => value, render: row => node, className?,
  *            groupable?: boolean, groupLabel?: (val)=>string }]
  */
-export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", getRowId = (r) => r.id, actions, searchPlaceholder = "Søk…", initialSort }) {
+export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", getRowId = (r) => r.id, actions, searchPlaceholder = "Søk…", initialSort, initialGroupBy }) {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState(initialSort || null);
   const [filters, setFilters] = useState({});
-  const [groupBy, setGroupBy] = useState("");
+  // groupBy er nå en array av kolonne-nøkler for nøstet gruppering (f.eks. ["category","main_group"]).
+  const [groupBy, setGroupBy] = useState(initialGroupBy || []);
   const [collapsed, setCollapsed] = useState({});
 
   const get = (col, row) => (col.accessor ? col.accessor(row) : row[col.key]);
@@ -77,35 +78,80 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
   }, [rows, search, sort, filters, columns]);
 
   const grouped = useMemo(() => {
-    if (!groupBy) return null;
-    const col = columns.find((c) => c.key === groupBy);
-    if (!col) return null;
-    const groups = new Map();
-    for (const r of filteredSorted) {
-      const raw = get(col, r);
-      const parts = Array.isArray(raw) ? (raw.length ? raw : [null]) : [raw];
-      for (const p of parts) {
-        const label = col.groupLabel ? col.groupLabel(p, r) : (p == null || p === "" ? "(Ingen)" : String(p));
-        if (!groups.has(label)) groups.set(label, []);
-        groups.get(label).push(r);
+    if (!groupBy || groupBy.length === 0) return null;
+    const groupCols = groupBy.map((k) => columns.find((c) => c.key === k)).filter(Boolean);
+    if (groupCols.length === 0) return null;
+
+    // Bygg nøstet tre: {label, count, children?, rows?}
+    const build = (list, depth) => {
+      if (depth >= groupCols.length) return list.map((r) => ({ _row: r }));
+      const col = groupCols[depth];
+      const map = new Map();
+      for (const r of list) {
+        const raw = get(col, r);
+        const label = col.groupLabel ? col.groupLabel(raw, r) : (raw == null || raw === "" ? "(Uten)" : String(raw));
+        if (!map.has(label)) map.set(label, []);
+        map.get(label).push(r);
       }
-    }
-    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0], "nb"));
+      return Array.from(map.entries())
+        .sort((a, b) => a[0].localeCompare(b[0], "nb"))
+        .map(([label, rowsInGroup]) => ({
+          _label: label,
+          _depth: depth,
+          _count: rowsInGroup.length,
+          _path: label,
+          _children: build(rowsInGroup, depth + 1),
+        }));
+    };
+    return build(filteredSorted, 0);
   }, [groupBy, columns, filteredSorted]);
 
   const toggleSort = (k) => setSort((s) => s?.key === k ? (s.dir === "asc" ? { key: k, dir: "desc" } : null) : { key: k, dir: "asc" });
-  const toggleGroup = (label) => setCollapsed((c) => ({ ...c, [label]: !c[label] }));
-  const clearFilters = () => { setFilters({}); setSearch(""); setSort(null); setGroupBy(""); };
+  const toggleGroup = (path) => setCollapsed((c) => ({ ...c, [path]: !c[path] }));
+  const clearFilters = () => { setFilters({}); setSearch(""); setSort(null); setGroupBy([]); };
   const filterableCols = columns.filter((c) => c.filter);
 
-  const renderRow = (r) => (
+  const renderRow = (r, depth = 0) => (
     <TableRow key={getRowId(r)} data-testid={`dt-row-${getRowId(r)}`}>
-      {columns.map((c) => (
-        <TableCell key={c.key} className={c.className}>{c.render ? c.render(r) : get(c, r)}</TableCell>
+      {columns.map((c, idx) => (
+        <TableCell key={c.key} className={c.className}
+                   style={idx === 0 && depth > 0 ? { paddingLeft: `${12 + depth * 20}px` } : undefined}>
+          {c.render ? c.render(r) : get(c, r)}
+        </TableCell>
       ))}
       {actions && <TableCell className="text-right space-x-1">{actions(r)}</TableCell>}
     </TableRow>
   );
+
+  // Rekursiv rendering av nøstede mapper
+  const renderGroupNode = (node, parentPath = "") => {
+    if (node._row) return renderRow(node._row, (parentPath.match(/›/g) || []).length);
+    const path = parentPath ? `${parentPath} › ${node._label}` : node._label;
+    const isOpen = !collapsed[path];
+    const depth = node._depth || 0;
+    // Fargekoding per dybde
+    const bgClass = depth === 0 ? "bg-red-50 hover:bg-red-100 border-l-4 border-red-700"
+                   : depth === 1 ? "bg-amber-50/70 hover:bg-amber-100/70 border-l-4 border-amber-500"
+                   : "bg-sky-50/60 hover:bg-sky-100/60 border-l-4 border-sky-400";
+    return (
+      <React.Fragment key={path}>
+        <TableRow className={`${bgClass} cursor-pointer`} onClick={() => toggleGroup(path)} data-testid={`dt-group-${path.replace(/[^A-Za-z0-9]+/g, "_")}`}>
+          <TableCell colSpan={columns.length + (actions ? 1 : 0)}
+                     className="font-semibold text-sm"
+                     style={{ paddingLeft: `${12 + depth * 20}px` }}>
+            <span className="inline-flex items-center gap-2">
+              {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              <span className={depth === 0 ? "text-red-900 uppercase tracking-wide text-xs" : depth === 1 ? "text-amber-800" : "text-sky-800"}>
+                {node._label}
+              </span>
+              <span className="text-xs text-slate-500 font-normal">({node._count})</span>
+            </span>
+          </TableCell>
+        </TableRow>
+        {isOpen && node._children && node._children.map((child) => renderGroupNode(child, path))}
+      </React.Fragment>
+    );
+  };
 
   return (
     <div className="space-y-3">
@@ -115,16 +161,27 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
           <Input className="pl-9" placeholder={searchPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)} data-testid="dt-search" />
         </div>
         {groupableCols.length > 0 && (
-          <Select value={groupBy || "none"} onValueChange={(v) => setGroupBy(v === "none" ? "" : v)}>
-            <SelectTrigger className="w-[200px]" data-testid="dt-groupby">
-              <Layers className="h-4 w-4 mr-2" />
-              <SelectValue placeholder="Grupper etter…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">Ingen gruppering</SelectItem>
-              {groupableCols.map((c) => <SelectItem key={c.key} value={c.key}>Grupper etter {c.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <div className="flex gap-1 flex-wrap items-center" data-testid="dt-group-controls">
+            <Layers className="h-4 w-4 text-slate-500" />
+            <span className="text-xs text-slate-600 font-semibold">Grupper:</span>
+            {groupableCols.map((c) => {
+              const active = groupBy.includes(c.key);
+              const level = active ? groupBy.indexOf(c.key) + 1 : null;
+              return (
+                <button key={c.key} type="button"
+                        onClick={() => setGroupBy(active ? groupBy.filter((k) => k !== c.key) : [...groupBy, c.key])}
+                        data-testid={`dt-group-toggle-${c.key}`}
+                        className={`text-xs px-2 py-1 rounded border transition ${active ? "bg-red-700 text-white border-red-700" : "bg-white border-slate-300 text-slate-600 hover:bg-red-50"}`}>
+                  {active && <span className="mr-1 font-bold">#{level}</span>}{c.label}
+                </button>
+              );
+            })}
+            {groupBy.length > 0 && (
+              <button type="button" onClick={() => setGroupBy([])} className="text-xs px-2 py-1 text-slate-500 hover:text-red-700" data-testid="dt-group-clear">
+                <X className="h-3 w-3 inline mr-0.5" />Flatt
+              </button>
+            )}
+          </div>
         )}
         {filterableCols.length > 0 && (
           <Popover>
@@ -176,7 +233,7 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
             </PopoverContent>
           </Popover>
         )}
-        {(search || sort || activeFilterCount > 0 || groupBy) && (
+        {(search || sort || activeFilterCount > 0 || (groupBy && groupBy.length)) && (
           <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="dt-clear"><X className="h-3 w-3 mr-1" />Nullstill</Button>
         )}
         <span className="text-xs text-slate-500 ml-auto">{filteredSorted.length} av {rows.length} rader</span>
@@ -203,24 +260,8 @@ export default function DataTable({ columns, rows, emptyLabel = "Ingen data.", g
             {filteredSorted.length === 0 && (
               <TableRow><TableCell colSpan={columns.length + (actions ? 1 : 0)} className="text-center text-slate-500 py-8">{emptyLabel}</TableCell></TableRow>
             )}
-            {!grouped && filteredSorted.map(renderRow)}
-            {grouped && grouped.map(([label, rowsInGroup]) => {
-              const isOpen = !collapsed[label];
-              return (
-                <React.Fragment key={label}>
-                  <TableRow className="bg-slate-50 hover:bg-slate-100 cursor-pointer" onClick={() => toggleGroup(label)} data-testid={`dt-group-${label}`}>
-                    <TableCell colSpan={columns.length + (actions ? 1 : 0)} className="font-semibold text-sm">
-                      <span className="inline-flex items-center gap-2">
-                        {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        {label}
-                        <span className="text-xs text-slate-500 font-normal">({rowsInGroup.length})</span>
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                  {isOpen && rowsInGroup.map(renderRow)}
-                </React.Fragment>
-              );
-            })}
+            {!grouped && filteredSorted.map((r) => renderRow(r, 0))}
+            {grouped && grouped.map((n) => renderGroupNode(n))}
           </TableBody>
         </Table>
       </div>

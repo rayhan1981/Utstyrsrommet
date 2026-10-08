@@ -214,6 +214,7 @@ export default function Inventory() {
 
       <Card className="p-3">
         <DataTable
+          initialGroupBy={["category", "main_group"]}
           rows={items.flatMap((i) => {
             if (i.is_clothing || i.is_ball) {
               const sortedSizes = sortSizesNatural(i.sizes || [], (s) => s.size);
@@ -260,7 +261,9 @@ export default function Inventory() {
             ), accessor: (r) => `${r.name} ${r._parent.supplier_name || ""} ${r._parent.supplier_number || ""}` },
             { key: "size", label: "Str", filter: "text", render: (r) => r.size ? <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">{r.size}</span> : <span className="text-slate-400">–</span> },
             { key: "jersey_number", label: "Draktnr", filter: "text", render: (r) => (r.jersey_number && r.jersey_number !== "X") ? <span className="font-mono text-xs">#{r.jersey_number}</span> : <span className="text-slate-400">–</span> },
-            { key: "category", label: "Kategori", filter: "text", render: (r) => <span className="text-xs">{r.category || "-"}</span> },
+            { key: "category", label: "Kategori", filter: "text", groupable: true, render: (r) => <span className="text-xs">{r.category || "-"}</span> },
+            { key: "main_group", label: "Hovedgruppe", filter: "text", groupable: true, accessor: (r) => r.main_group || "", render: (r) => <span className="text-xs text-slate-600">{r.main_group || "-"}</span> },
+            { key: "sub_group", label: "Undergruppe", filter: "text", groupable: true, accessor: (r) => r.sub_group || "", render: (r) => <span className="text-xs text-slate-500">{r.sub_group || "-"}</span> },
             { key: "type", label: "Type", filter: "select",
               options: [{value:"vare",label:"Vare"},{value:"klær",label:"Klær"},{value:"ball",label:"Ball"}],
               accessor: (r) => r.type,
