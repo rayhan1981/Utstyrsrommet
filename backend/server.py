@@ -3418,8 +3418,11 @@ async def stock_manual_adjust(data: StockManualAdjustIn, request: Request, user=
     item = await db.items.find_one({"id": data.item_id, "tenant_id": tid})
     if not item:
         raise HTTPException(404, "Vare ikke funnet")
+    is_variant_item = bool(item.get("is_clothing") or item.get("is_ball"))
+    if is_variant_item and not data.size:
+        raise HTTPException(400, "Størrelse er påkrevd for klær/ball – velg hvilken variant som skal justeres")
     before = 0
-    if (item.get("is_clothing") or item.get("is_ball")) and data.size:
+    if is_variant_item and data.size:
         sizes = item.get("sizes", []); updated = False
         for s in sizes:
             if s.get("size") == data.size:

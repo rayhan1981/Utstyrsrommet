@@ -189,13 +189,21 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 - **Leverandørnummer**: Hver leverandør får unikt 5-sifret nummer (00001, 00002…) via `counters`-collection. Backfill ved GET /suppliers. Vises i leverandørlisten + i item-dropdown. Testet: #00001 Select Sport, #00002 Umbro Norge.
 - **Vare-leverandør**: `supplier_id`, `supplier_number`, `supplier_name` på Item. Dropdown i Inventory-dialog. Varer uten leverandør får rødt «⚠ Mangler leverandør»-badge i varetabellen. Søkbart (søker også på leverandørnavn/nummer).
 
+### Feb 2026 – 11-punkts forbedring (denne økten)
+- **Punkt 3 — Varediagnostikk & tekstlabels**: `DELETE /api/items/{id}` blokkerer med 409 ved aktive utlån eller åpne bestillinger (ikke levert/arkivert/annullert). `delVariant`-funksjon lagt til i `Inventory.jsx` som kaller `POST /api/items/{id}/delete-variant` (returnerer 409 ved aktive utlån på varianten). Alle action-knapper har tekstlabels under ikon (Opprett QR, Vis QR, Rediger, Slett vare, Slett linje).
+- **Punkt 6 — Dedikert sidebar-fane**: Ny side `/app/behov` ("Behov og behovsmeldinger") med egen Layout.jsx sidebar-entry (ClipboardList-ikon). Full CRUD: opprett skjema, rediger mottaker/melding, last ned Excel-mal, send e-post med reelt Excel-vedlegg (via `_build_needs_template_bytes` → base64 → `send_tenant_email`), opprett bestilling fra skjemaet.
+- **Punkt 9 — Varetelling Excel-flyt**: `GET /api/stock-counts/{id}/export` genererer telledokument (.xlsx) med skjult line_id-kolonne. `POST /api/stock-counts/{id}/import` matcher på line_id. Varetelling-status=applied blokkerer import (409). Ny `POST /api/stock/manual-adjust` krever reason (min 3 tegn) OG size for klær/ball-varer. Lagrer i `stock_adjustments`-collection. `GET /api/stock/adjustments` returnerer historikk.
+- **Punkt 8 — Returer gruppert per Lag · Årsklasse**: Ny `ReturnedByTeamGrouped`-komponent i Loans.jsx. "Slett retur"-knapp (Trash2 + tekst) kjører `undoReturn` som ber om begrunnelse og kaller `POST /api/loans/{id}/undo-return`.
+- **Punkt 5 — Varemottak restrukturert**: Varer gruppert per Kategori · Hovedgruppe med egne tabeller (sortert alfabetisk). Størrelser sortert naturlig.
+- **Punkt 1 — Naturlig størrelsessortering**: Ny `/app/frontend/src/lib/sizeSort.js` med `naturalSizeKey` (barne-tall 128,140,164 først → klær XS,S,M,L,XL → ballstørrelser til slutt). Brukt i Inventory-tabell, Varemottak, LoanDialog, GenerateQrDialog, ViewQrDialog, StockAudit-dialog.
+- **Punkt 2 — QR per variant**: Verifisert at `/items/{id}/qr-images` lager payload `{item_id}#{size}` per størrelse. ViewQrDialog sorterer QR-grid naturlig.
+- **Testing**: iteration_11.json – 13/13 backend pytest + 11/11 UI-elementer verifisert. 2 LOW-priority fixet: (a) manual-adjust 400 ved klær uten size, (b) React duplicate-key fix i Varemottak.
+
 ## Backlog
+- P2: Punkt 4 – Dedikert Excel-import for lagerbeholdning med forhåndsvisning + leverandør-dropdown-matching (nåværende import-template fungerer, men kan utvides).
+- P2: Punkt 1 – Streng hierarki Kategori → Hovedgruppe → Undergruppe (cascading dropdowns). Nåværende er fri tekst.
+- P2: Splitt /app/backend/server.py (5063 linjer) i routers (items, loans, orders, stock_audit, behovsskjema, admin). KRITISK før flere features.
+- P2: Dangling refs – `DELETE /items` sjekker ikke behovsskjema-linjer.
 - P1: Excel Import for Teams og People
 - P1: E-postpåminnelse 3 dager før utlåns-forfall
-- P2: Cache subscription-status for å unngå find_one+update_one på hver auth request
-- P2: KID med MOD10/MOD11 kontrollsiffer
-- P2: Faktura-PDF til GridFS
-- P2: TTL-index på login_history
-- P2: Background purge-task for `purge_at < now`
-- P2: Global hurtigsøk Ctrl+K
-- Refactor: splitt /app/backend/server.py i routers (qr, invoices, notifications, subscription)
+- P2: Cache subscription-status, KID MOD10/11, Faktura GridFS, TTL login_history

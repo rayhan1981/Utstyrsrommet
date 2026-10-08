@@ -223,14 +223,14 @@ export default function Varemottak() {
                       <TableHeader><TableRow><TableHead>Vare</TableHead><TableHead>Undergruppe</TableHead><TableHead>Varianter / Beholdning</TableHead><TableHead></TableHead></TableRow></TableHeader>
                       <TableBody>
                         {g.items.map((i) => (
-                          <TableRow key={i.id}>
+                          <TableRow key={`${g.key}-${i.id}`}>
                             <TableCell className="font-semibold">{i.name}</TableCell>
                             <TableCell className="text-xs text-slate-600">{i.sub_group || "-"}</TableCell>
                             <TableCell className="text-xs">
                               {(i.is_clothing || i.is_ball) ? (
                                 <div className="flex flex-wrap gap-1">
-                                  {sortSizesNatural((i.sizes || []), (s) => s.size).map((s) => (
-                                    <button key={`${s.size}-${s.jersey_number || ""}`}
+                                  {sortSizesNatural((i.sizes || []), (s) => s.size).map((s, sIdx) => (
+                                    <button key={`${i.id}-${s.size}-${s.jersey_number || "x"}-${sIdx}`}
                                             onClick={() => pickItem(i, s.size, s.jersey_number)}
                                             className="text-xs px-2 py-0.5 rounded bg-slate-100 hover:bg-red-100 hover:text-red-800"
                                             data-testid={`pick-variant-${i.id}-${s.size}`}>

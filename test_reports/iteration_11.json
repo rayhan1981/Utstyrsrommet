@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 11 - E2E verified all 11 new features. Backend: 13/13 pytest cases PASS (test_iteration11.py). Verified: (1) DELETE /items with active loan -> 409 with 'aktive utlån bruker denne varen. Returner dem først.'; (2) DELETE /items with open order (status=bestilt) -> 409 with 'åpne bestillinger inneholder denne varen'; (3) DELETE /items clean -> 200 ok=true; (4) POST /items/{id}/delete-variant with active loan on variant M -> 409 'aktive utlån bruker variant M'; (5) POST /stock/manual-adjust empty reason -> 400 'Begrunnelse er påkrevd'; (6) 2-char reason -> 400; (7) Valid reason -> 200 with before/after/adjustment_id, item.total_stock persisted, stock_adjustments collection row created with diff/reason/user_email; (8) Clothing adjust with size M correctly updates variant.quantity (not total_stock directly); (9) GET /stock/adjustments returns list; (10) Non-existent variant -> 404; (11) GET /stock-counts/{id}/export returns valid xlsx with headers at row 6 (Linje-ID, Lokasjon, Varenavn, Størrelse, System, Talt antall, Diff, Notat), col A hidden, line_id in row 7+, counted empty for open count; (12) POST import updates counted_quantity by line_id lookup -> {ok, updated>=1, errors}; (13) Import on applied count -> 409; (14) POST /behovsskjema/{sid}/send WORKS now (returns 200) - sends Excel attachment via send_tenant_email - email proxy attachment issue from iter10 is RESOLVED. Frontend verified via playwright on prod URL: /app/behov route renders behov-page container, sidebar nav-behov testid present, new-behov-btn works. /app/varetelling has manual-adjust-btn + start-count-btn; dialog opens with item/qty/reason/confirm testids; clicking confirm without input shows toast 'Velg vare'. 'Siste manuelle justeringer' card renders. /app/utlan tab-returned exists; clicking shows returned-grouped container. /app/varemottak page contains 'Velg vare fra liste', 'Kategori', 'Hovedgruppe' labels. /app/utstyr table shows all 4 action labels (Opprett QR, Vis QR, Rediger, Slett) with text.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /stock/manual-adjust", "issue": "For klær-vare (is_clothing=true) when size is OMITTED, endpoint falls through to else-branch and sets item.total_stock directly instead of returning 400. Variants array becomes inconsistent with total_stock (sum of variant.quantity != total_stock). Spec said 'uten size returnerer feil' but current code accepts it. Low priority - UI dialog requires size for clothing items via adjust-size-select."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Varemottak", "issue": "React 'Encountered two children with the same key' warnings on /app/varemottak - likely duplicate variant IDs in grouped tabs rendering. Not blocking but should fix map keys.", "selector": "varemottak grouped tables", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11.py",
+    "/app/test_reports/pytest/iteration11.xml"
+  ],
+  "action_items": [
+    "LOW: Fix React duplicate-key warning on /app/varemottak grouped lists (use composite key item_id+variant_id+size).",
+    "LOW: Consider rejecting POST /stock/manual-adjust when item.is_clothing/is_ball AND size is missing (currently silently sets total_stock, decoupling from variants)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 5063 lines - exceeds 700-line threshold. Strongly recommend splitting into modules: items.py, loans.py, stock_audit.py, email.py, orders.py, behovsskjema.py, auth.py, admin.py.",
+    "Stock manual-adjust for clothing without size: silent fall-through to total_stock update desynchronizes with sizes array. Should enforce size requirement for variant-bearing items.",
+    "Delete-item validation checks loans + purchase_orders but NOT behovsskjema line references. If a behovsskjema has a line referencing item_id, deletion still succeeds and may leave dangling refs.",
+    "Behovsskjema send endpoint doesn't validate that _build_needs_template_bytes produces non-empty content - if team has no needs lines, empty template is still sent. Consider either generating a blank-but-valid template (current behavior) or warning user.",
+    "stock-count export: line_id column A is marked hidden=True but ws cell at row 7 col 1 still contains the ID. Good design. However import blindly uses row[0] as line_id - if a user accidentally unhides and edits col A, could cause silent misassignment. Consider adding a hidden sanity hash column or signed line_ids."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration11.py", "/app/test_reports/iteration_11.json"],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (all 11 required UI elements verified)"},
+  "test_credentials": "raymond.d.hansen@gmail.com / Snowboard1! (platform_owner). Test tenants auto-created with TEST_It11_ prefix via /api/signup, cleaned up in fixture teardown.",
+  "seed_data_creation": "test_iteration11.py creates ~1 TEST_It11_* tenant per run with items (simple + clothing), teams, suppliers, loans, orders, behovsskjema, stock-counts. Auto-cleanup attempted via owner_session.delete.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login path: GET /innlogging (NOT /login - app uses Norwegian routes). Form has 2 inputs (E-post, Passord) + button 'Logg inn'. After login, redirects to /app. Key testids verified this iteration: behov-page, nav-behov, new-behov-btn, manual-adjust-btn, start-count-btn, adjust-item-select, adjust-size-select, adjust-qty-input, adjust-reason-input, confirm-adjust-btn, export-count-{id}, import-count-{id}, tab-returned, returned-grouped. Behovsskjema send endpoint works (returns 200, email_proxy attachment issue from iter10 is now resolved). To test clothing variant adjust, size must be provided; adjust-size-select appears after selecting a clothing item.",
+  "rca of the issue": "N/A - no critical bugs. The clothing-without-size silent total_stock update is a minor validation gap - the FE dialog prevents this but a direct API caller could cause data drift. Recommend adding explicit 400 check: `if (item.is_clothing or item.is_ball) and not data.size: raise HTTPException(400, 'Størrelse er påkrevd for klær/ball')`."
+}
