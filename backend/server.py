@@ -4527,6 +4527,25 @@ async def update_supplier(sid: str, data: SupplierIn, request: Request, user=Dep
     return await db.suppliers.find_one({"id": sid, "tenant_id": tid}, {"_id": 0})
 
 
+@api.post("/suppliers/{sid}/toggle-active")
+async def toggle_supplier_active(sid: str, request: Request, user=Depends(require_admin)):
+    """Veksler active-status for leverandør. Deaktiverte leverandører skjules fra nye bestillinger,
+    men beholder all historikk og vises fortsatt i leverandørlisten."""
+    tid = await require_tenant(request, user)
+    doc = await db.suppliers.find_one({"id": sid, "tenant_id": tid})
+    if not doc:
+        raise HTTPException(404, "Fant ikke leverandør")
+    if doc.get("deleted_at"):
+        raise HTTPException(400, "Kan ikke endre status på en slettet leverandør – gjenopprett først")
+    new_active = not bool(doc.get("active", True))
+    await db.suppliers.update_one({"id": sid, "tenant_id": tid}, {"$set": {
+        "active": new_active,
+        "active_changed_at": now_iso(),
+        "active_changed_by": user.get("name") or user.get("email"),
+    }})
+    return {"ok": True, "active": new_active}
+
+
 @api.delete("/suppliers/{sid}")
 async def delete_supplier(sid: str, request: Request, user=Depends(require_admin)):
     """Soft-delete leverandør. Admin kan angre innen 30 dager via POST /suppliers/{sid}/restore."""

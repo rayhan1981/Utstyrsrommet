@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Pencil, Trash2, Truck, Search, ShoppingCart, Trash, RotateCcw } from "lucide-react";
+import { Plus, Pencil, Trash2, Truck, Search, ShoppingCart, Trash, RotateCcw, Power, PowerOff } from "lucide-react";
 import { toast } from "sonner";
 import StockOrderDialog from "@/components/StockOrderDialog";
 import OrderActionDialog from "@/components/OrderActionDialog";
@@ -47,6 +47,16 @@ export default function Leverandorer() {
       if (form.email && !/^[^@]+@[^@]+\.[^@]+$/.test(form.email)) { toast.error("Ugyldig e-post"); return; }
       if (editId) await api.put(`/suppliers/${editId}`, form); else await api.post("/suppliers", form);
       toast.success("Lagret"); setOpen(false); load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const toggleActive = async (s) => {
+    const next = s.active === false ? "aktivere" : "deaktivere";
+    if (!window.confirm(`Vil du ${next} ${s.name}?${s.active !== false ? " Deaktiverte leverandører skjules fra nye bestillinger, men all historikk beholdes." : ""}`)) return;
+    try {
+      const { data } = await api.post(`/suppliers/${s.id}/toggle-active`);
+      toast.success(data.active ? `${s.name} er aktivert` : `${s.name} er deaktivert`);
+      load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
@@ -161,6 +171,13 @@ export default function Leverandorer() {
                             className="flex flex-col items-center h-auto py-1 px-2 gap-0.5"
                             data-testid={`edit-supplier-${s.supplier_number}`}>
                       <Pencil className="h-3.5 w-3.5" /><span className="text-[9px]">Rediger</span>
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => toggleActive(s)}
+                            className={`flex flex-col items-center h-auto py-1 px-2 gap-0.5 ${s.active === false ? "bg-emerald-50 border-emerald-300 text-emerald-800" : "bg-amber-50 border-amber-300 text-amber-800"}`}
+                            data-testid={`toggle-active-supplier-${s.supplier_number}`}
+                            title={s.active === false ? "Aktiver leverandør igjen" : "Deaktiver leverandør – skjules fra nye bestillinger, historikk beholdes"}>
+                      {s.active === false ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
+                      <span className="text-[9px]">{s.active === false ? "Aktiver" : "Deaktiver"}</span>
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => del(s)}
                             className="flex flex-col items-center h-auto py-1 px-2 gap-0.5"
