@@ -497,6 +497,9 @@ def _send_smtp_sync(cfg: dict, to: List[str], subject: str, html: str,
         msg["From"] = formataddr((from_name, from_email))
         msg["To"] = ", ".join(to)
         if cc: msg["Cc"] = ", ".join(cc)
+        reply_to = (cfg.get("reply_to") or "").strip()
+        if reply_to:
+            msg["Reply-To"] = reply_to
         msg.set_content("E-posten er i HTML-format. Vennligst bruk en moderne e-postklient.")
         msg.add_alternative(html, subtype="html")
         for att in (attachments or []):
@@ -535,6 +538,9 @@ async def _send_resend(cfg: dict, to: List[str], subject: str, html: str,
         "from": f"{from_name} <{from_email}>",
         "to": to, "subject": subject, "html": html,
     }
+    reply_to = (cfg.get("reply_to") or "").strip()
+    if reply_to:
+        payload["reply_to"] = reply_to
     if cc: payload["cc"] = cc
     if attachments:
         payload["attachments"] = [{
@@ -556,13 +562,16 @@ async def _send_resend(cfg: dict, to: List[str], subject: str, html: str,
 async def _send_emergent(to: List[str], subject: str, html: str,
                           attachments: Optional[List[dict]] = None,
                           cc: Optional[List[str]] = None,
-                          from_name: Optional[str] = None) -> dict:
+                          from_name: Optional[str] = None,
+                          reply_to: Optional[str] = None) -> dict:
     if not EMAIL_KEY:
         return {"ok": False, "error": "E-posttjeneste ikke konfigurert"}
     payload = {
         "to": to, "subject": subject, "html": html,
         "from_name": from_name or EMAIL_FROM_NAME,
     }
+    if reply_to:
+        payload["reply_to"] = reply_to
     if cc: payload["cc"] = cc
     if attachments:
         # Emergent email proxy forventer feltet 'type' (ikke 'content_type')
@@ -597,13 +606,14 @@ async def send_tenant_email(tid: Optional[str], to, subject: str, html: str,
     cfg = await _get_tenant_email_cfg(tid) if tid else {}
     method = (cfg.get("method") or "default").lower()
     from_name = cfg.get("from_name") or EMAIL_FROM_NAME
+    reply_to = (cfg.get("reply_to") or "").strip() or None
     if method == "smtp" and cfg.get("smtp_host") and cfg.get("from_email"):
         res = await asyncio.to_thread(_send_smtp_sync, cfg, to, subject, html, attachments, cc)
         res["method"] = "smtp"; return res
     if method == "resend" and cfg.get("resend_api_key_enc") and cfg.get("from_email"):
         res = await _send_resend(cfg, to, subject, html, attachments, cc)
         res["method"] = "resend"; return res
-    res = await _send_emergent(to, subject, html, attachments, cc, from_name=from_name)
+    res = await _send_emergent(to, subject, html, attachments, cc, from_name=from_name, reply_to=reply_to)
     res["method"] = "default"
     return res
 
@@ -733,6 +743,7 @@ class TenantEmailSettingsIn(BaseModel):
     method: str = "default"  # default | smtp | resend
     from_name: Optional[str] = None
     from_email: Optional[EmailStr] = None
+    reply_to: Optional[str] = None  # Svar-til adresse (valgfri, tom streng = fjern)
     # SMTP
     smtp_host: Optional[str] = None
     smtp_port: Optional[int] = 587
@@ -5757,6 +5768,7 @@ def _redact_email_cfg(cfg: dict) -> dict:
         "method": cfg.get("method") or "default",
         "from_name": cfg.get("from_name") or "",
         "from_email": cfg.get("from_email") or "",
+        "reply_to": cfg.get("reply_to") or "",
         "smtp_host": cfg.get("smtp_host") or "",
         "smtp_port": cfg.get("smtp_port") or 587,
         "smtp_username": cfg.get("smtp_username") or "",
@@ -5792,6 +5804,7 @@ async def put_email_settings(data: TenantEmailSettingsIn, request: Request, user
         "method": method,
         "from_name": (data.from_name or "").strip() or existing.get("from_name") or "",
         "from_email": (data.from_email or "").strip() if data.from_email else existing.get("from_email", ""),
+        "reply_to": (data.reply_to or "").strip(),
         "smtp_host": (data.smtp_host or "").strip(),
         "smtp_port": int(data.smtp_port or 587),
         "smtp_username": (data.smtp_username or "").strip(),

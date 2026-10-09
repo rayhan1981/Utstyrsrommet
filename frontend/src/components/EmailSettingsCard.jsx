@@ -12,6 +12,7 @@ const EMPTY = {
   method: "default",
   from_name: "",
   from_email: "",
+  reply_to: "",
   smtp_host: "",
   smtp_port: 587,
   smtp_username: "",
@@ -42,6 +43,7 @@ export default function EmailSettingsCard() {
         method: data.method || "default",
         from_name: data.from_name || "",
         from_email: data.from_email || "",
+        reply_to: data.reply_to || "",
         smtp_host: data.smtp_host || "",
         smtp_port: data.smtp_port || 587,
         smtp_username: data.smtp_username || "",
@@ -144,6 +146,12 @@ export default function EmailSettingsCard() {
             </div>
           </div>
         )}
+
+        <div>
+          <Label>Svar-til (Reply-To) e-post <span className="text-[10px] text-slate-400 font-normal">valgfri</span></Label>
+          <Input type="email" value={form.reply_to} onChange={(e) => setForm({ ...form, reply_to: e.target.value })} placeholder="materialforvalter@lillehammer-if.no" data-testid="email-reply-to" />
+          <Help>Når mottakeren trykker «Svar» i e-postklienten, går svaret hit i stedet for til avsender-adressen. Nyttig hvis dere sender fra en no-reply- eller systemadresse, men vil at svar skal gå til en bemannet innboks.</Help>
+        </div>
 
         {method === "smtp" && (
           <div className="border border-slate-200 rounded-md p-3 bg-slate-50/50 space-y-3">
