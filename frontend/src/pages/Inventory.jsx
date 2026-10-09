@@ -312,7 +312,8 @@ export default function Inventory() {
 
       <Card className="p-2 sm:p-3">
         <DataTable
-          initialGroupBy={["category", "main_group", "sub_group"]}
+          key={categoryFilter || "__all__"}
+          initialGroupBy={categoryFilter ? [] : ["category", "main_group", "sub_group"]}
           getRowId={(r) => r._id}
           onDropToGroup={async (rowId, target) => {
             // rowId er vårt _id (f.eks. "ITEM__size__jersey__idx") – mapper tilbake til item.id
@@ -369,6 +370,9 @@ export default function Inventory() {
                   {r.image_url ? <img src={r.image_url} alt={r.name} className="h-full w-full object-cover" /> : <ImageIcon className="h-4 w-4 text-slate-300" />}
                 </div>
             ) },
+          ].concat(categoryFilter ? [] : [
+            // Kategori-kolonnen skjules når kategori-filteret er aktivt (den vises som badge i topplinjen).
+          ]).concat([
             { key: "full_number", label: "Varenr", filter: "text", className: "py-1 px-1 sm:px-2",
               accessor: (r) => r.full_number || "",
               render: (r) => r.full_number ? <span className="font-mono text-[11px] bg-red-50 text-red-800 px-1.5 py-0.5 rounded whitespace-nowrap">{r.full_number}</span> : <span className="text-slate-300 text-xs">–</span> },
@@ -390,9 +394,9 @@ export default function Inventory() {
             ), accessor: (r) => `${r.name} ${r._parent.supplier_name || ""} ${r._parent.supplier_number || ""}` },
             { key: "size", label: "Str", filter: "text", className: "hidden sm:table-cell py-1 px-2", render: (r) => r.size ? <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">{r.size}</span> : <span className="text-slate-400">–</span> },
             { key: "jersey_number", label: "Draktnr", filter: "text", className: "hidden md:table-cell py-1 px-2", render: (r) => (r.jersey_number && r.jersey_number !== "X") ? <span className="font-mono text-xs">#{r.jersey_number}</span> : <span className="text-slate-400">–</span> },
-            { key: "category", label: "Kategori", filter: "text", groupable: true, className: "hidden xl:table-cell py-1 px-2",
+            ...(categoryFilter ? [] : [{ key: "category", label: "Kategori", filter: "text", groupable: true, className: "hidden xl:table-cell py-1 px-2",
               groupLabel: (v) => (v == null || v === "" ? "(Uten kategori)" : String(v)),
-              render: (r) => <span className="text-xs">{r.category || "-"}</span> },
+              render: (r) => <span className="text-xs">{r.category || "-"}</span> }]),
             { key: "main_group", label: "Hovedgruppe", filter: "text", groupable: true, className: "hidden xl:table-cell py-1 px-2", accessor: (r) => r.main_group || "",
               groupLabel: (v) => (v == null || v === "" ? "(Uten hovedgruppe)" : String(v)),
               render: (r) => <span className="text-xs text-slate-600">{r.main_group || "-"}</span> },
@@ -406,7 +410,7 @@ export default function Inventory() {
             { key: "price", label: "Pris", filter: "number", className: "hidden md:table-cell py-1 px-2", accessor: (r) => r.price, render: (r) => <span className="text-xs">{nok(r.price)}</span> },
             { key: "quantity", label: "Antall", filter: "number", className: "hidden sm:table-cell py-1 px-2", render: (r) => <span className={r.quantity <= 3 ? "text-amber-700 font-semibold" : "font-semibold"}>{r.quantity}</span> },
             { key: "location", label: "Lokasjon", filter: "text", className: "hidden lg:table-cell py-1 px-2", render: (r) => <span className="text-xs text-red-700">{r.location || "-"}</span> },
-          ]}
+          ])}
           actions={(r) => {
             const i = r._parent;
             return (
