@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { api, formatError, BALL_SIZES } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Trash2, Plus, Download, X, Upload, FileSpreadsheet, QrCode, Eye, ImagePlus, ImageOff, ImageIcon } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, X, Upload, FileSpreadsheet, QrCode, Eye, ImagePlus, ImageOff, ImageIcon, Package, LayoutGrid } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
@@ -21,7 +21,19 @@ import { sortSizesNatural, naturalSizeKey } from "@/lib/sizeSort";
 import TaxonomyPicker from "@/components/TaxonomyPicker";
 import ImportPreviewDialog from "@/components/ImportPreviewDialog";
 
-const EMPTY = { name: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null, images: [], supplier_id: "", supplier_number: "", supplier_name: "" };
+const EMPTY = { name: "", main_item_number: "", category: "", main_group: "", sub_group: "", price: 0, purchase_price: "", total_stock: 0, location: "", is_clothing: false, is_ball: false, sizes: [], image_url: null, images: [], supplier_id: "", supplier_number: "", supplier_name: "" };
+
+// Hjelpere for lokal forhåndsvisning av komplett varenummer (speiler backend-logikk)
+function _normSize(s) { s = String(s || "").trim(); if (!s) return ""; return /\d/.test(s) ? s : s.toUpperCase(); }
+function _normJersey(j) { j = String(j ?? "").trim(); if (!j || j.toUpperCase() === "X") return ""; if (/^\d$/.test(j)) return "0" + j; return j; }
+function computeFullNumber(main, size, jersey) {
+  const m = String(main || "").trim();
+  if (!m) return "";
+  const parts = [m];
+  const s = _normSize(size); if (s) parts.push(s);
+  const j = _normJersey(jersey); if (j) parts.push(j);
+  return parts.join("-");
+}
 
 export default function Inventory() {
   const { hasPerm, hasFeature } = useAuth();
@@ -36,6 +48,7 @@ export default function Inventory() {
   const [suppliers, setSuppliers] = useState([]);
   const [importPreview, setImportPreview] = useState(null);
   const [pendingImportFile, setPendingImportFile] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
@@ -203,6 +216,33 @@ export default function Inventory() {
 
   const filtered = items;
 
+  // Unike kategorier m/ antall – brukes i webshop-style kategoribar
+  const categoryList = useMemo(() => {
+    const counts = new Map();
+    for (const i of items) {
+      const c = (i.category || "").trim();
+      if (!c) continue;
+      // Tell varianter som "varer" i kategorien når det er klær/ball
+      const n = (i.is_clothing || i.is_ball) ? ((i.sizes || []).length || 1) : 1;
+      counts.set(c, (counts.get(c) || 0) + n);
+    }
+    return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0], "nb"));
+  }, [items]);
+
+  const totalRowCount = useMemo(() => {
+    let n = 0;
+    for (const i of items) {
+      n += (i.is_clothing || i.is_ball) ? ((i.sizes || []).length || 1) : 1;
+    }
+    return n;
+  }, [items]);
+
+  // Faktisk filtrert item-liste basert på kategorivalg
+  const visibleItems = useMemo(() => {
+    if (!categoryFilter) return items;
+    return items.filter((i) => (i.category || "").trim() === categoryFilter);
+  }, [items, categoryFilter]);
+
   return (
     <div className="space-y-6" data-testid="inventory-page">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -234,6 +274,42 @@ export default function Inventory() {
         </div>
       </div>
 
+      {/* Webshop-style kategoribar */}
+      {categoryList.length > 0 && (
+        <Card className="p-3" data-testid="category-bar">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant={categoryFilter === null ? "default" : "outline"}
+              size="sm"
+              onClick={() => setCategoryFilter(null)}
+              data-testid="cat-filter-all"
+              className={categoryFilter === null ? "bg-red-700 hover:bg-red-800 text-white" : ""}
+              title="Vis alle varer uavhengig av kategori"
+            >
+              <LayoutGrid className="h-4 w-4 mr-1.5" />
+              Vis alle varer
+              <span className="ml-1.5 text-[10px] opacity-80">({totalRowCount})</span>
+            </Button>
+            <span className="h-6 w-px bg-slate-200 mx-1" />
+            {categoryList.map(([cat, cnt]) => (
+              <Button
+                key={cat}
+                variant={categoryFilter === cat ? "default" : "outline"}
+                size="sm"
+                onClick={() => setCategoryFilter(cat)}
+                data-testid={`cat-filter-${cat.replace(/[^A-Za-z0-9]+/g, "_")}`}
+                className={categoryFilter === cat ? "bg-red-700 hover:bg-red-800 text-white" : ""}
+                title={`Vis kun varer i kategorien «${cat}»`}
+              >
+                <Package className="h-4 w-4 mr-1.5" />
+                {cat}
+                <span className="ml-1.5 text-[10px] opacity-80">({cnt})</span>
+              </Button>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card className="p-2 sm:p-3">
         <DataTable
           initialGroupBy={["category", "main_group", "sub_group"]}
@@ -252,7 +328,7 @@ export default function Inventory() {
               load();
             } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
           }}
-          rows={items.flatMap((i) => {
+          rows={visibleItems.flatMap((i) => {
             if (i.is_clothing || i.is_ball) {
               const sortedSizes = sortSizesNatural(i.sizes || [], (s) => s.size);
               return sortedSizes.map((s, sidx) => ({
@@ -263,6 +339,7 @@ export default function Inventory() {
                 id: i.id,
                 image_url: s.image_url || i.image_url,
                 name: i.name,
+                full_number: s.full_number || computeFullNumber(i.main_item_number || "", s.size, s.jersey_number),
                 category: i.category || "",
                 main_group: i.main_group || "",
                 sub_group: i.sub_group || "",
@@ -277,6 +354,7 @@ export default function Inventory() {
             return [{
               _id: i.id, _parent: i, _is_variant: false, _has_qr: !!i.has_qr,
               id: i.id, image_url: i.image_url, name: i.name,
+              full_number: i.full_number || i.main_item_number || "",
               category: i.category || "", main_group: i.main_group || "",
               sub_group: i.sub_group || "", type: "vare",
               size: "", jersey_number: "", quantity: i.total_stock || 0,
@@ -284,13 +362,16 @@ export default function Inventory() {
             }];
           })}
           emptyLabel="Ingen varer."
-          searchPlaceholder="Søk vare, kategori, størrelse, draktnr, lokasjon…"
+          searchPlaceholder="Søk varenummer, varenavn, kategori, størrelse, draktnr, lokasjon…"
           columns={[
             { key: "image", label: "", className: "w-10 py-1 px-1 sm:px-2", render: (r) => (
                 <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-md overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
                   {r.image_url ? <img src={r.image_url} alt={r.name} className="h-full w-full object-cover" /> : <ImageIcon className="h-4 w-4 text-slate-300" />}
                 </div>
             ) },
+            { key: "full_number", label: "Varenr", filter: "text", className: "py-1 px-1 sm:px-2",
+              accessor: (r) => r.full_number || "",
+              render: (r) => r.full_number ? <span className="font-mono text-[11px] bg-red-50 text-red-800 px-1.5 py-0.5 rounded whitespace-nowrap">{r.full_number}</span> : <span className="text-slate-300 text-xs">–</span> },
             { key: "name", label: "Varenavn", filter: "text", className: "py-1 px-1 sm:px-2", render: (r) => (
               <div className="min-w-0 max-w-[220px] sm:max-w-[260px]">
                 <div className="font-semibold text-sm truncate flex items-center gap-1.5">
@@ -426,6 +507,20 @@ export default function Inventory() {
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><Label>Varenavn *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="item-name-input" /></div>
+              <div>
+                <Label className="flex items-center gap-1.5">
+                  Hovedvarenummer *
+                  <span className="text-[10px] font-normal text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">Fritekst</span>
+                </Label>
+                <Input
+                  value={form.main_item_number}
+                  onChange={(e) => setForm({ ...form, main_item_number: e.target.value })}
+                  placeholder="HJEM100"
+                  data-testid="main-item-number-input"
+                  className="font-mono"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">Bokstaver + tall. Komplett varenummer bygges automatisk: Hovedvarenummer-Størrelse-Draktnummer.</p>
+              </div>
               <div className="hidden sm:block"></div>
               <TaxonomyPicker
                 value={{ category: form.category, main_group: form.main_group, sub_group: form.sub_group }}
@@ -468,7 +563,26 @@ export default function Inventory() {
               </label>
             </div>
             {!form.is_clothing && !form.is_ball && (
-              <div><Label>Total beholdning</Label><Input type="number" value={form.total_stock} onChange={(e) => setForm({ ...form, total_stock: e.target.value })} /></div>
+              <>
+                <div><Label>Total beholdning</Label><Input type="number" value={form.total_stock} onChange={(e) => setForm({ ...form, total_stock: e.target.value })} /></div>
+                {form.main_item_number && (
+                  <div className="border border-emerald-200 bg-emerald-50 rounded-md p-2.5 text-xs">
+                    <div className="font-semibold text-emerald-900 mb-0.5">Komplett varenummer:</div>
+                    <span className="font-mono text-sm text-emerald-900 bg-white px-2 py-0.5 rounded border border-emerald-200" data-testid="full-number-preview">{form.main_item_number.trim()}</span>
+                  </div>
+                )}
+              </>
+            )}
+            {(form.is_clothing || form.is_ball) && form.main_item_number && form.sizes.length > 0 && (
+              <div className="border border-emerald-200 bg-emerald-50 rounded-md p-2.5 text-xs">
+                <div className="font-semibold text-emerald-900 mb-1.5">Forhåndsvisning – komplette varenummer:</div>
+                <div className="flex flex-wrap gap-1.5" data-testid="variant-numbers-preview">
+                  {form.sizes.map((s, i) => {
+                    const fn = computeFullNumber(form.main_item_number || "", s.size, form.is_ball ? "" : s.jersey_number);
+                    return <span key={i} className="font-mono text-[11px] text-emerald-900 bg-white px-1.5 py-0.5 rounded border border-emerald-200">{fn || "(mangler)"}</span>;
+                  })}
+                </div>
+              </div>
             )}
             {form.is_clothing && (
               <div>

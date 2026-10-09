@@ -710,6 +710,7 @@ class SizeStock(BaseModel):
 
 class ItemIn(BaseModel):
     name: str
+    main_item_number: str = ""  # Hovedvarenummer – fritekst (f.eks. "HJEM100"). Variantens komplette varenummer bygges automatisk.
     category: str = ""
     main_group: str = ""
     sub_group: str = ""
@@ -2306,14 +2307,96 @@ async def delete_person(person_id: str, request: Request, user=Depends(require_p
 
 
 # ---------------- Items ----------------
+# -------- Hovedvarenummer og full_number-helpere --------
+def _normalize_size_for_number(s: Optional[str]) -> str:
+    """Normaliserer størrelse for varenummer: XS/M/L/XL i STORE bokstaver, numerisk beholdes."""
+    if not s:
+        return ""
+    s = str(s).strip()
+    if not s:
+        return ""
+    # Hvis ingen siffer: UPPERCASE (XS, M, L, XXL)
+    if not any(c.isdigit() for c in s):
+        return s.upper()
+    return s
+
+
+def _normalize_jersey_for_number(j: Optional[str]) -> str:
+    """Normaliserer draktnummer: ensifret → nullpadding, 2+ sifret beholdes, 'X'/tom → tom."""
+    if j is None:
+        return ""
+    j = str(j).strip()
+    if j == "" or j.upper() == "X":
+        return ""
+    if j.isdigit() and len(j) == 1:
+        return "0" + j
+    return j
+
+
+def _compute_full_number(main: Optional[str], size: Optional[str] = None, jersey: Optional[str] = None) -> str:
+    """Bygger komplett varenummer: HJEM100-M-08 / BORTE100-164 / HJEM100.
+    Tomme deler hoppes over – ingen ekstra bindestreker. Returnerer tom streng hvis main også er tom."""
+    main = (str(main or "").strip())
+    if not main:
+        return ""
+    parts = [main]
+    sz = _normalize_size_for_number(size)
+    if sz:
+        parts.append(sz)
+    jn = _normalize_jersey_for_number(jersey)
+    if jn:
+        parts.append(jn)
+    return "-".join(parts)
+
+
+async def _validate_full_number_uniqueness(tid: str, doc: dict, exclude_id: Optional[str] = None):
+    """Sikrer at komplett varenummer er unikt per tenant. Kaster HTTPException ved kollisjon."""
+    collected = []
+    if doc.get("is_clothing") or doc.get("is_ball"):
+        for s in doc.get("sizes", []):
+            fn = s.get("full_number")
+            if fn:
+                collected.append(fn)
+    else:
+        fn = doc.get("full_number")
+        if fn:
+            collected.append(fn)
+    # Duplikater innenfor samme vare
+    seen = set()
+    for fn in collected:
+        if fn in seen:
+            raise HTTPException(400, f"Duplikat varenummer «{fn}» innenfor samme vare – rediger størrelse eller draktnummer")
+        seen.add(fn)
+    # Kollisjon mot andre varer
+    for fn in seen:
+        q = {"tenant_id": tid, "$or": [{"full_number": fn}, {"sizes.full_number": fn}]}
+        if exclude_id:
+            q["id"] = {"$ne": exclude_id}
+        other = await db.items.find_one(q, {"id": 1, "name": 1, "main_item_number": 1})
+        if other:
+            raise HTTPException(400, f"Varenummer «{fn}» finnes allerede på vare «{other.get('name')}» (hovedvarenummer «{other.get('main_item_number','')}»)")
+
+
 def _prep_item_doc(doc: dict) -> dict:
+    # Normaliser hovedvarenummer (fritekst, bevar innledende nuller, trim)
+    main = str(doc.get("main_item_number") or "").strip()
+    if not main:
+        # Legacy-fallback: bruk gammelt item_number hvis det finnes
+        main = str(doc.get("item_number") or "").strip()
+    doc["main_item_number"] = main
     if doc.get("is_clothing") or doc.get("is_ball"):
         for s in doc["sizes"]:
             if doc.get("is_clothing") and not s.get("jersey_number"):
                 s["jersey_number"] = "X"
             if doc.get("is_ball"):
                 s["jersey_number"] = ""
+            # Komplett varenummer per variant
+            s["full_number"] = _compute_full_number(main, s.get("size"), s.get("jersey_number"))
         doc["total_stock"] = sum(s.get("quantity", 0) for s in doc["sizes"])
+        # For item-nivå full_number: samme som main (brukes ved QR / søk på hovedvare)
+        doc["full_number"] = main
+    else:
+        doc["full_number"] = main
     return doc
 
 
@@ -2327,6 +2410,9 @@ async def list_items(request: Request, user=Depends(require_perm("inventory", "r
 async def create_item(data: ItemIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_tenant(request, user)
     doc = _prep_item_doc(data.dict())
+    if not doc.get("main_item_number"):
+        raise HTTPException(400, "Hovedvarenummer er påkrevd")
+    await _validate_full_number_uniqueness(tid, doc)
     plan = await get_tenant_plan(tid)
     is_deluxe = bool(plan.get("qr_codes")) or user.get("role") == "platform_owner"
     allow_images = bool(plan.get("product_images")) or user.get("role") == "platform_owner"
@@ -2506,6 +2592,9 @@ async def get_item_qr_images(item_id: str, request: Request, user=Depends(requir
 async def update_item(item_id: str, data: ItemIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_tenant(request, user)
     doc = _prep_item_doc(data.dict())
+    if not doc.get("main_item_number"):
+        raise HTTPException(400, "Hovedvarenummer er påkrevd")
+    await _validate_full_number_uniqueness(tid, doc, exclude_id=item_id)
     plan = await get_tenant_plan(tid)
     allow_images = bool(plan.get("product_images")) or user.get("role") == "platform_owner"
     if not allow_images:
@@ -2550,13 +2639,15 @@ async def delete_item(item_id: str, request: Request, user=Depends(require_perm(
 
 
 BALL_SIZES = ["00 Mykball", "Street håndball", "00", "0", "1", "2", "3"]
-IMPORT_COLUMNS = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Type", "Størrelse", "Draktnr", "Antall", "Lokasjon pr str", "Leverandørnr"]
+IMPORT_COLUMNS = ["Hovedvarenummer", "Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Type", "Størrelse", "Draktnr", "Antall", "Lokasjon pr str", "Leverandørnr"]
+IMPORT_COLUMNS_LEGACY = ["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon", "Type", "Størrelse", "Draktnr", "Antall", "Lokasjon pr str", "Leverandørnr"]
 VALID_TYPES = {"vare", "klær", "klar", "clothing", "ball", "baller"}
 
 
 async def _parse_import_rows(tid: str, content: bytes):
     """Felles parser for /items/import og /items/import/preview.
     Returnerer (grouped: dict[key→item], errors: list[dict]).
+    Støtter både ny mal (Hovedvarenummer FØRST) og legacy-mal (Varenavn først).
     Validerer: type, obligatoriske felt, ball-størrelse mot BALL_SIZES, leverandørnr finnes."""
     try:
         wb = load_workbook(io.BytesIO(content), data_only=True)
@@ -2567,14 +2658,23 @@ async def _parse_import_rows(tid: str, content: bytes):
     if not rows:
         raise HTTPException(400, "Tom fil")
     header = [str(h or "").strip().lower() for h in rows[0]]
-    expected = [h.lower() for h in IMPORT_COLUMNS]
-    # Vi aksepterer både minimum 10 kolonner (bakoverkompat) OG full lengde
-    if len(header) < 10 or header[:10] != expected[:10]:
-        raise HTTPException(400, f"Feil kolonner. Første 10 kolonner må være: {', '.join(IMPORT_COLUMNS[:10])}")
+    # Detekter format: ny (Hovedvarenummer først) eller legacy
+    legacy_mode = False
+    if header and header[0] == "varenavn":
+        legacy_mode = True
+        expected = [h.lower() for h in IMPORT_COLUMNS_LEGACY]
+        if len(header) < 10 or header[:10] != expected[:10]:
+            raise HTTPException(400, f"Feil kolonner (legacy-mal). Første 10 må være: {', '.join(IMPORT_COLUMNS_LEGACY[:10])}")
+    else:
+        expected = [h.lower() for h in IMPORT_COLUMNS]
+        if len(header) < 11 or header[:11] != expected[:11]:
+            raise HTTPException(400, f"Feil kolonner. Første 11 må være: {', '.join(IMPORT_COLUMNS[:11])}. Last ned ny mal via «Importmal».")
 
-    # Prefetch leverandører for matching
+    # Prefetch
     suppliers = {s.get("supplier_number"): s for s in await db.suppliers.find({"tenant_id": tid}, {"_id": 0}).to_list(1000)}
-    existing_names = {(i.get("name", "").strip().lower()): i for i in await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(2000)}
+    existing_items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(2000)
+    existing_by_main = {str(i.get("main_item_number") or "").strip().lower(): i for i in existing_items if i.get("main_item_number")}
+    existing_by_name = {(i.get("name", "").strip().lower()): i for i in existing_items}
 
     grouped: Dict[str, Dict[str, Any]] = {}
     errors: List[Dict[str, Any]] = []
@@ -2582,36 +2682,53 @@ async def _parse_import_rows(tid: str, content: bytes):
         if row is None or all(v is None or (isinstance(v, str) and not v.strip()) for v in row):
             continue
         row = list(row) + [None] * max(0, len(IMPORT_COLUMNS) - len(row))
-        name = (str(row[0]) if row[0] is not None else "").strip()
+        if legacy_mode:
+            # Legacy: ingen hovedvarenummer – vi utleder fra varenavn
+            main_num = ""
+            name = (str(row[0]) if row[0] is not None else "").strip()
+            cat = (str(row[1]) if row[1] else "").strip()
+            mg = (str(row[2]) if row[2] else "").strip()
+            sg = (str(row[3]) if row[3] else "").strip()
+            price_cell = row[4]; loc_cell = row[5]; type_cell = row[6]
+            size_cell = row[7]; jersey_cell = row[8]; qty_cell = row[9]
+            size_loc_cell = row[10] if len(row) > 10 else None
+            sup_cell = row[11] if len(row) > 11 else None
+        else:
+            main_num = (str(row[0]) if row[0] is not None else "").strip()
+            name = (str(row[1]) if row[1] is not None else "").strip()
+            cat = (str(row[2]) if row[2] else "").strip()
+            mg = (str(row[3]) if row[3] else "").strip()
+            sg = (str(row[4]) if row[4] else "").strip()
+            price_cell = row[5]; loc_cell = row[6]; type_cell = row[7]
+            size_cell = row[8]; jersey_cell = row[9]; qty_cell = row[10]
+            size_loc_cell = row[11] if len(row) > 11 else None
+            sup_cell = row[12] if len(row) > 12 else None
         if not name:
             errors.append({"row": idx, "field": "Varenavn", "error": "Varenavn er påkrevd"}); continue
-        cat = (str(row[1]) if row[1] else "").strip()
         if not cat:
             errors.append({"row": idx, "field": "Kategori", "error": "Kategori er påkrevd"}); continue
-        mg = (str(row[2]) if row[2] else "").strip()
-        sg = (str(row[3]) if row[3] else "").strip()
         try:
-            price = float(row[4]) if row[4] not in (None, "") else 0.0
+            price = float(price_cell) if price_cell not in (None, "") else 0.0
         except Exception:
-            errors.append({"row": idx, "field": "Pris", "error": f"Ugyldig pris «{row[4]}»"}); continue
+            errors.append({"row": idx, "field": "Pris", "error": f"Ugyldig pris «{price_cell}»"}); continue
         if price < 0:
             errors.append({"row": idx, "field": "Pris", "error": "Pris må være 0 eller mer"}); continue
-        loc = (str(row[5]) if row[5] else "").strip()
-        type_raw = (str(row[6]) if row[6] else "").strip().lower()
+        loc = (str(loc_cell) if loc_cell else "").strip()
+        type_raw = (str(type_cell) if type_cell else "").strip().lower()
         if type_raw not in VALID_TYPES:
             errors.append({"row": idx, "field": "Type", "error": f"Type må være 'vare', 'klær' eller 'ball' (fikk «{type_raw}»)"}); continue
         is_cloth = type_raw in ("klær", "klar", "clothing")
         is_ball = type_raw in ("ball", "baller")
-        size = (str(row[7]) if row[7] else "").strip()
-        jersey = (str(row[8]) if row[8] else "").strip() or "X"
+        size = (str(size_cell) if size_cell else "").strip()
+        jersey = (str(jersey_cell) if jersey_cell else "").strip() or "X"
         try:
-            qty = int(row[9]) if row[9] not in (None, "") else 0
+            qty = int(qty_cell) if qty_cell not in (None, "") else 0
         except Exception:
-            errors.append({"row": idx, "field": "Antall", "error": f"Ugyldig antall «{row[9]}»"}); continue
+            errors.append({"row": idx, "field": "Antall", "error": f"Ugyldig antall «{qty_cell}»"}); continue
         if qty < 0:
             errors.append({"row": idx, "field": "Antall", "error": "Antall må være 0 eller mer"}); continue
-        size_loc = (str(row[10]) if len(row) > 10 and row[10] else "").strip()
-        sup_num = (str(row[11]) if len(row) > 11 and row[11] else "").strip()
+        size_loc = (str(size_loc_cell) if size_loc_cell else "").strip()
+        sup_num = (str(sup_cell) if sup_cell else "").strip()
         if (is_cloth or is_ball) and not size:
             errors.append({"row": idx, "field": "Størrelse", "error": "Størrelse er påkrevd for klær og ball"}); continue
         if is_ball and size and size not in BALL_SIZES:
@@ -2622,13 +2739,20 @@ async def _parse_import_rows(tid: str, content: bytes):
             if not supplier_match:
                 errors.append({"row": idx, "field": "Leverandørnr", "error": f"Leverandørnr «{sup_num}» finnes ikke – opprett leverandøren først"}); continue
 
-        k = f"{name.lower()}||{cat.lower()}||{mg.lower()}||{sg.lower()}"
+        # Grupperings-nøkkel: foretrekk hovedvarenummer hvis gitt
+        if main_num:
+            k = main_num.lower()
+            existing = existing_by_main.get(k)
+        else:
+            k = f"{name.lower()}||{cat.lower()}||{mg.lower()}||{sg.lower()}"
+            existing = existing_by_name.get(name.lower())
         if k not in grouped:
-            doc = {"id": new_id(), "tenant_id": tid, "name": name, "category": cat, "main_group": mg,
+            doc = {"id": new_id(), "tenant_id": tid, "name": name,
+                   "main_item_number": main_num, "category": cat, "main_group": mg,
                    "sub_group": sg, "price": price, "location": loc, "is_clothing": is_cloth,
                    "is_ball": is_ball, "sizes": [], "total_stock": 0,
-                   "_will_update": existing_names.get(name.lower()) is not None,
-                   "_existing_id": existing_names.get(name.lower(), {}).get("id"),
+                   "_will_update": existing is not None,
+                   "_existing_id": existing.get("id") if existing else None,
                    "created_at": now_iso()}
             if supplier_match:
                 doc["supplier_id"] = supplier_match["id"]
@@ -2639,8 +2763,14 @@ async def _parse_import_rows(tid: str, content: bytes):
         if is_cloth or is_ball:
             doc["is_clothing"] = is_cloth or doc.get("is_clothing", False)
             doc["is_ball"] = is_ball or doc.get("is_ball", False)
-            doc["sizes"].append({"size": size, "jersey_number": "" if is_ball else jersey,
-                                 "quantity": qty, "location": size_loc})
+            # Gjenbruk variant hvis identisk (size+jersey) allerede finnes – øk antall
+            jk = "" if is_ball else jersey
+            existing_variant = next((s for s in doc["sizes"] if s.get("size") == size and str(s.get("jersey_number") or "") == str(jk)), None)
+            if existing_variant:
+                existing_variant["quantity"] = int(existing_variant.get("quantity") or 0) + qty
+            else:
+                doc["sizes"].append({"size": size, "jersey_number": jk,
+                                     "quantity": qty, "location": size_loc})
         else:
             doc["total_stock"] = (doc.get("total_stock") or 0) + qty
     for d in grouped.values():
@@ -2704,11 +2834,20 @@ async def items_import_preview(request: Request, file: UploadFile = File(...), u
     grouped, errors = await _parse_import_rows(tid, content)
     preview = []
     for d in grouped.values():
+        # Beregn full_number per variant for preview-visning
+        main_num = d.get("main_item_number") or ""
+        variant_numbers = []
+        if d.get("is_clothing") or d.get("is_ball"):
+            for s in d.get("sizes", []):
+                variant_numbers.append(_compute_full_number(main_num, s.get("size"), s.get("jersey_number")))
         preview.append({
-            "name": d["name"], "category": d["category"], "main_group": d.get("main_group"),
+            "name": d["name"], "main_item_number": main_num,
+            "category": d["category"], "main_group": d.get("main_group"),
             "sub_group": d.get("sub_group"), "price": d.get("price"),
             "type": "klær" if d.get("is_clothing") else ("ball" if d.get("is_ball") else "vare"),
             "variant_count": len(d.get("sizes", [])),
+            "variant_numbers": variant_numbers,
+            "full_number": _compute_full_number(main_num) if not variant_numbers else None,
             "total_stock": d.get("total_stock", 0),
             "supplier_name": d.get("supplier_name"),
             "supplier_number": d.get("supplier_number"),
@@ -2754,31 +2893,38 @@ async def items_import_template(request: Request, user=Depends(require_perm("inv
     widths = [26, 16, 16, 18, 10, 16, 10, 14, 10, 10, 20, 14]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64+i)].width = w
-    # Datavalidering for Type (G) og Størrelse-ball
+    # Datavalidering for Type (nå kolonne H) og Størrelse-ball
     dv_type = DataValidation(type="list", formula1='"vare,klær,ball"', allow_blank=True)
     dv_type.error = "Type må være 'vare', 'klær' eller 'ball'"
     dv_type.errorTitle = "Ugyldig type"
-    ws.add_data_validation(dv_type); dv_type.add("G2:G1000")
+    ws.add_data_validation(dv_type)
+    dv_type.add("H2:H1000")
+    # Ballstørrelser kommenteres i mal
+    ws.append([])
+    ws.append(["Gyldige ballstørrelser:", ", ".join(BALL_SIZES)])
+    ws.append(["Hovedvarenummer:", "Fritekst (f.eks. HJEM100). Komplett varenummer bygges automatisk: Hovedvarenummer-Størrelse-Draktnummer (ensifret draktnr nullpaddes til 2 siffer)."])
+    ws.append(["Eksempel:", "HJEM100 + str M + draktnr 8 → HJEM100-M-08"])
 
     # Instruksjonsark
     info = wb.create_sheet("Instruksjoner")
     info["A1"] = "UTSTYRSROMMET – Import-mal for lagerbeholdning"
     info["A1"].font = Font(bold=True, size=14, color="7F1D1D")
     info["A2"] = "Fyll inn på arket «Varer» (rad 2 og nedover). Første 5 rader er eksempler – slett dem før import."
-    info["A3"] = "Første 10 kolonner er påkrevd (Varenavn → Antall). Lokasjon pr str og Leverandørnr er valgfrie."
+    info["A3"] = "Første 11 kolonner er påkrevd (Hovedvarenummer → Antall). Lokasjon pr str og Leverandørnr er valgfrie."
     info["A4"] = ""
     info["A5"] = "Felt-beskrivelser:"
     info["A5"].font = Font(bold=True)
     descs = [
-        ("Varenavn", "Påkrevd. Varer med samme navn + kategori grupperes som varianter."),
+        ("Hovedvarenummer", "Påkrevd. Fritekst (bokstaver+tall). F.eks. HJEM100. Komplett varenummer bygges automatisk: Hovedvarenummer-Størrelse-Draktnummer."),
+        ("Varenavn", "Påkrevd. Varer med samme hovedvarenummer slås sammen til varianter."),
         ("Kategori", "Påkrevd. F.eks. Klær, Baller, Trening."),
-        ("Hovedgruppe", "Valgfri. F.eks. Drakt, Trening, Målvakt."),
-        ("Undergruppe", "Valgfri. F.eks. Hjemme, Borte, Markering."),
+        ("Hovedgruppe", "Valgfri. F.eks. Spillertrøye, Trening, Målvakt."),
+        ("Undergruppe", "Valgfri. F.eks. Hjemmedrakter, Bortedrakter."),
         ("Pris", "Valgfri. Salgspris i NOK. Må være 0 eller mer."),
         ("Lokasjon", "Valgfri. F.eks. Hylle A1, Skap B2."),
         ("Type", "Påkrevd. Må være 'vare' (uten størrelse), 'klær' (med str + draktnr), eller 'ball' (med ballstørrelse)."),
         ("Størrelse", "Påkrevd for 'klær' og 'ball'. For ball: må være én av gyldige ballstørrelser."),
-        ("Draktnr", "For 'klær': draktnummer. Bruk 'X' hvis flere drakter deler størrelse."),
+        ("Draktnr", "For 'klær': draktnummer. Bruk 'X' hvis flere drakter deler størrelse. Ensifret nullpaddes automatisk i varenummeret."),
         ("Antall", "Påkrevd. Antall per variant (eller total for 'vare')."),
         ("Lokasjon pr str", "Valgfri. Spesifikk hylleplass for akkurat denne størrelsen."),
         ("Leverandørnr", "Valgfri. Må være et eksisterende 5-sifret leverandørnr (f.eks. 00001). Opprett leverandøren FØR import.")
@@ -2821,11 +2967,45 @@ async def items_import(request: Request, file: UploadFile = File(...), strict: b
             if mode == "insert":
                 errors.append({"row": 0, "field": "Varenavn", "error": f"«{doc['name']}» finnes allerede – bruk mode=upsert eller endre navn"})
                 continue
-            # Behold eksisterende id, oppdater resten
+            # Hent eksisterende for å smelte inn størrelse-mengder korrekt
+            existing = await db.items.find_one({"id": existing_id, "tenant_id": tid}, {"_id": 0}) or {}
+            if (doc.get("is_clothing") or doc.get("is_ball")):
+                # Merge sizes: Oppdater eksisterende variantmengde, legg til nye
+                exist_sizes = existing.get("sizes", [])
+                exist_by_key = {(s.get("size"), str(s.get("jersey_number") or "")): s for s in exist_sizes}
+                for new_s in doc.get("sizes", []):
+                    key = (new_s.get("size"), str(new_s.get("jersey_number") or ""))
+                    if key in exist_by_key:
+                        exist_by_key[key]["quantity"] = int(exist_by_key[key].get("quantity") or 0) + int(new_s.get("quantity") or 0)
+                        # Oppdater lokasjon kun hvis gitt
+                        if new_s.get("location"):
+                            exist_by_key[key]["location"] = new_s["location"]
+                    else:
+                        exist_sizes.append(new_s)
+                        exist_by_key[key] = new_s
+                doc["sizes"] = exist_sizes
+                doc["total_stock"] = sum(int(s.get("quantity") or 0) for s in exist_sizes)
+            else:
+                # Non-variant: Legg antall oppå eksisterende
+                doc["total_stock"] = int(existing.get("total_stock") or 0) + int(doc.get("total_stock") or 0)
+            # Re-prep for å få full_number på alle varianter
+            doc = _prep_item_doc(doc)
+            # Valider unikhet mot ANDRE items
+            try:
+                await _validate_full_number_uniqueness(tid, doc, exclude_id=existing_id)
+            except HTTPException as he:
+                errors.append({"row": 0, "field": "Hovedvarenummer", "error": str(he.detail)})
+                continue
             doc_update = {k: v for k, v in doc.items() if k not in ("id", "tenant_id", "created_at")}
             await db.items.update_one({"id": existing_id, "tenant_id": tid}, {"$set": doc_update})
             updated += 1
         else:
+            doc = _prep_item_doc(doc)
+            try:
+                await _validate_full_number_uniqueness(tid, doc)
+            except HTTPException as he:
+                errors.append({"row": 0, "field": "Hovedvarenummer", "error": str(he.detail)})
+                continue
             await db.items.insert_one(doc)
             created += 1
     if user.get("role") != "platform_owner":
@@ -3593,7 +3773,7 @@ async def export_stock_count(count_id: str, request: Request, user=Depends(requi
     ws["A3"] = f"Opprettet: {sc.get('created_at','')[:10]} · Status: {sc.get('status','')}"
     ws["A4"] = "Fyll ut «Talt antall» og importer tilbake."
     ws["A4"].font = Font(italic=True, size=10, color="555555")
-    headers = ["Linje-ID", "Lokasjon", "Varenavn", "Størrelse", "System", "Talt antall", "Diff", "Notat"]
+    headers = ["Linje-ID", "Varenummer", "Varenavn", "Størrelse", "Draktnr", "Lokasjon", "System", "Talt antall", "Diff", "Notat"]
     for ci, h in enumerate(headers, start=1):
         c = ws.cell(row=6, column=ci, value=h)
         c.font = Font(bold=True, color="FFFFFF")
@@ -3601,14 +3781,20 @@ async def export_stock_count(count_id: str, request: Request, user=Depends(requi
         c.alignment = Alignment(horizontal="center")
     for ri, ln in enumerate(sc.get("lines", []), start=7):
         ws.cell(row=ri, column=1, value=ln.get("line_id"))
-        ws.cell(row=ri, column=2, value=ln.get("location") or "")
+        ws.cell(row=ri, column=2, value=ln.get("full_number") or ln.get("item_number") or "")
         ws.cell(row=ri, column=3, value=ln.get("item_name") or "")
         ws.cell(row=ri, column=4, value=ln.get("size") or "")
-        ws.cell(row=ri, column=5, value=int(ln.get("system_quantity") or 0))
-        ws.cell(row=ri, column=6, value=ln.get("counted_quantity"))
+        ws.cell(row=ri, column=5, value=ln.get("jersey_number") or "")
+        ws.cell(row=ri, column=6, value=ln.get("location") or "")
+        ws.cell(row=ri, column=7, value=int(ln.get("system_quantity") or 0))
+        ws.cell(row=ri, column=8, value=ln.get("counted_quantity"))
         diff = (ln.get("counted_quantity") - (ln.get("system_quantity") or 0)) if ln.get("counted_quantity") is not None else None
-        ws.cell(row=ri, column=7, value=diff)
-    widths = [36, 20, 32, 14, 10, 12, 10, 24]
+        ws.cell(row=ri, column=9, value=diff)
+    # Varenummer-kolonnen (B) må være tekst
+    for row_cells in ws.iter_rows(min_row=7, min_col=2, max_col=2):
+        for cell in row_cells:
+            cell.number_format = "@"
+    widths = [36, 20, 32, 12, 10, 20, 10, 12, 10, 24]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64+i)].width = w
     ws.column_dimensions["A"].hidden = True  # Linje-ID vises skjult; brukes ved import
@@ -3646,7 +3832,7 @@ async def import_stock_count(count_id: str, file: UploadFile = File(...),
         if not ln:
             errors.append({"row": ri, "error": f"Linje-ID {line_id} finnes ikke i tellingen"})
             continue
-        counted = row[5] if len(row) > 5 else None
+        counted = row[7] if len(row) > 7 else None
         if counted is None or str(counted).strip() == "":
             continue
         try:
@@ -3725,18 +3911,31 @@ async def export_inventory(request: Request, user=Depends(require_perm("inventor
     tid = await require_feature(request, user, "excel_export")
     items = await db.items.find({"tenant_id": tid}, {"_id": 0}).to_list(10000)
     wb = Workbook(); ws = wb.active; ws.title = "Beholdning"
-    ws.append(["Varenavn", "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Beholdning", "Lokasjon",
-               "Type", "Størrelse", "Draktnr", "Antall pr str", "Lokasjon pr str"])
+    ws.append(["Varenummer", "Varenavn", "Størrelse", "Draktnr", "Antall",
+               "Kategori", "Hovedgruppe", "Undergruppe", "Pris", "Lokasjon",
+               "Type", "Lokasjon pr str", "Hovedvarenummer"])
     for it in items:
         type_str = "klær" if it.get("is_clothing") else ("ball" if it.get("is_ball") else "vare")
+        main_num = it.get("main_item_number") or ""
         if (it.get("is_clothing") or it.get("is_ball")) and it.get("sizes"):
             for s in it["sizes"]:
-                ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
-                           it.get("price"), it.get("total_stock"), it.get("location"), type_str,
-                           s.get("size"), s.get("jersey_number"), s.get("quantity"), s.get("location", "")])
+                full = s.get("full_number") or _compute_full_number(main_num, s.get("size"), s.get("jersey_number"))
+                ws.append([full, it.get("name"), s.get("size"), s.get("jersey_number"),
+                           s.get("quantity"),
+                           it.get("category"), it.get("main_group"), it.get("sub_group"),
+                           it.get("price"), it.get("location"), type_str,
+                           s.get("location", ""), main_num])
         else:
-            ws.append([it.get("name"), it.get("category"), it.get("main_group"), it.get("sub_group"),
-                       it.get("price"), it.get("total_stock"), it.get("location"), type_str, "", "", "", ""])
+            ws.append([main_num, it.get("name"), "", "",
+                       it.get("total_stock"),
+                       it.get("category"), it.get("main_group"), it.get("sub_group"),
+                       it.get("price"), it.get("location"), type_str, "", main_num])
+    # Tving tekst-format på Varenummer-kolonnen (A) så bokstaver og innledende nuller bevares
+    for row_cells in ws.iter_rows(min_row=2, min_col=1, max_col=1):
+        for cell in row_cells:
+            cell.number_format = "@"
+    for i, w in enumerate([22, 26, 10, 10, 10, 14, 16, 18, 10, 14, 10, 18, 16], start=1):
+        ws.column_dimensions[chr(64+i)].width = w
     return _xlsx_response(wb, "beholdning.xlsx")
 
 
@@ -5161,12 +5360,13 @@ def _build_order_pdf(order: dict, club: dict, supplier: dict) -> bytes:
     else:
         c.setFont("Helvetica-Bold", 10)
         c.drawString(20 * mm, y, "Lagerbestilling"); y -= 7 * mm
-    # Table header
+    # Table header (Varenummer FØRST)
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(20 * mm, y, "Vare")
-    c.drawString(90 * mm, y, "Str/#")
-    c.drawRightString(130 * mm, y, "Antall")
-    c.drawRightString(155 * mm, y, "À-pris")
+    c.drawString(20 * mm, y, "Varenr")
+    c.drawString(55 * mm, y, "Vare")
+    c.drawString(110 * mm, y, "Str/#")
+    c.drawRightString(135 * mm, y, "Antall")
+    c.drawRightString(158 * mm, y, "À-pris")
     c.drawRightString(w - 20 * mm, y, "Sum")
     y -= 2 * mm; c.line(20 * mm, y, w - 20 * mm, y); y -= 5 * mm
     c.setFont("Helvetica", 9)
@@ -5174,12 +5374,14 @@ def _build_order_pdf(order: dict, club: dict, supplier: dict) -> bytes:
     for ln in order.get("lines") or []:
         qty = ln.get("quantity") or 0; price = ln.get("unit_price") or 0
         s = qty * price; total += s
-        c.drawString(20 * mm, y, (ln.get("item_name") or "")[:50])
+        full_num = ln.get("full_number") or ln.get("item_number") or ""
+        c.drawString(20 * mm, y, str(full_num)[:18])
+        c.drawString(55 * mm, y, (ln.get("item_name") or "")[:36])
         sz = ln.get("size") or ""
         jn = ln.get("jersey_number") or ""
-        c.drawString(90 * mm, y, f"{sz}{' #'+jn if jn and jn != 'X' else ''}")
-        c.drawRightString(130 * mm, y, str(qty))
-        c.drawRightString(155 * mm, y, f"{price:,.2f}".replace(",", " "))
+        c.drawString(110 * mm, y, f"{sz}{' #'+jn if jn and jn != 'X' else ''}")
+        c.drawRightString(135 * mm, y, str(qty))
+        c.drawRightString(158 * mm, y, f"{price:,.2f}".replace(",", " "))
         c.drawRightString(w - 20 * mm, y, f"{s:,.2f}".replace(",", " "))
         y -= 5 * mm
         if y < 50 * mm: c.showPage(); y = h - 20 * mm
@@ -5575,3 +5777,40 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
+
+
+# ============== STARTUP MIGRATIONS ==============
+@app.on_event("startup")
+async def migrate_full_numbers_on_startup():
+    """Idempotent migrering: backfill main_item_number + full_number på alle items.
+    Kjøres ved hver backend-oppstart. Trygg å kjøre flere ganger – oppdaterer kun manglende felter."""
+    try:
+        updated = 0
+        async for it in db.items.find({"$or": [
+            {"main_item_number": {"$in": [None, ""]}},
+            {"main_item_number": {"$exists": False}},
+            {"full_number": {"$exists": False}},
+        ]}):
+            doc = dict(it)
+            if not doc.get("main_item_number"):
+                # Legacy: bruk item_number eller lag ny fra navn
+                legacy = str(doc.get("item_number") or "").strip()
+                if not legacy:
+                    # Fallback: slugify navnet (f.eks. "Hjemmedrakt" → "HJEMMEDRAKT")
+                    import re as _re
+                    legacy = _re.sub(r"[^A-Za-z0-9]+", "", (doc.get("name") or "")).upper()[:12] or "VARE"
+                doc["main_item_number"] = legacy
+            prepped = _prep_item_doc(doc)
+            await db.items.update_one(
+                {"_id": it["_id"]},
+                {"$set": {
+                    "main_item_number": prepped.get("main_item_number"),
+                    "full_number": prepped.get("full_number"),
+                    "sizes": prepped.get("sizes", []),
+                }}
+            )
+            updated += 1
+        if updated:
+            logger.info(f"Backfilled main_item_number + full_number på {updated} varer")
+    except Exception as e:
+        logger.exception(f"Full-number migrering feilet: {e}")

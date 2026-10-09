@@ -5,48 +5,48 @@ Komplett lagerstyrings- og administrasjonssystem for idrettsklubb som fungerer p
 
 ## Architecture
 - Backend: FastAPI + Motor (MongoDB), JWT, Emergent email, reportlab (PDF), qrcode + PIL
-- Frontend: React 19 + shadcn/ui + Tailwind, Sonner, html5-qrcode
+- Frontend: React 19 + shadcn/ui + Tailwind, Sonner
 - Multi-tenancy: `tenant_id` på alle data
-- Stripe Billing: Checkout, add-on seats, 50% kupong første år
 
 ## Users
-- Platform Owner: raymond.d.hansen@gmail.com (deluxe-workspace)
-- Admin per kunde: full tilgang
+- Platform Owner: raymond.d.hansen@gmail.com
+- Admin per kunde: full tilgang + role_title fritekst
 - Standard brukere: rettigheter per modul
-- role_title (fritekst): admin-styrt tittel/rolle som vises i brukerlisten og i e-postsignaturer. Bruker kan ikke endre dette selv.
 
-## Branding (Feb 2026)
-- Tittel: UTSTYRSROMMET på alle sider
-- Favicon: UTSTYRSROMMET shield-logo i alle størrelser (16/32/48/180/192/512 + ICO)
-- Manifest.json med name/short_name=UTSTYRSROMMET, theme_color=#991b1b
-- Open Graph + Twitter card tags, html lang="nb"
+## Branding
+- Tittel: UTSTYRSROMMET, favicon shield-logo (16/32/48/180/192/512 + ICO), manifest.json
 
-## Implemented (seneste iterasjoner)
+## Varenummersystem (iter 22) ✅ FASE 1 KOMPLETT
+- **Hovedvarenummer**: Fritekst (bokstaver+tall), bevarer innledende nuller, brukerstyrt. Påkrevd ved save.
+- **Automatisk komplett varenummer**: Format `Hovedvarenummer-Størrelse-Draktnummer`. Ensifret draktnr nullpaddes (8→08). Bokstavstørrelser i STORE bokstaver (XS/M/XL). Numeriske størrelser beholdes (164). Tomme deler hoppes over.
+  - Eksempler: `HJEM100-M-08`, `HJEM100-164-03`, `BORTE100-164`, `HJEM100`
+- **Backend-validering**: Unikt komplett varenummer per tenant. Backend-helpere `_compute_full_number()`, `_validate_full_number_uniqueness()`.
+- **Idempotent migrering** på backend-oppstart: Backfiller `main_item_number` + `full_number` på alle items. Legacy fallback: slugified navn.
+- **Import gjenbruker variant**: Hvis identisk (size+jersey) finnes under samme hovedvare, økes antall – ingen duplikatlinje.
+- **Excel-mal**: `Hovedvarenummer` som første kolonne. Tekst-format på varenr-kolonner. Legacy-mal (uten Hovedvarenummer) fortsatt lesbar.
+- **Excel-eksport**: Varenummer første kolonne.
+- **Varetelling export/import**: Varenummer første kolonne (etter skjult Linje-ID), importen leser Talt antall fra ny posisjon.
+- **Bestillings-PDF**: Varenr første kolonne.
+- **Frontend Inventory-dialog**: Hovedvarenummer-input (fritekst, påkrevd) + live-forhåndsvisning av komplette varenummer for alle varianter i grønn boks.
+- **Frontend Inventory-liste**: Ny «Varenr»-kolonne (etter bilde) med rødt mono-badge med full_number.
 
-### Feb 2026 – iter 11-18 (tidligere)
-11-punkts forbedring, Excel-preview, Varemottak-vs-bestilling, mappe-visning, Behovsskjema import+rediger+bekreft, Quick-order per leverandør, taxonomy-fix, drag-and-drop, routers-ekstraksjon startet.
+## Webshop-style kategoribar (iter 22b) ✅
+- Over varetabellen: «Vis alle varer (N)»-knapp + én knapp per unike kategori med antall (N).
+- Aktiv knapp får rødt fyll. Package-ikon på kategoriknapper, LayoutGrid på «Vis alle».
+- Filtrering: Klikk kategoriknapp → tabellen filtreres til kun varer i den kategorien. «Vis alle» → nullstiller.
 
-### Feb 2026 – iter 19: 3-nivå hierarki + Mobilvennlig + Hierarki-søk ✅
-- 3-nivå kategorihierarki, kompakt mobil, auto-ekspander ved søk.
-
-### Feb 2026 – iter 20: Soft-delete leverandører + role_title + Email-signatur ✅
+## Soft-delete + role_title + Email-signatur (iter 20) ✅
 - Soft-delete leverandører med Angre-toast + Papirkurv-dialog.
+- Deaktiver/Aktiver-knapp på leverandører (iter 21).
 - role_title-fritekstfelt på brukere (admin-styrt).
 - Automatisk HTML-signatur på alle brukerutløste e-poster.
 
-### Feb 2026 – iter 21: Deaktiver/Aktiver leverandører ✅
-- **Nytt endpoint**: `POST /api/suppliers/{sid}/toggle-active` (admin-only). Veksler `active`-bool. Lagrer `active_changed_at` og `active_changed_by` for sporbarhet. 400 hvis leverandøren er soft-slettet (må gjenopprettes først).
-- **Frontend**: Ny amber "Deaktiver"-knapp (PowerOff-ikon) på hver leverandør-rad. Ved deaktivering endres til grønn "Aktiver"-knapp (Power-ikon). Confirm-dialog forklarer at historikk beholdes.
-- Deaktiverte leverandører: skjules fra "Bestill varer"-hurtighandling + lagerbestillinger (`/items/by-supplier`), men vises fortsatt i leverandørlisten med gråtone og "Deaktivert"-badge. All ordrehistorikk beholdes.
-- Testing: Verifisert via curl (toggle begge veier + 400 på deleted) + screenshot (3 av 3 knapper vises).
-
 ## Backlog
-- **P1: Server-refaktor** – Splitt `/app/backend/server.py` (nå 5575+ linjer) i routers.
+- **P0 (igjen fra iter 22)**: FASE 2 – Varenr første kolonne i Behovsskjema-PDF, Varemottak-PDF, Utlån/Retur-PDF, Team-utstyrsliste-PDF.
+- **P0**: QR-etikett tekst oppdateres med full_number.
+- **P1 Server-refaktor**: Splitt `/app/backend/server.py` (nå 5760+ linjer) i routers.
 - P1: Excel Import for Teams og People.
 - P1: E-postpåminnelse 3 dager før utlåns-forfall.
-- P2: `/api/email-settings/test` returnerer 502 fra Cloudflare på provider-feil; endre til 200 + `{ok:false,error}` så UI kan vise årsak.
-- P2: Dangling refs – `DELETE /items` sjekker ikke behovsskjema-linjer.
-- P2: Dedikert Excel-import for lagerbeholdning m/ forhåndsvisning + leverandør-dropdown-matching.
-- P2: Cache subscription-status, KID MOD10/11, Faktura GridFS, TTL login_history.
+- P2: Konflikt-UI for duplikat-varianter ved import (dagens: 400 med beskjed).
 - P2: Auto-purge soft-slettede leverandører etter 30 dager (cron).
-- P2: Klubb-logo i e-postsignaturen når klubben har lastet opp.
+- P2: Klubb-logo i e-postsignatur når klubben har lastet opp.
