@@ -385,29 +385,37 @@ export default function Teams() {
                     const rolleHer = roleForTeam(p, detail.team.id);
                     const antallLag = (p.team_ids || []).length;
                     return (
-                    <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm" data-testid={`team-detail-person-${p.id}`}>
-                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                        {rolleHer && <span className="text-[10px] font-bold uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded shrink-0">{rolleHer}</span>}
-                        <span className="font-semibold truncate">{p.name}</span>
-                        <span className="text-slate-400">·</span>
-                        <span className="text-slate-700">{p.phone || "–"}</span>
-                        {antallLag > 1 && (
-                          <span className="text-[10px] text-slate-500 italic shrink-0" title={`Også på ${antallLag - 1} andre lag`}>+{antallLag - 1} andre lag</span>
+                    <div key={p.id} className="flex items-center justify-between gap-3 px-3 py-2.5" data-testid={`team-detail-person-${p.id}`}>
+                      <div className="min-w-0 flex-1">
+                        {rolleHer && (
+                          <div className="text-[10px] font-bold uppercase tracking-wide text-red-800 leading-tight">
+                            {rolleHer}
+                            {antallLag > 1 && (
+                              <span className="ml-2 text-[9px] font-semibold text-slate-500 italic normal-case" title={`Også på ${antallLag - 1} andre lag`}>
+                                +{antallLag - 1} andre lag
+                              </span>
+                            )}
+                          </div>
                         )}
-                        {p.debt > 0 && <span className="text-xs text-red-700 font-semibold ml-2">Skyldig: {nok(p.debt)}</span>}
+                        <div className="flex items-baseline gap-2 flex-wrap mt-0.5">
+                          <span className="font-semibold text-sm truncate">{p.name}</span>
+                          <span className="text-slate-400 text-xs">·</span>
+                          <span className="text-slate-700 text-sm">{p.phone || "–"}</span>
+                          {p.debt > 0 && <span className="text-xs text-red-700 font-semibold ml-1">Skyldig: {nok(p.debt)}</span>}
+                        </div>
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
-                        <Button variant="ghost" size="sm" onClick={() => setPersonDetail(p)} title="Vis informasjon" data-testid={`view-person-${p.id}`}>
-                          <Eye className="h-3.5 w-3.5" />
+                        <Button variant="ghost" size="sm" onClick={() => setPersonDetail(p)} title="Vis informasjon" data-testid={`view-person-${p.id}`} className="h-8 w-8 p-0">
+                          <Eye className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openEditStaff(p)} title="Rediger informasjon" data-testid={`edit-person-${p.id}`}>
-                          <Pencil className="h-3.5 w-3.5" />
+                        <Button variant="ghost" size="sm" onClick={() => openEditStaff(p)} title="Rediger informasjon" data-testid={`edit-person-${p.id}`} className="h-8 w-8 p-0">
+                          <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => emailStaff(p)} title="Send e-post" data-testid={`email-person-${p.id}`} disabled={!p.email}>
-                          <Mail className={`h-3.5 w-3.5 ${p.email ? "text-red-700" : "text-slate-300"}`} />
+                        <Button variant="ghost" size="sm" onClick={() => emailStaff(p)} title={p.email ? `Send e-post til ${p.email}` : "Mangler e-post"} data-testid={`email-person-${p.id}`} disabled={!p.email} className="h-8 w-8 p-0">
+                          <Mail className={`h-4 w-4 ${p.email ? "text-red-700" : "text-slate-300"}`} />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => deleteStaff(p, detail.team.id)} title={antallLag > 1 ? "Fjern fra dette laget" : "Slett person"} data-testid={`del-person-${p.id}`}>
-                          <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                        <Button variant="ghost" size="sm" onClick={() => deleteStaff(p, detail.team.id)} title={antallLag > 1 ? "Fjern fra dette laget" : "Slett person"} data-testid={`del-person-${p.id}`} className="h-8 w-8 p-0">
+                          <Trash2 className="h-4 w-4 text-red-600" />
                         </Button>
                       </div>
                     </div>
