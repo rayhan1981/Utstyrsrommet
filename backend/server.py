@@ -3040,6 +3040,7 @@ async def get_item_open_orders(item_id: str, request: Request, user=Depends(requ
                 "status": o.get("status"),
                 "size": ln.get("size"),
                 "jersey_number": ln.get("jersey_number"),
+                "full_number": ln.get("full_number") or ln.get("item_number") or "",
                 "ordered": ordered,
                 "received": received,
                 "remaining": remaining,
@@ -3483,13 +3484,18 @@ async def inventory_qr_labels(
     # Expand: ett label pr aktiv størrelse (sized), eller én label (sizeless)
     labels: List[Dict[str, Any]] = []
     for it in items:
+        main_num = it.get("main_item_number") or it.get("full_number") or ""
         if it.get("is_clothing") or it.get("is_ball"):
             for s in it.get("sizes", []):
                 if s.get("has_qr"):
+                    fn = s.get("full_number") or _compute_full_number(main_num, s.get("size"), s.get("jersey_number"))
                     labels.append({"payload": f"{it['id']}#{s['size']}",
+                                   "full_number": fn,
                                    "name": f"{it['name']} ({s['size']})"})
         elif it.get("has_qr"):
-            labels.append({"payload": it["id"], "name": it["name"]})
+            labels.append({"payload": it["id"],
+                           "full_number": main_num,
+                           "name": it["name"]})
     if not labels:
         raise HTTPException(404, "Ingen varer med QR-kode funnet for valgt filter")
 
@@ -3502,11 +3508,12 @@ async def inventory_qr_labels(
     from reportlab.pdfgen import canvas as pdf_canvas
     from reportlab.lib.utils import ImageReader
 
-    # Grid config per size
+    # Grid config per size.
+    # label_mm = høyde på tekstområdet under QR. Må være høy nok for Varenr (bold) + navn/str.
     size_cfg = {
-        "small":  {"qr_mm": 20, "label_mm": 6, "font": 7},
-        "medium": {"qr_mm": 60, "label_mm": 12, "font": 11},
-        "large":  {"qr_mm": 100, "label_mm": 16, "font": 14},
+        "small":  {"qr_mm": 20, "label_mm": 6,  "font_num": 7,  "font_name": 0},   # kun varenr
+        "medium": {"qr_mm": 60, "label_mm": 14, "font_num": 11, "font_name": 8},   # varenr + navn
+        "large":  {"qr_mm": 100,"label_mm": 20, "font_num": 14, "font_name": 10},  # varenr + navn
     }
     cfg = size_cfg.get(size, size_cfg["medium"])
     qr_mm = cfg["qr_mm"]
@@ -3547,9 +3554,21 @@ async def inventory_qr_labels(
 
         img_buf = io.BytesIO(); qr_img.save(img_buf, format="PNG"); img_buf.seek(0)
         c.drawImage(ImageReader(img_buf), x_mm * mm, (y_mm + label_mm) * mm, qr_mm * mm, qr_mm * mm)
-        c.setFont("Helvetica-Bold", cfg["font"])
-        text = (lab["name"] or "")[:40]
-        c.drawCentredString((x_mm + qr_mm / 2) * mm, (y_mm + label_mm / 2 - 1) * mm, text)
+
+        # Tekst: varenummer (fete typer) + navn/str (slankere, mindre). Hvis small => kun varenummer.
+        center_x_mm = x_mm + qr_mm / 2
+        varenr = (lab.get("full_number") or lab.get("name") or "")[:30]
+        if size == "small":
+            c.setFont("Helvetica-Bold", cfg["font_num"])
+            c.drawCentredString(center_x_mm * mm, (y_mm + label_mm / 2 - 1) * mm, varenr[:18])
+        else:
+            # To linjer: varenr (øvre), navn (nedre)
+            c.setFont("Helvetica-Bold", cfg["font_num"])
+            c.drawCentredString(center_x_mm * mm, (y_mm + label_mm - cfg["font_num"] / 2.6) * mm, varenr)
+            name_text = (lab.get("name") or "")[:40]
+            if cfg["font_name"] > 0 and name_text:
+                c.setFont("Helvetica", cfg["font_name"])
+                c.drawCentredString(center_x_mm * mm, (y_mm + 1.5) * mm, name_text)
 
         if (i + 1) % per_page == 0 and (i + 1) < len(labels):
             c.showPage()
@@ -3952,7 +3971,8 @@ async def export_team(team_id: str, request: Request, user=Depends(require_perm(
     cust = await db.customers.find_one({"id": tid}, {"_id": 0}) or {}
     club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     club_name = club.get("name") or cust.get("club_name") or "Klubben"
-    pdf_bytes = _build_team_equipment_pdf(team, loans, people, club, cust, user, club_name)
+    full_numbers = await _lookup_full_numbers_for_loans(tid, loans)
+    pdf_bytes = _build_team_equipment_pdf(team, loans, people, club, cust, user, club_name, full_numbers)
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", team.get("team_name", "lag"))
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="utstyr_{safe}.pdf"'})
@@ -3970,7 +3990,8 @@ async def _generate_team_equipment_pdf_for_tenant(tid: str, team_id: str, user: 
     club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     club_name = club.get("name") or cust.get("club_name") or "Klubben"
     effective_user = user or {"name": club_name, "email": cust.get("owner_email"), "phone": cust.get("owner_phone")}
-    pdf_bytes = _build_team_equipment_pdf(team, loans, people, club, cust, effective_user, club_name)
+    full_numbers = await _lookup_full_numbers_for_loans(tid, loans)
+    pdf_bytes = _build_team_equipment_pdf(team, loans, people, club, cust, effective_user, club_name, full_numbers)
     return pdf_bytes, team, club_name, loans
 
 
@@ -4023,8 +4044,43 @@ async def send_team_equipment_list(team_id: str, data: TeamSendEquipmentIn, requ
     return {"ok": True, "sent_to": to_email, "provider_id": res.get("provider_id"), "method": res.get("method")}
 
 
+async def _lookup_full_numbers_for_loans(tid: str, loans: list) -> dict:
+    """Henter varenummer for et sett utlån. Returnerer dict med (item_id, size, jersey) -> full_number,
+    i tillegg til (item_id, None, None) -> hovedvarenummer for sizeless-fallback."""
+    item_ids = list({l.get("item_id") for l in loans if l.get("item_id")})
+    if not item_ids:
+        return {}
+    items = await db.items.find(
+        {"id": {"$in": item_ids}, "tenant_id": tid},
+        {"_id": 0, "id": 1, "main_item_number": 1, "full_number": 1,
+         "sizes": 1, "is_clothing": 1, "is_ball": 1},
+    ).to_list(5000)
+    out: Dict[tuple, str] = {}
+    for it in items:
+        iid = it["id"]
+        main = it.get("main_item_number") or it.get("full_number") or ""
+        out[(iid, None, None)] = main
+        for s in it.get("sizes") or []:
+            fn = s.get("full_number") or _compute_full_number(main, s.get("size"), s.get("jersey_number"))
+            out[(iid, s.get("size"), s.get("jersey_number"))] = fn
+            # Fallback uten jersey (gamle utlån kan mangle jersey_number)
+            out.setdefault((iid, s.get("size"), None), fn)
+    return out
+
+
+def _resolve_loan_full_number(loan: dict, lookup: dict) -> str:
+    iid = loan.get("item_id")
+    size = loan.get("size")
+    jn = loan.get("jersey_number")
+    if (iid, size, jn) in lookup: return lookup[(iid, size, jn)]
+    if (iid, size, None) in lookup: return lookup[(iid, size, None)]
+    return lookup.get((iid, None, None), "") or ""
+
+
 def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
-                               cust: dict, user: dict, club_name: str) -> bytes:
+                               cust: dict, user: dict, club_name: str,
+                               full_numbers: Optional[dict] = None) -> bytes:
+    full_numbers = full_numbers or {}
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas as pdf_canvas
@@ -4113,8 +4169,9 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
     c.setFont("Helvetica-Bold", 12)
     c.drawString(LEFT, y, "Utestående utstyr (ikke levert tilbake)")
     y -= 6 * mm
-    # Kolonner (fra RIGHT bakover) – sikrer at ingenting overlapper.
-    col_vare = LEFT
+    # Kolonner (fra RIGHT bakover) – Varenr først, så Vare, Str/Nr, Antall, Pris, Linjebeløp, Frist.
+    col_varenr = LEFT
+    col_vare = LEFT + 28 * mm
     col_str = LEFT + 78 * mm   # "Str/Nr" start (venstre-justert)
     col_ant_r = RIGHT - 68 * mm   # høyre kant av "Antall"
     col_pris_r = RIGHT - 48 * mm  # høyre kant av "Pris/stk"
@@ -4122,6 +4179,7 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
     col_frist_r = RIGHT           # høyre kant av "Frist"
     def _header():
         c.setFont("Helvetica-Bold", 9)
+        c.drawString(col_varenr, y, "Varenr")
         c.drawString(col_vare, y, "Vare")
         c.drawString(col_str, y, "Str/Nr")
         c.drawRightString(col_ant_r, y, "Antall")
@@ -4143,7 +4201,8 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
             _ensure_space(6 * mm)
             name_full = (l.get("item_name") or "")
             # Trunker varenavn hvis for langt
-            name = name_full if len(name_full) <= 38 else (name_full[:35] + "...")
+            name = name_full if len(name_full) <= 28 else (name_full[:25] + "...")
+            fn = _resolve_loan_full_number(l, full_numbers)
             size_bits = []
             if l.get("size"): size_bits.append(l["size"])
             if l.get("jersey_number") and l["jersey_number"] not in ("X", ""): size_bits.append(f"#{l['jersey_number']}")
@@ -4152,6 +4211,7 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
             unit = float(l.get("unit_price") or 0)
             amt = float(l.get("amount_owed") or 0)
             due = _fmt_date(l.get("due_date"))
+            c.drawString(col_varenr, y, (fn or "-")[:14])
             c.drawString(col_vare, y, name)
             c.drawString(col_str, y, size_str[:10])
             c.drawRightString(col_ant_r, y, str(qty))
@@ -4183,14 +4243,16 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
     c.setFont("Helvetica-Bold", 12)
     c.drawString(LEFT, y, "Utleverte forbruksvarer (uten skyldig beløp)")
     y -= 6 * mm
-    # Kolonner: Dato 25 | Vare 70 | Str/Nr 15 | Antall 15 | Utlevert til 45
+    # Kolonner: Dato | Varenr | Vare | Str/Nr | Antall | Utlevert til
     col2_dato = LEFT
-    col2_vare = LEFT + 26 * mm
+    col2_varenr = LEFT + 22 * mm
+    col2_vare = LEFT + 48 * mm
     col2_str_r = RIGHT - 68 * mm   # høyre kant av Str/Nr
     col2_ant_r = RIGHT - 48 * mm   # høyre kant av Antall
     col2_hent = RIGHT - 42 * mm    # venstre kant av "Utlevert til" (brer seg til RIGHT)
     c.setFont("Helvetica-Bold", 9)
     c.drawString(col2_dato, y, "Dato")
+    c.drawString(col2_varenr, y, "Varenr")
     c.drawString(col2_vare, y, "Vare")
     c.drawRightString(col2_str_r, y, "Str/Nr")
     c.drawRightString(col2_ant_r, y, "Antall")
@@ -4208,7 +4270,8 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
         for l in handouts:
             _ensure_space(6 * mm)
             name_full = (l.get("item_name") or "")
-            name = name_full if len(name_full) <= 32 else (name_full[:29] + "...")
+            name = name_full if len(name_full) <= 22 else (name_full[:19] + "...")
+            fn = _resolve_loan_full_number(l, full_numbers)
             size_bits = []
             if l.get("size"): size_bits.append(l["size"])
             if l.get("jersey_number") and l["jersey_number"] not in ("X", ""): size_bits.append(f"#{l['jersey_number']}")
@@ -4218,6 +4281,7 @@ def _build_team_equipment_pdf(team: dict, loans: list, people: dict, club: dict,
             pid = l.get("picked_up_by") or l.get("person_id")
             picked = (people.get(pid) or {}).get("name") or "-"
             c.drawString(col2_dato, y, dato)
+            c.drawString(col2_varenr, y, (fn or "-")[:12])
             c.drawString(col2_vare, y, name)
             c.drawRightString(col2_str_r, y, size_str[:10])
             c.drawRightString(col2_ant_r, y, str(qty))
@@ -4297,7 +4361,24 @@ async def resolve_receipt_qr(data: QrResolveIn, request: Request, user=Depends(r
 @api.get("/stock-receipts")
 async def list_receipts(request: Request, user=Depends(require_perm("inventory", "read"))):
     tid = await require_tenant(request, user)
-    return await db.stock_receipts.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+    receipts = await db.stock_receipts.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+    # Backfill full_number on-the-fly for gamle rader der feltet mangler.
+    missing_item_ids = list({r.get("item_id") for r in receipts if not r.get("full_number") and r.get("item_id")})
+    if missing_item_ids:
+        items = await db.items.find({"id": {"$in": missing_item_ids}, "tenant_id": tid},
+                                     {"_id": 0, "id": 1, "main_item_number": 1, "full_number": 1, "sizes": 1}).to_list(5000)
+        by_id = {it["id"]: it for it in items}
+        for r in receipts:
+            if r.get("full_number"): continue
+            it = by_id.get(r.get("item_id"))
+            if not it: continue
+            main = it.get("main_item_number") or it.get("full_number") or ""
+            if r.get("size"):
+                sz_entry = next((s for s in it.get("sizes") or [] if s.get("size") == r.get("size")), None)
+                r["full_number"] = (sz_entry or {}).get("full_number") or _compute_full_number(main, r.get("size"), r.get("jersey_number"))
+            else:
+                r["full_number"] = main
+    return receipts
 
 
 @api.post("/stock-receipts")
@@ -4313,6 +4394,8 @@ async def create_receipt(data: StockReceiptIn, request: Request, user=Depends(re
     if not item:
         raise HTTPException(404, "Vare finnes ikke")
     qty_before = 0; qty_after = 0
+    full_number = ""
+    main_num = item.get("main_item_number") or item.get("full_number") or ""
     if item.get("is_clothing") or item.get("is_ball"):
         if not data.size:
             raise HTTPException(400, "Størrelse må oppgis for klær og baller")
@@ -4329,16 +4412,19 @@ async def create_receipt(data: StockReceiptIn, request: Request, user=Depends(re
         found["quantity"] = qty_before + data.quantity
         qty_after = found["quantity"]
         new_total = sum(int(s.get("quantity") or 0) for s in sizes)
+        full_number = found.get("full_number") or _compute_full_number(main_num, data.size, found.get("jersey_number"))
         await db.items.update_one({"id": data.item_id, "tenant_id": tid},
                                   {"$set": {"sizes": sizes, "total_stock": new_total}})
     else:
         qty_before = int(item.get("total_stock") or 0)
         qty_after = qty_before + data.quantity
+        full_number = main_num
         await db.items.update_one({"id": data.item_id, "tenant_id": tid},
                                   {"$set": {"total_stock": qty_after}})
     receipt = {
         "id": new_id(), "tenant_id": tid, "request_id": data.request_id,
         "item_id": data.item_id, "item_name": item.get("name"),
+        "full_number": full_number,
         "size": data.size, "jersey_number": data.jersey_number,
         "quantity": data.quantity, "qty_before": qty_before, "qty_after": qty_after,
         "order_ref": data.order_ref, "comment": data.comment,
@@ -4348,6 +4434,146 @@ async def create_receipt(data: StockReceiptIn, request: Request, user=Depends(re
     await db.stock_receipts.insert_one(receipt)
     receipt.pop("_id", None)
     return receipt
+
+
+@api.get("/stock-receipts/pdf")
+async def stock_receipts_pdf(
+    request: Request,
+    date_from: Optional[str] = None,   # ISO (YYYY-MM-DD)
+    date_to: Optional[str] = None,     # ISO (YYYY-MM-DD)
+    user=Depends(require_perm("inventory", "read")),
+):
+    """Varemottak-PDF: liste over mottatte varer i periode. Varenr som første kolonne."""
+    tid = await require_tenant(request, user)
+    q: Dict[str, Any] = {"tenant_id": tid}
+    # Datofilter inkluderer hele to-dagen (<= 23:59:59)
+    if date_from or date_to:
+        rng: Dict[str, str] = {}
+        if date_from: rng["$gte"] = f"{date_from}T00:00:00+00:00"
+        if date_to:   rng["$lte"] = f"{date_to}T23:59:59+00:00"
+        q["created_at"] = rng
+    receipts = await db.stock_receipts.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
+
+    # Backfill full_number
+    missing_ids = list({r.get("item_id") for r in receipts if not r.get("full_number") and r.get("item_id")})
+    if missing_ids:
+        items = await db.items.find({"id": {"$in": missing_ids}, "tenant_id": tid},
+                                     {"_id": 0, "id": 1, "main_item_number": 1, "full_number": 1, "sizes": 1}).to_list(5000)
+        by_id = {it["id"]: it for it in items}
+        for r in receipts:
+            if r.get("full_number"): continue
+            it = by_id.get(r.get("item_id"))
+            if not it: continue
+            main = it.get("main_item_number") or it.get("full_number") or ""
+            if r.get("size"):
+                sz = next((s for s in it.get("sizes") or [] if s.get("size") == r.get("size")), None)
+                r["full_number"] = (sz or {}).get("full_number") or _compute_full_number(main, r.get("size"), r.get("jersey_number"))
+            else:
+                r["full_number"] = main
+
+    cust = await db.customers.find_one({"id": tid}, {"_id": 0}) or {}
+    club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    club_name = club.get("name") or cust.get("club_name") or "Klubben"
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    LEFT = 15 * mm; RIGHT = w - 15 * mm
+    y = h - 20 * mm
+
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(LEFT, y, "VAREMOTTAK")
+    c.setFont("Helvetica", 9)
+    c.drawRightString(RIGHT, y, datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"))
+    y -= 6 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(LEFT, y, club_name)
+    y -= 5 * mm
+    period = ""
+    if date_from and date_to: period = f"Periode: {date_from} – {date_to}"
+    elif date_from: period = f"Fra: {date_from}"
+    elif date_to: period = f"Til: {date_to}"
+    else: period = "Alle registrerte mottak"
+    c.setFont("Helvetica", 9)
+    c.drawString(LEFT, y, period)
+    y -= 4 * mm
+    c.drawString(LEFT, y, f"Antall linjer: {len(receipts)}")
+    y -= 6 * mm
+    c.line(LEFT, y, RIGHT, y); y -= 5 * mm
+
+    # Kolonner (Varenr først): Varenr | Dato | Vare | Str/Nr | Antall | Før→Etter | Bestilling | Bruker
+    col_varenr = LEFT
+    col_dato = LEFT + 28 * mm
+    col_vare = LEFT + 50 * mm
+    col_str = LEFT + 100 * mm
+    col_qty_r = LEFT + 122 * mm
+    col_delta_r = LEFT + 145 * mm
+    col_order = LEFT + 150 * mm
+    col_user_r = RIGHT
+
+    def _hdr():
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(col_varenr, y, "Varenr")
+        c.drawString(col_dato, y, "Dato")
+        c.drawString(col_vare, y, "Vare")
+        c.drawString(col_str, y, "Str/Nr")
+        c.drawRightString(col_qty_r, y, "Antall")
+        c.drawRightString(col_delta_r, y, "Før→Etter")
+        c.drawString(col_order, y, "Bestilling")
+        c.drawRightString(col_user_r, y, "Bruker")
+    _hdr()
+    y -= 2 * mm; c.line(LEFT, y, RIGHT, y); y -= 4 * mm
+
+    c.setFont("Helvetica", 8)
+    total_qty = 0
+    if not receipts:
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(LEFT, y, "Ingen varemottak i valgt periode.")
+    else:
+        for r in receipts:
+            if y < 25 * mm:
+                c.showPage()
+                y = h - 20 * mm
+                _hdr()
+                y -= 2 * mm; c.line(LEFT, y, RIGHT, y); y -= 4 * mm
+                c.setFont("Helvetica", 8)
+            try:
+                dato = datetime.fromisoformat(r.get("created_at", "").replace("Z", "+00:00")).strftime("%d.%m.%Y")
+            except Exception:
+                dato = (r.get("created_at") or "")[:10]
+            size_bits = []
+            if r.get("size"): size_bits.append(r["size"])
+            if r.get("jersey_number") and r["jersey_number"] not in ("X", ""): size_bits.append(f"#{r['jersey_number']}")
+            size_str = " ".join(size_bits) or "-"
+            qty = int(r.get("quantity") or 0); total_qty += qty
+            delta = f"{r.get('qty_before', 0)}→{r.get('qty_after', 0)}"
+            c.drawString(col_varenr, y, (r.get("full_number") or "-")[:13])
+            c.drawString(col_dato, y, dato)
+            c.drawString(col_vare, y, (r.get("item_name") or "-")[:28])
+            c.drawString(col_str, y, size_str[:10])
+            c.drawRightString(col_qty_r, y, str(qty))
+            c.drawRightString(col_delta_r, y, delta[:14])
+            # Overlapping range: ingen plass for både delta og order – skip order hvis tomt.
+            if r.get("order_ref"):
+                c.setFont("Helvetica", 7)
+                c.drawString(col_order, y, (r.get("order_ref") or "")[:16])
+                c.setFont("Helvetica", 8)
+            c.drawRightString(col_user_r, y, (r.get("user_name") or "-")[:14])
+            y -= 4 * mm
+
+        y -= 2 * mm; c.line(LEFT, y, RIGHT, y); y -= 5 * mm
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(LEFT, y, f"Totalt mottatt: {total_qty} enheter fordelt på {len(receipts)} linjer")
+
+    c.save()
+    buf.seek(0)
+    fn_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return StreamingResponse(buf, media_type="application/pdf",
+                              headers={"Content-Disposition": f'attachment; filename="varemottak_{fn_date}.pdf"'})
 
 
 # ============== TEAM NEEDS (Innmeldt Behov) ==============
@@ -5246,6 +5472,7 @@ async def receive_order(oid: str, data: OrderReceiveIn, request: Request, user=D
         await db.stock_receipts.insert_one({
             "id": new_id(), "tenant_id": tid, "request_id": data.request_id,
             "item_id": ln.get("item_id"), "item_name": ln.get("item_name"),
+            "full_number": ln.get("full_number") or ln.get("item_number") or "",
             "size": ln.get("size"), "jersey_number": ln.get("jersey_number"),
             "quantity": rec.quantity, "qty_before": 0, "qty_after": 0,
             "order_ref": order.get("po_number"), "comment": rec.comment,

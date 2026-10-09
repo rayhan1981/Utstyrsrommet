@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PackagePlus, Camera, CheckCircle2, QrCode, Search } from "lucide-react";
+import { PackagePlus, Camera, CheckCircle2, QrCode, Search, FileDown } from "lucide-react";
 import { toast } from "sonner";
 import { sortSizesNatural } from "@/lib/sizeSort";
 
@@ -24,6 +24,9 @@ export default function Varemottak() {
   const [scanning, setScanning] = useState(false);
   const [openOrders, setOpenOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [pdfFrom, setPdfFrom] = useState("");
+  const [pdfTo, setPdfTo] = useState("");
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const scannerRef = useRef(null);
 
   // Hent åpne bestillinger for valgt vare for å vise bestilt vs mottatt
@@ -147,6 +150,29 @@ export default function Varemottak() {
     }
   };
 
+  const downloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      const params = new URLSearchParams();
+      if (pdfFrom) params.set("date_from", pdfFrom);
+      if (pdfTo)   params.set("date_to", pdfTo);
+      const qs = params.toString();
+      const res = await api.get(`/stock-receipts/pdf${qs ? "?" + qs : ""}`, { responseType: "blob" });
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      a.download = `varemottak_${stamp}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error("Klarte ikke å generere PDF");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   return (
     <div className="space-y-5" data-testid="varemottak-page">
       <div>
@@ -192,6 +218,7 @@ export default function Varemottak() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-left bg-amber-50 border-b border-amber-200">
+                        <th className="px-3 py-1.5">Varenr</th>
                         <th className="px-3 py-1.5">Bestilling</th>
                         <th className="px-3 py-1.5">Leverandør</th>
                         {!picked.size && <th className="px-3 py-1.5">Str</th>}
@@ -204,6 +231,7 @@ export default function Varemottak() {
                     <tbody>
                       {relevant.map((o, i) => (
                         <tr key={i} className="border-b border-amber-100 last:border-0" data-testid={`open-order-row-${o.po_number}`}>
+                          <td className="px-3 py-1.5 font-mono text-xs">{o.full_number || "-"}</td>
                           <td className="px-3 py-1.5 font-mono text-xs cursor-pointer hover:underline"
                               onClick={() => setOrderRef(o.po_number)} title="Klikk for å bruke som bestillingsreferanse">
                             {o.po_number}
@@ -335,14 +363,30 @@ export default function Varemottak() {
       )}
 
       <Card className="p-5">
-        <h3 className="font-semibold text-sm mb-3">Siste varemottak ({recent.length})</h3>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-3">
+          <h3 className="font-semibold text-sm">Siste varemottak ({recent.length})</h3>
+          <div className="flex flex-wrap items-end gap-2" data-testid="receipt-pdf-controls">
+            <div>
+              <Label className="text-[10px] uppercase text-slate-500">Fra</Label>
+              <Input type="date" value={pdfFrom} onChange={(e) => setPdfFrom(e.target.value)} className="h-8 text-xs w-[135px]" data-testid="receipt-pdf-from" />
+            </div>
+            <div>
+              <Label className="text-[10px] uppercase text-slate-500">Til</Label>
+              <Input type="date" value={pdfTo} onChange={(e) => setPdfTo(e.target.value)} className="h-8 text-xs w-[135px]" data-testid="receipt-pdf-to" />
+            </div>
+            <Button size="sm" variant="outline" onClick={downloadPdf} disabled={downloadingPdf} data-testid="download-receipt-pdf-btn">
+              <FileDown className="h-4 w-4 mr-1" />{downloadingPdf ? "Lager…" : "Last ned PDF"}
+            </Button>
+          </div>
+        </div>
         <div className="max-h-[300px] overflow-y-auto">
           <Table>
-            <TableHeader><TableRow><TableHead>Dato</TableHead><TableHead>Vare</TableHead><TableHead>Str</TableHead><TableHead className="text-right">Antall</TableHead><TableHead className="text-right">Før→Etter</TableHead><TableHead>Bruker</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Varenr</TableHead><TableHead>Dato</TableHead><TableHead>Vare</TableHead><TableHead>Str</TableHead><TableHead className="text-right">Antall</TableHead><TableHead className="text-right">Før→Etter</TableHead><TableHead>Bruker</TableHead></TableRow></TableHeader>
             <TableBody>
-              {recent.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-slate-500 py-6">Ingen mottak ennå</TableCell></TableRow>}
+              {recent.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-slate-500 py-6">Ingen mottak ennå</TableCell></TableRow>}
               {recent.map((r) => (
                 <TableRow key={r.id}>
+                  <TableCell className="font-mono text-xs">{r.full_number || "-"}</TableCell>
                   <TableCell className="text-xs">{new Date(r.created_at).toLocaleString("nb-NO")}</TableCell>
                   <TableCell>{r.item_name}</TableCell>
                   <TableCell>{r.size || "-"}</TableCell>
