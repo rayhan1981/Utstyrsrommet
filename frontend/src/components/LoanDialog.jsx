@@ -261,13 +261,36 @@ export default function LoanDialog({ open, onOpenChange, items = [], teams = [],
                       {hasSize && (
                         <div>
                           <Label className="text-[11px]">Størrelse</Label>
-                          <Select value={line.size} onValueChange={(v) => {
-                            const s = (item.sizes || []).find((x) => x.size === v);
-                            const arr = [...lines]; arr[idx] = { ...arr[idx], size: v, jersey_number: s?.jersey_number || (item.is_ball ? "" : "X") };
-                            setLines(arr);
-                          }}>
+                          <Select
+                            value={(() => {
+                              const rows = sortSizesNatural((item.sizes || []), (s) => s.size);
+                              const i = rows.findIndex((s) => (s.size || "") === (line.size || "") && (s.jersey_number || "") === (line.jersey_number || ""));
+                              if (i < 0) return "";
+                              const row = rows[i];
+                              return row.full_number || `${row.size}__${row.jersey_number || ""}__${i}`;
+                            })()}
+                            onValueChange={(v) => {
+                              const rows = sortSizesNatural((item.sizes || []), (s) => s.size);
+                              const picked = rows.find((s, i) => (s.full_number || `${s.size}__${s.jersey_number || ""}__${i}`) === v);
+                              if (!picked) return;
+                              const arr = [...lines];
+                              arr[idx] = { ...arr[idx], size: picked.size, jersey_number: picked.jersey_number || (item.is_ball ? "" : "X") };
+                              setLines(arr);
+                            }}
+                          >
                             <SelectTrigger aria-label="Velg størrelse"><SelectValue placeholder="Str" /></SelectTrigger>
-                            <SelectContent>{sortSizesNatural((item.sizes || []), (s) => s.size).map((s) => <SelectItem key={s.size} value={s.size}>{s.size} ({s.quantity})</SelectItem>)}</SelectContent>
+                            <SelectContent>
+                              {sortSizesNatural((item.sizes || []), (s) => s.size).map((s, i) => {
+                                const rowId = s.full_number || `${s.size}__${s.jersey_number || ""}__${i}`;
+                                const jn = s.jersey_number && s.jersey_number !== "X" ? ` – #${s.jersey_number}` : "";
+                                const loc = s.location ? ` – ${s.location}` : "";
+                                return (
+                                  <SelectItem key={rowId} value={rowId}>
+                                    {s.size}{jn}{loc} ({s.quantity || 0} stk)
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
                           </Select>
                         </div>
                       )}
