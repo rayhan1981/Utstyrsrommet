@@ -158,7 +158,40 @@ export default function Inventory() {
   };
 
   const generateQr = (item) => setGenFor(item);
-  const viewQr = (item) => setViewFor(item);
+  const viewQr = (row) => {
+    // row kan være forelder-item (sizeless) eller en variant-rad (med size)
+    const item = row?._parent || row;
+    const payload = { item };
+    if (row && row._is_variant && row.size) {
+      payload.size = row.size;
+      payload.jersey_number = row.jersey_number;
+      payload.quantity = row.quantity;
+    }
+    setViewFor(payload);
+  };
+
+  const deleteQrLine = async (row) => {
+    const item = row._parent || row;
+    const label = row._is_variant && row.size
+      ? `QR-kode for ${item.name} (${row.size}${row.jersey_number && row.jersey_number !== "X" ? " #" + row.jersey_number : ""})`
+      : `QR-kode for ${item.name}`;
+    if (!window.confirm(`Er du sikker på at du vil slette ${label}?\n\nDu kan generere ny QR senere.`)) return;
+    try {
+      const params = row._is_variant && row.size ? `?size=${encodeURIComponent(row.size)}` : "";
+      await api.delete(`/items/${item.id}/qr${params}`);
+      toast.success("QR-kode slettet");
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  const deleteAllQr = async () => {
+    if (!window.confirm("Er du sikker på at du vil SLETTE ALLE QR-koder for alle varer?\n\nDenne handlingen kan ikke angres. Du kan generere nye QR-koder etterpå.")) return;
+    try {
+      const { data } = await api.post("/items/qr-reset-all");
+      toast.success(`Slettet QR for ${data.items_cleared} varer og ${data.sizes_cleared} varelinjer`);
+      load();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
 
   /**
    * Direkte-generer QR for én spesifikk varelinje (variant eller enkeltvare).
@@ -267,6 +300,9 @@ export default function Inventory() {
               <Button variant="outline" onClick={() => setQrOpen(true)} data-testid="qr-labels-btn"><QrCode className="h-4 w-4 mr-2" />Eksporter QR</Button>
               {hasPerm("inventory", "write") && (
                 <Button variant="outline" onClick={bulkGenerateQr} data-testid="bulk-qr-btn"><QrCode className="h-4 w-4 mr-2" />Generer QR for alle</Button>
+              )}
+              {hasPerm("inventory", "admin") && (
+                <Button variant="outline" onClick={deleteAllQr} data-testid="reset-all-qr-btn" className="text-red-700 border-red-200 hover:bg-red-50"><Trash2 className="h-4 w-4 mr-2" />Slett alle QR</Button>
               )}
             </>
           )}
@@ -432,9 +468,16 @@ export default function Inventory() {
                 )
               )}
               {hasFeature("qr_codes") && (
-                <Button variant="ghost" size="sm" onClick={() => viewQr(i)} data-testid={`view-qr-${i.id}`}
-                        className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                <Button variant="ghost" size="sm" onClick={() => viewQr(r)} data-testid={`view-qr-${r._id}`}
+                        disabled={!r._has_qr}
+                        className={`flex flex-col items-center h-auto py-1 px-2 gap-0.5 ${!r._has_qr ? "opacity-40 cursor-not-allowed" : ""}`}>
                   <QrCode className="h-3.5 w-3.5 text-red-700" /><span className="text-[9px] text-red-700">Vis QR</span>
+                </Button>
+              )}
+              {hasFeature("qr_codes") && hasPerm("inventory", "write") && r._has_qr && (
+                <Button variant="ghost" size="sm" onClick={() => deleteQrLine(r)} data-testid={`del-qr-${r._id}`}
+                        className="flex flex-col items-center h-auto py-1 px-2 gap-0.5">
+                  <Trash2 className="h-3.5 w-3.5 text-red-600" /><span className="text-[9px] text-red-600">Slett QR</span>
                 </Button>
               )}
               {hasPerm("inventory", "write") && (
@@ -733,7 +776,7 @@ export default function Inventory() {
       </Dialog>
       <QrExportDialog open={qrOpen} onOpenChange={setQrOpen} />
       <GenerateQrDialog open={!!genFor} onOpenChange={(o) => !o && setGenFor(null)} item={genFor} onDone={load} />
-      <ViewQrDialog open={!!viewFor} onOpenChange={(o) => !o && setViewFor(null)} item={viewFor} />
+      <ViewQrDialog open={!!viewFor} onOpenChange={(o) => !o && setViewFor(null)} viewFor={viewFor} onDeleted={load} />
       <ImportPreviewDialog
         open={!!importPreview}
         preview={importPreview}

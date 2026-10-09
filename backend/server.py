@@ -2514,6 +2514,57 @@ async def bulk_generate_qr(request: Request, user=Depends(require_perm("inventor
     return {"ok": True, "items_updated": items_updated, "sizes_updated": sizes_updated}
 
 
+@api.post("/items/qr-reset-all")
+async def reset_all_qr(request: Request, user=Depends(require_perm("inventory", "admin"))):
+    """Deaktiver ALLE QR-koder for tenanten (per vare + per størrelse). Krever admin."""
+    tid = await require_feature(request, user, "qr_codes")
+    items = await db.items.find({"tenant_id": tid, "$or": [{"has_qr": True}, {"sizes.has_qr": True}]}, {"_id": 0}).to_list(10000)
+    items_cleared = 0
+    sizes_cleared = 0
+    for it in items:
+        new_sizes = list(it.get("sizes") or [])
+        for s in new_sizes:
+            if s.get("has_qr"):
+                s["has_qr"] = False
+                sizes_cleared += 1
+        await db.items.update_one(
+            {"id": it["id"], "tenant_id": tid},
+            {"$set": {"sizes": new_sizes, "has_qr": False}},
+        )
+        items_cleared += 1
+    if user.get("role") != "platform_owner":
+        await _log_activity(tid, user, "qr_reset_all",
+                             f"Nullstilte alle QR-koder ({items_cleared} varer, {sizes_cleared} varelinjer)",
+                             {"items_cleared": items_cleared, "sizes_cleared": sizes_cleared})
+    return {"ok": True, "items_cleared": items_cleared, "sizes_cleared": sizes_cleared}
+
+
+@api.delete("/items/{item_id}/qr")
+async def delete_item_qr(item_id: str, request: Request, size: Optional[str] = None,
+                           user=Depends(require_perm("inventory", "write"))):
+    """Fjern QR-kode for en vare eller én spesifikk varelinje (?size=M)."""
+    tid = await require_feature(request, user, "qr_codes")
+    item = await db.items.find_one({"id": item_id, "tenant_id": tid})
+    if not item:
+        raise HTTPException(404, "Vare ikke funnet")
+    if size:
+        # Fjern QR kun for angitt varelinje
+        sizes = item.get("sizes") or []
+        hit = next((s for s in sizes if s.get("size") == size and s.get("has_qr")), None)
+        if not hit:
+            raise HTTPException(404, f"QR-kode finnes ikke for størrelse {size}")
+        hit["has_qr"] = False
+        await db.items.update_one({"id": item_id, "tenant_id": tid},
+                                  {"$set": {"sizes": sizes, "has_qr": any(s.get("has_qr") for s in sizes)}})
+        return {"ok": True, "cleared": "variant", "size": size}
+    # Fjern QR for hele varen og alle varianter
+    sizes = item.get("sizes") or []
+    for s in sizes: s["has_qr"] = False
+    await db.items.update_one({"id": item_id, "tenant_id": tid},
+                              {"$set": {"sizes": sizes, "has_qr": False}})
+    return {"ok": True, "cleared": "all"}
+
+
 @api.post("/items/{item_id}/generate-qr")
 async def generate_item_qr(item_id: str, data: GenerateQrIn, request: Request, user=Depends(require_perm("inventory", "write"))):
     tid = await require_feature(request, user, "qr_codes")
@@ -3518,15 +3569,17 @@ async def send_invoice_email(invoice_id: str, data: InvoiceSendIn, request: Requ
 @api.get("/inventory/qr-labels")
 async def inventory_qr_labels(
     request: Request,
-    scope: str = "all",      # 'all' | 'item' | 'main_group' | 'sub_group'
-    value: str = "",         # when scope != 'all'
-    size: str = "medium",    # 'small' (2cm) | 'medium' (6cm) | 'large' (10cm)
+    scope: str = "all",      # 'all' | 'item' | 'variant' | 'main_group' | 'sub_group'
+    value: str = "",         # when scope != 'all' (item_id, group name)
+    variant_size: str = "",  # fylles ut når scope='variant' – spesifikk varelinje
+    size: str = "medium",    # label-størrelse: 'small' (2cm) | 'medium' (6cm) | 'large' (10cm)
+    copies: int = 1,         # antall kopier per varelinje
     user=Depends(require_perm("inventory", "read"))
 ):
     tid = await require_feature(request, user, "qr_codes")
     # Build filter: only items that have QR enabled
     q: Dict[str, Any] = {"tenant_id": tid, "has_qr": True}
-    if scope == "item" and value:
+    if scope in ("item", "variant") and value:
         q["id"] = value
     elif scope == "main_group" and value:
         q["main_group"] = value
@@ -3539,17 +3592,23 @@ async def inventory_qr_labels(
         main_num = it.get("main_item_number") or it.get("full_number") or ""
         if it.get("is_clothing") or it.get("is_ball"):
             for s in it.get("sizes", []):
-                if s.get("has_qr"):
-                    fn = s.get("full_number") or _compute_full_number(main_num, s.get("size"), s.get("jersey_number"))
-                    labels.append({"payload": f"{it['id']}#{s['size']}",
-                                   "full_number": fn,
-                                   "name": f"{it['name']} ({s['size']})"})
+                if not s.get("has_qr"): continue
+                if scope == "variant" and variant_size and s.get("size") != variant_size: continue
+                fn = s.get("full_number") or _compute_full_number(main_num, s.get("size"), s.get("jersey_number"))
+                labels.append({"payload": f"{it['id']}#{s['size']}",
+                               "full_number": fn,
+                               "name": f"{it['name']} ({s['size']})"})
         elif it.get("has_qr"):
             labels.append({"payload": it["id"],
                            "full_number": main_num,
                            "name": it["name"]})
     if not labels:
         raise HTTPException(404, "Ingen varer med QR-kode funnet for valgt filter")
+
+    # Repliker antall kopier – gir N identiske etiketter per varelinje
+    copies = max(1, min(copies or 1, 500))
+    if copies > 1:
+        labels = [lab for lab in labels for _ in range(copies)]
 
     logo_img = await _load_club_logo(tid)
 
