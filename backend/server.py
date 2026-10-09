@@ -701,9 +701,16 @@ class TeamIn(BaseModel):
 
 
 class PersonIn(BaseModel):
-    name: str
+    name: str = ""  # Vil bli auto-utledet fra first_name + last_name hvis tom
+    first_name: str = ""
+    last_name: str = ""
+    role: str = ""  # Hovedtrener | Lagleder | Trener | Dugnadsansvarlig | Foreldrekontakt | Kasserer | Annet
     phone: str = ""
     email: str = ""
+    street_address: str = ""  # Gateadresse og gatenummer
+    postal_code: str = ""     # 4 siffer
+    postal_city: str = ""     # Automatisk utledet via geonorge.no
+    notes: str = ""           # Fritekst – kun synlig i personens detaljvisning
     team_ids: List[str] = Field(default_factory=list)
 
 
@@ -2295,6 +2302,12 @@ async def list_people(request: Request, user=Depends(require_perm("people", "rea
 async def create_person(data: PersonIn, request: Request, user=Depends(require_perm("people", "write"))):
     tid = await require_tenant(request, user)
     doc = data.dict()
+    # Auto-utled fullt navn fra first_name/last_name dersom name er tomt
+    if not (doc.get("name") or "").strip():
+        full = f"{doc.get('first_name','').strip()} {doc.get('last_name','').strip()}".strip()
+        if not full:
+            raise HTTPException(400, "Navn (fornavn + etternavn) kreves")
+        doc["name"] = full
     doc.update({"id": new_id(), "tenant_id": tid, "debt": 0.0, "created_at": now_iso()})
     await db.people.insert_one(doc)
     return _clean(doc)
@@ -2314,7 +2327,13 @@ async def get_person(person_id: str, request: Request, user=Depends(require_perm
 @api.put("/people/{person_id}")
 async def update_person(person_id: str, data: PersonIn, request: Request, user=Depends(require_perm("people", "write"))):
     tid = await require_tenant(request, user)
-    await db.people.update_one({"id": person_id, "tenant_id": tid}, {"$set": data.dict()})
+    update = data.dict()
+    # Auto-utled fullt navn fra first_name/last_name dersom name er tomt
+    if not (update.get("name") or "").strip():
+        full = f"{update.get('first_name','').strip()} {update.get('last_name','').strip()}".strip()
+        if full:
+            update["name"] = full
+    await db.people.update_one({"id": person_id, "tenant_id": tid}, {"$set": update})
     return await db.people.find_one({"id": person_id, "tenant_id": tid}, {"_id": 0})
 
 

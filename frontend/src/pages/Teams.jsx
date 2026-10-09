@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api, formatError, TEAM_NAME_OPTIONS, YEARS_ENGAGED } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Pencil, Trash2, Plus, Download, Eye, HandCoins, FileText, Mail, Send } from "lucide-react";
+import { Pencil, Trash2, Plus, Download, Eye, HandCoins, FileText, Mail, Send, UserPlus, Info } from "lucide-react";
 import LoanDialog from "@/components/LoanDialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
@@ -15,60 +15,64 @@ import { useAuth } from "@/context/AuthContext";
 import DataTable from "@/components/DataTable";
 import InvoiceDialog from "@/components/InvoiceDialog";
 import TeamNeedsTab from "@/components/TeamNeedsTab";
+import StaffDialog from "@/components/StaffDialog";
 
-const EMPTY_TRAINER = { name: "", email: "", phone: "", years_engaged: "" };
 const EMPTY_TEAM = {
   team_name: "", age_class: "", email: "",
   training_times: Array(7).fill(""),
   contact_person: "", key_responsible: "", key_serial: "",
-  head_coach: { ...EMPTY_TRAINER }, team_manager: { ...EMPTY_TRAINER },
-  trainer1: { ...EMPTY_TRAINER }, trainer2: { ...EMPTY_TRAINER },
-  trainer3: { ...EMPTY_TRAINER }, trainer4: { ...EMPTY_TRAINER }, trainer5: { ...EMPTY_TRAINER },
 };
 
-function TrainerFields({ label, value, onChange }) {
-  const v = value || EMPTY_TRAINER;
-  return (
-    <div className="border border-slate-200 rounded-md p-3 space-y-2">
-      <div className="font-semibold text-sm text-red-900">{label}</div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <Input placeholder="Navn" value={v.name} onChange={(e) => onChange({ ...v, name: e.target.value })} />
-        <Input placeholder="Telefon" value={v.phone} onChange={(e) => onChange({ ...v, phone: e.target.value })} />
-        <Input placeholder="Epost" value={v.email} onChange={(e) => onChange({ ...v, email: e.target.value })} />
-        <Select value={v.years_engaged} onValueChange={(x) => onChange({ ...v, years_engaged: x })}>
-          <SelectTrigger><SelectValue placeholder="Antall år engasjert" /></SelectTrigger>
-          <SelectContent>{YEARS_ENGAGED.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}</SelectContent>
-        </Select>
-      </div>
-    </div>
-  );
-}
+function TrainerFields() { return null; }  // Erstattet av StaffDialog + «+ Legg til støtteapparat»
 
 export default function Teams() {
   const { hasPerm } = useAuth();
   const [teams, setTeams] = useState([]);
   const [items, setItems] = useState([]);
+  const [people, setPeople] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_TEAM);
   const [editId, setEditId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [loanFor, setLoanFor] = useState(null);
-  const [loanForm, setLoanForm] = useState({ item_id: "", quantity: 1, size: "", jersey_number: "", notes: "" });
   const [invoiceFor, setInvoiceFor] = useState(null);
+  // Støtteapparat-dialog
+  const [staffOpen, setStaffOpen] = useState(false);
+  const [staffEditing, setStaffEditing] = useState(null);
+  const [pendingStaff, setPendingStaff] = useState([]);  // kun brukt når editId == null
+  const [personDetail, setPersonDetail] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
-    const [t, i] = await Promise.all([api.get("/teams"), api.get("/items")]);
-    setTeams(t.data); setItems(i.data);
+    const [t, i, p] = await Promise.all([api.get("/teams"), api.get("/items"), api.get("/people")]);
+    setTeams(t.data); setItems(i.data); setPeople(p.data);
   };
   useEffect(() => { load(); }, []);
 
   const nok = (v) => (v || 0).toLocaleString("nb-NO", { style: "currency", currency: "NOK", maximumFractionDigits: 0 });
 
-  const openNew = () => { setEditId(null); setForm(EMPTY_TEAM); setOpen(true); };
+  // Person-map pr lag – brukes for å finne «Hovedtrener» i lista og vise støtteapparat i detaljvisning.
+  const peopleByTeam = useMemo(() => {
+    const map = new Map();
+    for (const p of people) {
+      for (const tid of p.team_ids || []) {
+        if (!map.has(tid)) map.set(tid, []);
+        map.get(tid).push(p);
+      }
+    }
+    return map;
+  }, [people]);
+
+  const headCoachForTeam = (teamId) => {
+    const list = peopleByTeam.get(teamId) || [];
+    return list.find((p) => p.role === "Hovedtrener") || null;
+  };
+
+  const openNew = () => { setEditId(null); setForm(EMPTY_TEAM); setPendingStaff([]); setOpen(true); };
   const openEdit = (t) => {
     setEditId(t.id);
     setForm({ ...EMPTY_TEAM, ...t, training_times: [...(t.training_times || []), ...Array(7).fill("")].slice(0, 7) });
+    setPendingStaff([]);
     setOpen(true);
   };
 
@@ -77,20 +81,26 @@ export default function Teams() {
     setDetail(data);
   };
 
-  const openQuickLoan = (t) => {
-    setLoanFor(t);
-  };
-
-  const selectedItem = null;
-
-  const submitQuickLoan = async () => {};
+  const openQuickLoan = (t) => { setLoanFor(t); };
 
   const save = async () => {
     try {
       const payload = { ...form, training_times: form.training_times.filter((t) => t.trim()) };
-      if (editId) await api.put(`/teams/${editId}`, payload);
-      else await api.post("/teams", payload);
-      toast.success("Lagret"); setOpen(false); load();
+      let saved;
+      if (editId) {
+        const res = await api.put(`/teams/${editId}`, payload);
+        saved = res.data;
+      } else {
+        const res = await api.post("/teams", payload);
+        saved = res.data;
+        // Hvis vi har pending støtteapparat-personer – lagre dem med det nye lagets id
+        for (const sp of pendingStaff) {
+          const { _pending, ...clean } = sp;
+          try { await api.post("/people", { ...clean, team_ids: [saved.id] }); }
+          catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+        }
+      }
+      toast.success("Lagret"); setOpen(false); setPendingStaff([]); load();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
@@ -98,6 +108,35 @@ export default function Teams() {
     if (!window.confirm("Slette dette laget?")) return;
     try { await api.delete(`/teams/${id}`); toast.success("Slettet"); load(); }
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  // Støtteapparat-handlinger
+  const openAddStaff = () => { setStaffEditing(null); setStaffOpen(true); };
+  const openEditStaff = (p) => { setStaffEditing(p); setStaffOpen(true); };
+  const onStaffSaved = (person) => {
+    if (!editId) {
+      // Legg til lokalt – lagres når laget opprettes
+      if (person._pending) {
+        if (staffEditing) {
+          setPendingStaff((xs) => xs.map((x) => (x === staffEditing ? person : x)));
+        } else {
+          setPendingStaff((xs) => [...xs, person]);
+        }
+      }
+    } else {
+      // API har lagret personen – oppdater lista
+      load();
+    }
+  };
+  const removePendingStaff = (p) => setPendingStaff((xs) => xs.filter((x) => x !== p));
+  const deleteStaff = async (p) => {
+    if (!window.confirm(`Slette ${p.name} fra støtteapparatet?`)) return;
+    try { await api.delete(`/people/${p.id}`); toast.success("Slettet"); load(); if (detail) showDetail(detail.team.id); }
+    catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+  const emailStaff = (p) => {
+    if (!p.email) { toast.error("Personen har ingen e-postadresse"); return; }
+    window.location.href = `mailto:${p.email}`;
   };
 
   const exportTeam = (id, name) => {
@@ -154,7 +193,9 @@ export default function Teams() {
             { key: "team_name", label: "Lagsnavn", filter: "text", render: (t) => <span className="font-semibold">{t.team_name}</span> },
             { key: "age_class", label: "Aldersklasse", filter: "text" },
             { key: "contact_person", label: "Kontaktperson", filter: "text", render: (t) => t.contact_person || "-" },
-            { key: "head_coach_name", label: "Hovedtrener", filter: "text", accessor: (t) => t.head_coach?.name || "", render: (t) => t.head_coach?.name || "-" },
+            { key: "head_coach_name", label: "Hovedtrener", filter: "text",
+              accessor: (t) => headCoachForTeam(t.id)?.name || t.head_coach?.name || "",
+              render: (t) => headCoachForTeam(t.id)?.name || t.head_coach?.name || "-" },
             { key: "debt", label: "Skyldig", filter: "number", accessor: (t) => t.debt || 0, render: (t) => <span className={t.debt > 0 ? "text-red-700 font-semibold" : ""}>{nok(t.debt)}</span> },
           ]}
           actions={(t) => (
@@ -250,11 +291,51 @@ export default function Teams() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <TrainerFields label="Hovedtrener" value={form.head_coach} onChange={(v) => setForm({ ...form, head_coach: v })} />
-              <TrainerFields label="Lagleder" value={form.team_manager} onChange={(v) => setForm({ ...form, team_manager: v })} />
-              {["trainer1","trainer2","trainer3","trainer4","trainer5"].map((k, idx) => (
-                <TrainerFields key={k} label={`Trener ${idx+1}`} value={form[k]} onChange={(v) => setForm({ ...form, [k]: v })} />
-              ))}
+              {/* Støtteapparat erstatter de gamle Hovedtrener/Lagleder/Trener-feltene */}
+              <div className="lg:col-span-2 border border-slate-200 rounded-md p-3 bg-slate-50/40 space-y-2" data-testid="support-staff-section">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <div className="font-semibold text-sm text-red-900">Støtteapparat</div>
+                    <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                      <Info className="h-3 w-3" />
+                      Personer som er knyttet til dette laget. Blir også tilgjengelig i «Mottatt av» og «Returnert av».
+                    </div>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={openAddStaff} data-testid="add-staff-btn">
+                    <UserPlus className="h-4 w-4 mr-1" /> Legg til støtteapparat
+                  </Button>
+                </div>
+                {(() => {
+                  const list = editId
+                    ? (peopleByTeam.get(editId) || [])
+                    : pendingStaff;
+                  if (list.length === 0) {
+                    return <div className="text-xs text-slate-400 italic py-2">Ingen personer lagt til ennå.</div>;
+                  }
+                  return (
+                    <div className="space-y-1">
+                      {list.map((p, idx) => (
+                        <div key={p.id || `pending-${idx}`} className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded px-2 py-1.5 text-sm" data-testid={`staff-row-${idx}`}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-[10px] font-bold uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded shrink-0">{p.role}</span>
+                            <span className="font-semibold truncate">{p.name || `${p.first_name || ""} ${p.last_name || ""}`.trim()}</span>
+                            {p.phone && <span className="text-xs text-slate-500 shrink-0">{p.phone}</span>}
+                            {p._pending && <span className="text-[10px] text-amber-700 italic shrink-0">(lagres ved «Lagre»)</span>}
+                          </div>
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <Button type="button" variant="ghost" size="sm" onClick={() => openEditStaff(p)} data-testid={`edit-staff-${idx}`}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => (p._pending ? removePendingStaff(p) : deleteStaff(p))} data-testid={`del-staff-${idx}`}>
+                              <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -288,16 +369,33 @@ export default function Teams() {
               <TabsContent value="info" className="space-y-4 pt-4">
               <div>
                 <h4 className="font-semibold text-sm mb-2">Personer tilknyttet laget ({detail.people.length})</h4>
-                <div className="border border-slate-200 rounded-md overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50"><tr><th className="text-left p-2">Navn</th><th className="text-left p-2">Telefon</th><th className="text-left p-2">Epost</th><th className="text-right p-2">Skyldig</th></tr></thead>
-                    <tbody>
-                      {detail.people.length === 0 && <tr><td colSpan={4} className="text-center text-slate-500 py-4">Ingen personer.</td></tr>}
-                      {detail.people.map((p) => (
-                        <tr key={p.id} className="border-t border-slate-100"><td className="p-2 font-semibold">{p.name}</td><td className="p-2">{p.phone || "-"}</td><td className="p-2">{p.email || "-"}</td><td className={`p-2 text-right ${p.debt > 0 ? "text-red-700 font-semibold" : ""}`}>{nok(p.debt)}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="border border-slate-200 rounded-md divide-y divide-slate-100" data-testid="team-detail-staff-list">
+                  {detail.people.length === 0 && <div className="text-center text-slate-500 py-4 text-sm">Ingen personer.</div>}
+                  {detail.people.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm" data-testid={`team-detail-person-${p.id}`}>
+                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                        {p.role && <span className="text-[10px] font-bold uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded shrink-0">{p.role}</span>}
+                        <span className="font-semibold truncate">{p.name}</span>
+                        <span className="text-slate-400">·</span>
+                        <span className="text-slate-700">{p.phone || "–"}</span>
+                        {p.debt > 0 && <span className="text-xs text-red-700 font-semibold ml-2">Skyldig: {nok(p.debt)}</span>}
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <Button variant="ghost" size="sm" onClick={() => setPersonDetail(p)} title="Vis informasjon" data-testid={`view-person-${p.id}`}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openEditStaff(p)} title="Rediger informasjon" data-testid={`edit-person-${p.id}`}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => emailStaff(p)} title="Send e-post" data-testid={`email-person-${p.id}`} disabled={!p.email}>
+                          <Mail className={`h-3.5 w-3.5 ${p.email ? "text-red-700" : "text-slate-300"}`} />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => deleteStaff(p)} title="Slett person" data-testid={`del-person-${p.id}`}>
+                          <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
               <div>
@@ -340,6 +438,44 @@ export default function Teams() {
         teamId={invoiceFor?.id}
         recipientName={invoiceFor?.name}
       />
+
+      <StaffDialog
+        open={staffOpen}
+        onOpenChange={setStaffOpen}
+        initial={staffEditing}
+        teamId={editId}
+        mode={editId ? "api" : "local"}
+        onSaved={onStaffSaved}
+      />
+
+      <Dialog open={!!personDetail} onOpenChange={(o) => !o && setPersonDetail(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{personDetail?.name}</DialogTitle>
+            <DialogDescription>
+              {personDetail?.role && <span className="inline-block text-[10px] font-bold uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded mr-2">{personDetail.role}</span>}
+              Personinformasjon
+            </DialogDescription>
+          </DialogHeader>
+          {personDetail && (
+            <div className="space-y-2 text-sm">
+              <div><span className="text-slate-500 w-32 inline-block">Telefon:</span> {personDetail.phone || "–"}</div>
+              <div><span className="text-slate-500 w-32 inline-block">E-post:</span> {personDetail.email || "–"}</div>
+              <div><span className="text-slate-500 w-32 inline-block">Adresse:</span> {personDetail.street_address || "–"}</div>
+              <div><span className="text-slate-500 w-32 inline-block">Postnr/sted:</span> {[personDetail.postal_code, personDetail.postal_city].filter(Boolean).join(" ") || "–"}</div>
+              {personDetail.notes && (
+                <div className="pt-2 border-t border-slate-100 mt-2">
+                  <div className="text-slate-500 text-xs mb-1">Notater / Kommentarer</div>
+                  <div className="whitespace-pre-wrap bg-slate-50 border border-slate-100 rounded p-2 text-sm">{personDetail.notes}</div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPersonDetail(null)}>Lukk</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
