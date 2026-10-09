@@ -86,11 +86,18 @@ export default function Layout() {
         </div>
         {customer && (
           <div className={`px-4 py-3 border-b border-slate-200 ${isOwner && !impersonating ? "bg-amber-50" : "bg-slate-50"}`}>
-            <div className="text-xs text-slate-500 flex items-center gap-1">
-              {isOwner && !impersonating && <Crown className="h-3 w-3 text-amber-700" />}
-              {isOwner && !impersonating ? "Plattformeier - din klubb" : "Kunde"}
-            </div>
-            <div className="flex items-center gap-2 mt-1">
+            {user?.name && (
+              <div className="flex items-start gap-1.5" data-testid="sidebar-user-identity">
+                {isOwner && !impersonating && <Crown className="h-3.5 w-3.5 text-amber-700 mt-0.5 shrink-0" />}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-slate-900 truncate">{user.name}</div>
+                  {user.role_title && (
+                    <div className="text-[11px] text-slate-500 truncate" data-testid="sidebar-user-role-title">{user.role_title}</div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 mt-2">
               {clubLogo && <img src={clubLogo} alt={customer.club_name} className="h-9 w-9 rounded-full object-cover border border-slate-300 shrink-0" data-testid="sidebar-club-logo" />}
               <div className="min-w-0">
                 <div className="font-semibold text-sm truncate">{customer.club_name}</div>

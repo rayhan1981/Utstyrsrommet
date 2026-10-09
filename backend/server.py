@@ -1022,6 +1022,9 @@ async def me(request: Request, user=Depends(get_current_user)):
         and customer
         and not customer.get("is_owner_workspace")
     )
+    # Sikre at role_title alltid returneres (default-tom for eldre brukere) – brukes i sidepanel-signaturen.
+    if "role_title" not in user:
+        user["role_title"] = ""
     return {
         "user": user,
         "tenant_id": tid,
