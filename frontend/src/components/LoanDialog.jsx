@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { nb } from "date-fns/locale";
 import { format } from "date-fns";
 import { sortSizesNatural } from "@/lib/sizeSort";
+import SizePicker from "@/components/SizePicker";
 
 const newLine = () => ({ item_id: "", quantity: 1, size: "", jersey_number: "", due_date: null, notes: "" });
 const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
@@ -261,37 +262,16 @@ export default function LoanDialog({ open, onOpenChange, items = [], teams = [],
                       {hasSize && (
                         <div>
                           <Label className="text-[11px]">Størrelse</Label>
-                          <Select
-                            value={(() => {
-                              const rows = sortSizesNatural((item.sizes || []), (s) => s.size);
-                              const i = rows.findIndex((s) => (s.size || "") === (line.size || "") && (s.jersey_number || "") === (line.jersey_number || ""));
-                              if (i < 0) return "";
-                              const row = rows[i];
-                              return row.full_number || `${row.size}__${row.jersey_number || ""}__${i}`;
-                            })()}
-                            onValueChange={(v) => {
-                              const rows = sortSizesNatural((item.sizes || []), (s) => s.size);
-                              const picked = rows.find((s, i) => (s.full_number || `${s.size}__${s.jersey_number || ""}__${i}`) === v);
-                              if (!picked) return;
+                          <SizePicker
+                            item={item}
+                            value={{ size: line.size, jersey_number: line.jersey_number }}
+                            onChange={({ size, jersey_number }) => {
                               const arr = [...lines];
-                              arr[idx] = { ...arr[idx], size: picked.size, jersey_number: picked.jersey_number || (item.is_ball ? "" : "X") };
+                              arr[idx] = { ...arr[idx], size, jersey_number };
                               setLines(arr);
                             }}
-                          >
-                            <SelectTrigger aria-label="Velg størrelse"><SelectValue placeholder="Str" /></SelectTrigger>
-                            <SelectContent>
-                              {sortSizesNatural((item.sizes || []), (s) => s.size).map((s, i) => {
-                                const rowId = s.full_number || `${s.size}__${s.jersey_number || ""}__${i}`;
-                                const jn = s.jersey_number && s.jersey_number !== "X" ? ` – #${s.jersey_number}` : "";
-                                const loc = s.location ? ` – ${s.location}` : "";
-                                return (
-                                  <SelectItem key={rowId} value={rowId}>
-                                    {s.size}{jn}{loc} ({s.quantity || 0} stk)
-                                  </SelectItem>
-                                );
-                              })}
-                            </SelectContent>
-                          </Select>
+                            testid={`line-size-${idx}`}
+                          />
                         </div>
                       )}
                       {hasSize && item?.is_clothing && (
