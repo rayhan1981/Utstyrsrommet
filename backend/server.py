@@ -1025,10 +1025,15 @@ async def me(request: Request, user=Depends(get_current_user)):
     # Sikre at role_title alltid returneres (default-tom for eldre brukere) – brukes i sidepanel-signaturen.
     if "role_title" not in user:
         user["role_title"] = ""
+    # Hent klubbnavnet brukeren faktisk har lagt inn (clubs-collection) – vises i sidepanelet.
+    club = None
+    if tid:
+        club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0, "id": 1, "name": 1, "logo_url": 1})
     return {
         "user": user,
         "tenant_id": tid,
         "customer": customer,
+        "club": club,
         "plan": plan,
         "trial_days_left": trial_days_left,
         "impersonating": impersonating,

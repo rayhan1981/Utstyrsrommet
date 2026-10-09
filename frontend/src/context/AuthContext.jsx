@@ -53,6 +53,7 @@ export function AuthProvider({ children }) {
   const user = me?.user;
   const tenantId = me?.tenant_id;
   const customer = me?.customer;
+  const club = me?.club;
   const plan = me?.plan;
   const impersonating = me?.impersonating;
 
@@ -73,7 +74,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ me, user, tenantId, customer, plan, impersonating, loading, login, signup, logout, refresh, hasPerm, hasFeature, impersonate, stopImpersonate }}>
+    <AuthContext.Provider value={{ me, user, tenantId, customer, club, plan, impersonating, loading, login, signup, logout, refresh, hasPerm, hasFeature, impersonate, stopImpersonate }}>
       {children}
     </AuthContext.Provider>
   );

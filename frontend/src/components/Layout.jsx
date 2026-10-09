@@ -43,7 +43,7 @@ export default function Layout() {
       if (c?.logo_url) setClubLogo(c.logo_url);
     }).catch(() => {});
   }, []);
-  const { user, customer, plan, impersonating, logout, hasPerm, hasFeature, stopImpersonate } = useAuth();
+  const { user, customer, club: activeClub, plan, impersonating, logout, hasPerm, hasFeature, stopImpersonate } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
   const [open, setOpen] = useState(false);
@@ -98,9 +98,9 @@ export default function Layout() {
               </div>
             )}
             <div className="flex items-center gap-2 mt-2">
-              {clubLogo && <img src={clubLogo} alt={customer.club_name} className="h-9 w-9 rounded-full object-cover border border-slate-300 shrink-0" data-testid="sidebar-club-logo" />}
+              {clubLogo && <img src={clubLogo} alt={activeClub?.name || customer.club_name} className="h-9 w-9 rounded-full object-cover border border-slate-300 shrink-0" data-testid="sidebar-club-logo" />}
               <div className="min-w-0">
-                <div className="font-semibold text-sm truncate">{customer.club_name}</div>
+                <div className="font-semibold text-sm truncate" data-testid="sidebar-club-name">{activeClub?.name || customer.club_name}</div>
                 <div className="text-xs text-slate-500">Kundenr: <span className="font-mono font-semibold">{customer.customer_number}</span></div>
               </div>
             </div>
