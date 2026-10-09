@@ -16,6 +16,7 @@ import DataTable from "@/components/DataTable";
 import InvoiceDialog from "@/components/InvoiceDialog";
 import TeamNeedsTab from "@/components/TeamNeedsTab";
 import StaffDialog from "@/components/StaffDialog";
+import AddToTeamDialog from "@/components/AddToTeamDialog";
 
 const EMPTY_TEAM = {
   team_name: "", age_class: "", email: "",
@@ -41,6 +42,7 @@ export default function Teams() {
   const [staffEditing, setStaffEditing] = useState(null);
   const [pendingStaff, setPendingStaff] = useState([]);  // kun brukt når editId == null
   const [personDetail, setPersonDetail] = useState(null);
+  const [addToTeamFor, setAddToTeamFor] = useState(null);
   const BASE = process.env.REACT_APP_BACKEND_URL;
 
   const load = async () => {
@@ -65,7 +67,15 @@ export default function Teams() {
 
   const headCoachForTeam = (teamId) => {
     const list = peopleByTeam.get(teamId) || [];
-    return list.find((p) => p.role === "Hovedtrener") || null;
+    // Finn personen hvis rolle PÅ DETTE laget er Hovedtrener (fra team_memberships, med fallback til root-role)
+    return list.find((p) => roleForTeam(p, teamId) === "Hovedtrener") || null;
+  };
+
+  // Resolver rollen en person har PÅ et spesifikt lag. Faller tilbake til p.role for eldre data.
+  const roleForTeam = (person, teamId) => {
+    if (!person) return "";
+    const m = (person.team_memberships || []).find((x) => x.team_id === teamId);
+    return (m?.role) || person.role || "";
   };
 
   const openNew = () => { setEditId(null); setForm(EMPTY_TEAM); setPendingStaff([]); setOpen(true); };
@@ -371,13 +381,19 @@ export default function Teams() {
                 <h4 className="font-semibold text-sm mb-2">Personer tilknyttet laget ({detail.people.length})</h4>
                 <div className="border border-slate-200 rounded-md divide-y divide-slate-100" data-testid="team-detail-staff-list">
                   {detail.people.length === 0 && <div className="text-center text-slate-500 py-4 text-sm">Ingen personer.</div>}
-                  {detail.people.map((p) => (
+                  {detail.people.map((p) => {
+                    const rolleHer = roleForTeam(p, detail.team.id);
+                    const antallLag = (p.team_ids || []).length;
+                    return (
                     <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm" data-testid={`team-detail-person-${p.id}`}>
                       <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                        {p.role && <span className="text-[10px] font-bold uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded shrink-0">{p.role}</span>}
+                        {rolleHer && <span className="text-[10px] font-bold uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded shrink-0">{rolleHer}</span>}
                         <span className="font-semibold truncate">{p.name}</span>
                         <span className="text-slate-400">·</span>
                         <span className="text-slate-700">{p.phone || "–"}</span>
+                        {antallLag > 1 && (
+                          <span className="text-[10px] text-slate-500 italic shrink-0" title={`Også på ${antallLag - 1} andre lag`}>+{antallLag - 1} andre lag</span>
+                        )}
                         {p.debt > 0 && <span className="text-xs text-red-700 font-semibold ml-2">Skyldig: {nok(p.debt)}</span>}
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
@@ -390,12 +406,12 @@ export default function Teams() {
                         <Button variant="ghost" size="sm" onClick={() => emailStaff(p)} title="Send e-post" data-testid={`email-person-${p.id}`} disabled={!p.email}>
                           <Mail className={`h-3.5 w-3.5 ${p.email ? "text-red-700" : "text-slate-300"}`} />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => deleteStaff(p)} title="Slett person" data-testid={`del-person-${p.id}`}>
+                        <Button variant="ghost" size="sm" onClick={() => deleteStaff(p, detail.team.id)} title={antallLag > 1 ? "Fjern fra dette laget" : "Slett person"} data-testid={`del-person-${p.id}`}>
                           <Trash2 className="h-3.5 w-3.5 text-red-600" />
                         </Button>
                       </div>
                     </div>
-                  ))}
+                  );})}
                 </div>
               </div>
               <div>
@@ -443,13 +459,22 @@ export default function Teams() {
         open={staffOpen}
         onOpenChange={setStaffOpen}
         initial={staffEditing}
-        teamId={editId}
-        mode={editId ? "api" : "local"}
+        teamId={editId || detail?.team?.id || null}
+        mode={(editId || staffEditing?.id) ? "api" : "local"}
         onSaved={onStaffSaved}
       />
 
+      <AddToTeamDialog
+        open={!!addToTeamFor}
+        onOpenChange={(o) => !o && setAddToTeamFor(null)}
+        person={addToTeamFor}
+        teams={teams}
+        excludeTeamIds={addToTeamFor?.team_ids || []}
+        onSaved={(updated) => { setAddToTeamFor(null); setPersonDetail(updated); load(); }}
+      />
+
       <Dialog open={!!personDetail} onOpenChange={(o) => !o && setPersonDetail(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{personDetail?.name}</DialogTitle>
             <DialogDescription>
@@ -463,6 +488,38 @@ export default function Teams() {
               <div><span className="text-slate-500 w-32 inline-block">E-post:</span> {personDetail.email || "–"}</div>
               <div><span className="text-slate-500 w-32 inline-block">Adresse:</span> {personDetail.street_address || "–"}</div>
               <div><span className="text-slate-500 w-32 inline-block">Postnr/sted:</span> {[personDetail.postal_code, personDetail.postal_city].filter(Boolean).join(" ") || "–"}</div>
+
+              <div className="pt-3 border-t border-slate-100 mt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-slate-500 text-xs">Lag og rolle</div>
+                  <Button variant="outline" size="sm" onClick={() => setAddToTeamFor(personDetail)} data-testid="add-to-team-btn">
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Legg til i annet lag
+                  </Button>
+                </div>
+                {(() => {
+                  const memberships = Array.isArray(personDetail.team_memberships) && personDetail.team_memberships.length > 0
+                    ? personDetail.team_memberships
+                    : (personDetail.team_ids || []).map((tid) => ({ team_id: tid, role: personDetail.role || "" }));
+                  if (memberships.length === 0) return <div className="text-xs italic text-slate-400">Ikke knyttet til noe lag.</div>;
+                  return (
+                    <div className="space-y-1" data-testid="person-memberships-list">
+                      {memberships.map((m) => {
+                        const t = teams.find((x) => x.id === m.team_id);
+                        return (
+                          <div key={m.team_id} className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-100 rounded px-2 py-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-semibold text-sm truncate">{t?.team_name || "(ukjent lag)"}{t?.age_class ? ` (${t.age_class})` : ""}</span>
+                              <span className="text-slate-400">·</span>
+                              <span className="text-[10px] font-bold uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded">{m.role || "—"}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
               {personDetail.notes && (
                 <div className="pt-2 border-t border-slate-100 mt-2">
                   <div className="text-slate-500 text-xs mb-1">Notater / Kommentarer</div>

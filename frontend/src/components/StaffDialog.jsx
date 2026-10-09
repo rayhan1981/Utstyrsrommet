@@ -49,8 +49,14 @@ export default function StaffDialog({ open, onOpenChange, initial, teamId, onSav
   useEffect(() => {
     if (!open) return;
     if (initial) {
+      // Hvis person er knyttet til et spesifikt lag, bruk rollen fra membership for det laget
+      let effectiveRole = initial.role || "";
+      if (teamId && Array.isArray(initial.team_memberships)) {
+        const m = initial.team_memberships.find((x) => x.team_id === teamId);
+        if (m?.role) effectiveRole = m.role;
+      }
       setForm({
-        role: initial.role || "",
+        role: effectiveRole,
         first_name: initial.first_name || "",
         last_name: initial.last_name || "",
         phone: initial.phone || "",
@@ -63,7 +69,7 @@ export default function StaffDialog({ open, onOpenChange, initial, teamId, onSav
     } else {
       setForm(EMPTY_STAFF);
     }
-  }, [open, initial]);
+  }, [open, initial, teamId]);
 
   // Automatisk oppslag av poststed via Kartverket (geonorge) når 4-sifret postnr er fylt inn
   useEffect(() => {
@@ -113,14 +119,29 @@ export default function StaffDialog({ open, onOpenChange, initial, teamId, onSav
     setSaving(true);
     try {
       if (initial?.id) {
-        // Oppdater – behold eksisterende team_ids, men lag en union hvis teamId er oppgitt
-        const team_ids = Array.from(new Set([...(initial.team_ids || []), ...(teamId ? [teamId] : [])]));
-        const { data } = await api.put(`/people/${initial.id}`, { ...payload, team_ids });
+        // Oppdater – oppdater (eller legg til) membership for aktivt teamId med den valgte rollen
+        const existingMemberships = Array.isArray(initial.team_memberships) ? initial.team_memberships : [];
+        let memberships = existingMemberships.slice();
+        if (teamId) {
+          const idx = memberships.findIndex((m) => m.team_id === teamId);
+          if (idx >= 0) memberships[idx] = { team_id: teamId, role: form.role };
+          else memberships.push({ team_id: teamId, role: form.role });
+        }
+        // Hvis person ikke hadde memberships fra før (eldre data), lag en fra team_ids + root role
+        if (existingMemberships.length === 0 && (initial.team_ids || []).length > 0) {
+          const seeded = (initial.team_ids || [])
+            .filter((tid) => tid !== teamId)
+            .map((tid) => ({ team_id: tid, role: initial.role || "" }));
+          memberships = [...seeded, ...memberships];
+        }
+        const team_ids = Array.from(new Set(memberships.map((m) => m.team_id).filter(Boolean)));
+        const { data } = await api.put(`/people/${initial.id}`, { ...payload, team_memberships: memberships, team_ids });
         toast.success("Oppdatert");
         onSaved?.(data);
       } else {
+        const team_memberships = teamId ? [{ team_id: teamId, role: form.role }] : [];
         const team_ids = teamId ? [teamId] : [];
-        const { data } = await api.post("/people", { ...payload, team_ids });
+        const { data } = await api.post("/people", { ...payload, team_memberships, team_ids });
         toast.success("Lagt til i støtteapparatet");
         onSaved?.(data);
       }

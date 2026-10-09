@@ -700,11 +700,16 @@ class TeamIn(BaseModel):
     trainer5: Optional[TrainerIn] = None
 
 
+class TeamMembership(BaseModel):
+    team_id: str
+    role: str = ""  # Rollen personen har på nettopp dette laget
+
+
 class PersonIn(BaseModel):
     name: str = ""  # Vil bli auto-utledet fra first_name + last_name hvis tom
     first_name: str = ""
     last_name: str = ""
-    role: str = ""  # Hovedtrener | Lagleder | Trener | Dugnadsansvarlig | Foreldrekontakt | Kasserer | Annet
+    role: str = ""  # Primærrolle (brukes som fallback når person ikke er knyttet til et spesifikt lag)
     phone: str = ""
     email: str = ""
     street_address: str = ""  # Gateadresse og gatenummer
@@ -712,6 +717,7 @@ class PersonIn(BaseModel):
     postal_city: str = ""     # Automatisk utledet via geonorge.no
     notes: str = ""           # Fritekst – kun synlig i personens detaljvisning
     team_ids: List[str] = Field(default_factory=list)
+    team_memberships: List[TeamMembership] = Field(default_factory=list)  # Per-lag rolle; sannhetskilde når satt
 
 
 class SizeStock(BaseModel):
@@ -2308,6 +2314,10 @@ async def create_person(data: PersonIn, request: Request, user=Depends(require_p
         if not full:
             raise HTTPException(400, "Navn (fornavn + etternavn) kreves")
         doc["name"] = full
+    # Synkroniser team_ids fra team_memberships dersom memberships er satt (sannhetskilde)
+    memberships = doc.get("team_memberships") or []
+    if memberships:
+        doc["team_ids"] = list({m["team_id"] for m in memberships if m.get("team_id")})
     doc.update({"id": new_id(), "tenant_id": tid, "debt": 0.0, "created_at": now_iso()})
     await db.people.insert_one(doc)
     return _clean(doc)
@@ -2333,6 +2343,10 @@ async def update_person(person_id: str, data: PersonIn, request: Request, user=D
         full = f"{update.get('first_name','').strip()} {update.get('last_name','').strip()}".strip()
         if full:
             update["name"] = full
+    # Synkroniser team_ids fra team_memberships dersom memberships er satt (sannhetskilde)
+    memberships = update.get("team_memberships") or []
+    if memberships:
+        update["team_ids"] = list({m["team_id"] for m in memberships if m.get("team_id")})
     await db.people.update_one({"id": person_id, "tenant_id": tid}, {"$set": update})
     return await db.people.find_one({"id": person_id, "tenant_id": tid}, {"_id": 0})
 
