@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { LogOut, LayoutDashboard, FilePlus2, ListChecks } from "lucide-react";
 import { toast } from "sonner";
 
+/** Avleder klubbens initialer til bruk når logo mangler. */
+function clubInitials(name = "") {
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "KL";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default function PortalLayout() {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -55,14 +63,43 @@ export default function PortalLayout() {
 
   if (!me) return null;
 
+  const logo = me.club?.logo_url || "";
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-red-900 text-white border-b border-red-950">
+    <div className="min-h-screen bg-slate-50 relative">
+      {/* Subtil sportsstripe-bakgrunn */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 opacity-[0.035]"
+        style={{
+          backgroundImage: "repeating-linear-gradient(135deg, #7f1d1d 0 2px, transparent 2px 24px)",
+        }}
+      />
+      <header className="relative bg-red-900 text-white border-b-4 border-amber-300 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wider opacity-70">Lagsportal</div>
-            <div className="font-bold truncate" data-testid="portal-header-club">{me.club.name}</div>
-            <div className="text-sm opacity-90 truncate" data-testid="portal-header-team">{me.team.name}{me.team.age_class ? ` · ${me.team.age_class}` : ""}</div>
+          <div className="flex items-center gap-3 min-w-0">
+            {logo ? (
+              <img
+                src={logo}
+                alt={me.club.name}
+                className="h-12 w-12 rounded-full bg-white object-contain p-1 ring-2 ring-amber-300 shrink-0"
+                data-testid="portal-club-logo"
+              />
+            ) : (
+              <div
+                className="h-12 w-12 rounded-full bg-white text-red-900 font-black flex items-center justify-center ring-2 ring-amber-300 shrink-0"
+                data-testid="portal-club-initials"
+              >
+                {clubInitials(me.club.name)}
+              </div>
+            )}
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.2em] opacity-70">Lagsportal</div>
+              <div className="font-bold truncate text-lg leading-tight" data-testid="portal-header-club">{me.club.name}</div>
+              <div className="text-sm opacity-90 truncate" data-testid="portal-header-team">
+                {me.team.name}{me.team.age_class ? ` · ${me.team.age_class}` : ""}
+              </div>
+            </div>
           </div>
           <Button variant="secondary" size="sm" onClick={logout} data-testid="portal-logout">
             <LogOut className="h-4 w-4 mr-1" />Logg ut
@@ -88,9 +125,12 @@ export default function PortalLayout() {
           ))}
         </nav>
       </header>
-      <main className="max-w-5xl mx-auto px-4 py-6">
+      <main className="relative max-w-5xl mx-auto px-4 py-6">
         <Outlet context={{ me }} />
       </main>
+      <footer className="relative text-center text-[11px] text-slate-400 py-6">
+        {me.club.name} · Lagsportal · drevet av <span className="font-semibold text-slate-500">UTSTYRSROMMET</span>
+      </footer>
     </div>
   );
 }

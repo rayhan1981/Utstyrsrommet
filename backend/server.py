@@ -6620,15 +6620,33 @@ async def portal_logout(response: Response):
     return {"ok": True}
 
 
+async def _portal_club_branding(tenant_id: str) -> dict:
+    """Henter branding (navn + logo) for en klubb til bruk i lagsportalen."""
+    cust = await db.customers.find_one({"id": tenant_id}, {"_id": 0, "club_name": 1}) or {}
+    club_doc = await db.clubs.find_one({"tenant_id": tenant_id}, {"_id": 0, "name": 1, "logo_url": 1}) or {}
+    return {
+        "name": club_doc.get("name") or cust.get("club_name") or "Klubben",
+        "logo_url": club_doc.get("logo_url") or "",
+    }
+
+
 @api.get("/portal/auth/me")
 async def portal_me(acc=Depends(get_portal_account)):
-    club = await db.customers.find_one({"id": acc["tenant_id"]}, {"_id": 0, "club_name": 1}) or {}
     team = acc["_team"]
     return {
         "account": _redact_portal_account(acc),
         "team": {"id": team["id"], "name": team.get("team_name"), "age_class": team.get("age_class")},
-        "club": {"name": club.get("club_name") or "Klubben"},
+        "club": await _portal_club_branding(acc["tenant_id"]),
     }
+
+
+@api.get("/portal/branding")
+async def portal_branding_by_token(token: str):
+    """Public endpoint: henter klubbens branding basert på invitasjons-token (brukes av sett-passord-siden)."""
+    acc = await db.team_portal_accounts.find_one({"reset_token": token}, {"_id": 0, "tenant_id": 1}) or {}
+    if not acc:
+        raise HTTPException(404, "Ugyldig invitasjon")
+    return await _portal_club_branding(acc["tenant_id"])
 
 
 # -------------- Portal: dashboard-data --------------

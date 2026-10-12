@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { portalApi, setPortalToken, formatPortalError } from "./portalApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,11 +28,24 @@ export default function PortalLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md p-6">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Sportslig stripebakgrunn */}
+      <div
+        aria-hidden
+        className="absolute inset-0 opacity-[0.05] pointer-events-none"
+        style={{ backgroundImage: "repeating-linear-gradient(135deg, #7f1d1d 0 2px, transparent 2px 24px)" }}
+      />
+      {/* Topplinje med klubbfarge */}
+      <div aria-hidden className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-red-900 via-amber-300 to-red-900" />
+
+      <Card className="w-full max-w-md p-6 relative border-t-4 border-t-red-900 shadow-lg">
         <div className="text-center mb-6">
-          <div className="inline-block bg-red-900 text-white font-black px-4 py-2 rounded-md tracking-wide">LAGSPORTAL</div>
+          <div className="inline-flex items-center gap-2 bg-red-900 text-white font-black px-4 py-2 rounded-md tracking-[0.2em] text-sm">
+            <ShieldAlert className="h-4 w-4 text-amber-300" />
+            LAGSPORTAL
+          </div>
           <p className="text-xs text-slate-500 mt-2">UTSTYRSROMMET · portal.utstyrsrommet.no</p>
+          <p className="text-xs text-slate-400 mt-1 italic">Logg inn med e-posten klubben din har registrert.</p>
         </div>
         <form onSubmit={submit} className="space-y-4">
           <div>

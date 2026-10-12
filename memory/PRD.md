@@ -22,6 +22,13 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-12 – Lagsportal klubb-branding
+- `GET /api/portal/auth/me` returnerer nå `club.logo_url` i tillegg til `club.name`.
+- Nytt public endpoint `GET /api/portal/branding?token=<invite>` lar «sett passord»-siden vise klubbens logo+navn før konto er aktiv.
+- `PortalLayout`: klubblogo (eller fallback-initialer) i header, gull-aksentlinje, subtil sportsstripe-bakgrunn, footer med klubb-navn + «drevet av UTSTYRSROMMET».
+- `PortalLogin`: oppgradert med gull-gradient topplinje og sportsstripe-bakgrunn.
+- `PortalSetPassword`: viser klubbens logo/initialer og navn før passord settes.
+
 ### 2026-10-12 – Lagsportal (Team Portal) Fase 1 LIVE
 - **Kritisk bugfix**: `app.include_router(api)` ble kalt midt i filen; alle Lagsportal-endepunkter definert etter kallet (6350-6990) var 404. Flyttet til slutten med beskyttende kommentar.
 - Backend-endepunkter (gatet på Deluxe via `_require_tenant_deluxe_portal`):
