@@ -3126,6 +3126,17 @@ async def items_import(request: Request, file: UploadFile = File(...), strict: b
     return {"created": created, "updated": updated, "errors": errors}
 
 
+@api.get("/items/{item_id}")
+async def get_item(item_id: str, request: Request, user=Depends(require_perm("inventory", "read"))):
+    """Henter én vare for innlogget klubbs tenant. Brukes bl.a. av Skann QR-siden.
+    Deklarert etter /items/taxonomy og /items/import/template slik at de ikke fanges av {item_id}."""
+    tid = await require_tenant(request, user)
+    it = await db.items.find_one({"id": item_id, "tenant_id": tid}, {"_id": 0})
+    if not it:
+        raise HTTPException(404, "Vare finnes ikke")
+    return it
+
+
 @api.get("/items/{item_id}/open-orders")
 async def get_item_open_orders(item_id: str, request: Request, user=Depends(require_perm("inventory", "read"))):
     """Henter åpne bestillinger (ikke levert/arkivert/annullert) som inneholder denne varen.
@@ -6976,7 +6987,11 @@ async def portal_create_need(data: PortalNeedCreateIn, request: Request, acc=Dep
             })
     except Exception:
         logger.exception("Kunne ikke opprette in-app varsler for ny behovsmelding")
-    # Fase 2 TODO: Send e-post til aktive brukere i klubben.
+    # Send e-postvarsel til klubbens aktive brukere (best-effort, blokkerer ikke responsen)
+    try:
+        await _send_new_need_email_to_club(tid, doc)
+    except Exception:
+        logger.exception("E-postvarsel om ny behovsmelding feilet")
     doc.pop("_id", None)
     doc["status_label"] = _needs_status_label(doc["status"])
     return doc
@@ -7001,6 +7016,100 @@ async def portal_withdraw_need(nid: str, acc=Depends(get_portal_account)):
 
 
 # -------------- Klubbside: innmeldte behov (ren liste + start behandling) --------------
+async def _send_new_need_email_to_club(tid: str, doc: dict):
+    """Send e-postvarsel til klubbens aktive brukere om ny behovsmelding fra lagsportalen."""
+    users = await db.users.find({"tenant_id": tid, "active": True}, {"_id": 0, "email": 1}).to_list(100)
+    emails = [u["email"] for u in users if u.get("email")]
+    if not emails:
+        return
+    club = await db.customers.find_one({"id": tid}, {"_id": 0, "club_name": 1}) or {}
+    club_name = club.get("club_name") or "klubben"
+    lines_html = "".join(
+        f"<li>{(l.get('item_name') or '').strip()}"
+        + (f" <em>({l.get('size')})</em>" if l.get('size') else "")
+        + (f" #{l.get('jersey_number')}" if l.get('jersey_number') and l.get('jersey_number') != 'X' else "")
+        + f" — <strong>{int(l.get('quantity_requested') or 0)} stk</strong>"
+        + (f" <span style='color:#64748b'>(«{l.get('note')}»)</span>" if l.get('note') else "")
+        + "</li>"
+        for l in (doc.get("lines") or [])
+    )
+    app_base = os.environ.get("APP_URL", "https://utstyrsrommet.no")
+    link = f"{app_base}/app/innmeldte-behov/{doc['id']}"
+    html = (
+        f"<p>Hei,</p>"
+        f"<p>Det har kommet en ny behovsmelding i <strong>Lagsportalen</strong>:</p>"
+        f"<table cellpadding='4' style='font-family:system-ui,sans-serif;border-collapse:collapse;'>"
+        f"<tr><td>Meldingsnr</td><td><strong>{doc.get('number')}</strong></td></tr>"
+        f"<tr><td>Lag</td><td><strong>{doc.get('team_name')}</strong>{(' · ' + doc.get('age_class')) if doc.get('age_class') else ''}</td></tr>"
+        f"<tr><td>Kontakt</td><td>{doc.get('contact_name')} ({doc.get('contact_email')} / {doc.get('contact_phone')})</td></tr>"
+        f"<tr><td>Ønsket dato</td><td><strong>{doc.get('wanted_date')}</strong></td></tr>"
+        f"<tr><td>Antall linjer</td><td>{len(doc.get('lines') or [])}</td></tr>"
+        f"</table>"
+        f"<p><strong>Varelinjer:</strong></p><ul>{lines_html}</ul>"
+        + (f"<p><strong>Kommentar fra laget:</strong> {doc.get('comment')}</p>" if doc.get("comment") else "")
+        + f"<p><a href=\"{link}\" style=\"background:#7f1d1d;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;display:inline-block;\">Åpne behandling i klubbappen</a></p>"
+        f"<p style='font-size:11px;color:#94a3b8;margin-top:16px'>Dette er et automatisk varsel fra Utstyrsrommet · Lagsportal ({club_name}).</p>"
+    )
+    res = await send_tenant_email(tid, emails, f"Ny behovsmelding fra {doc.get('team_name')} ({doc.get('number')})", html)
+    await db.needs_requests.update_one(
+        {"id": doc["id"], "tenant_id": tid},
+        {"$set": {
+            "notifications.new_need_email_sent": bool(res.get("ok")),
+            "notifications.new_need_email_error": None if res.get("ok") else (res.get("error") or "ukjent feil"),
+            "notifications.new_need_email_at": now_iso(),
+            "notifications.new_need_email_recipients": emails,
+        }},
+    )
+
+
+def _compute_line_status(totals: dict, qr: int) -> str:
+    """Returnerer status per linje basert på fordelingen av behandlede antall."""
+    s = sum(totals.values())
+    if s == 0:
+        return "pending"
+    if s < qr:
+        return "pending"
+    nonzero = [k for k, v in totals.items() if v > 0]
+    if len(nonzero) == 1:
+        return nonzero[0]  # immediate / to_order / loaned / rejected / discontinued
+    return "mixed"
+
+
+def _compute_overall_needs_status(doc: dict) -> str:
+    """Automatisk aggregert status for en behovsmelding ut fra linjene."""
+    lines = doc.get("lines") or []
+    if not lines:
+        return doc.get("status") or "under_behandling"
+    def _n(l, k): return int(l.get(k) or 0)
+    all_full = all(
+        (_n(l, "quantity_immediate") + _n(l, "quantity_to_order") + _n(l, "quantity_loaned")
+         + _n(l, "quantity_rejected") + _n(l, "quantity_discontinued")) >= _n(l, "quantity_requested")
+        for l in lines
+    )
+    has_immediate = any(_n(l, "quantity_immediate") > 0 for l in lines)
+    has_to_order = any(_n(l, "quantity_to_order") > 0 for l in lines)
+    has_loaned = any(_n(l, "quantity_loaned") > 0 for l in lines)
+    if not all_full:
+        return "under_behandling"
+    if has_to_order and (has_immediate or has_loaned):
+        return "behandlet_dellevering"
+    if has_to_order:
+        return "behandlet_ma_bestilles"
+    if has_immediate or has_loaned:
+        return "kan_leveres_omgaende"
+    # Alt rejected/discontinued → ingenting å levere
+    return "kan_leveres_omgaende"
+
+
+class NeedsLineUpdateIn(BaseModel):
+    quantity_immediate: Optional[int] = 0
+    quantity_to_order: Optional[int] = 0
+    quantity_loaned: Optional[int] = 0
+    quantity_rejected: Optional[int] = 0
+    quantity_discontinued: Optional[int] = 0
+    admin_note: Optional[str] = None
+
+
 @api.get("/needs-requests")
 async def list_needs_requests(request: Request, user=Depends(require_perm("teams", "read")), team_id: Optional[str] = None, status: Optional[str] = None):
     tid = await require_tenant(request, user)
@@ -7050,6 +7159,119 @@ async def start_processing_need(nid: str, request: Request, user=Depends(require
     updated = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
     updated["status_label"] = _needs_status_label(updated.get("status"))
     return updated
+
+
+@api.put("/needs-requests/{nid}/lines/{lid}")
+async def update_needs_line(nid: str, lid: str, data: NeedsLineUpdateIn, request: Request, user=Depends(require_perm("teams", "write"))):
+    """Oppdaterer én linje i en behovsmelding med klubbens behandling (umiddelbart/bestille/låne/avvist/utgått)."""
+    tid = await require_tenant(request, user)
+    n = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Behovsmelding finnes ikke")
+    if n.get("status") in ("sendt", "trukket_tilbake", "avsluttet"):
+        raise HTTPException(400, f"Linjebehandling kan ikke endres når meldingen har status «{_needs_status_label(n.get('status'))}». Trykk «Start Behandling» først.")
+    line = next((l for l in (n.get("lines") or []) if l.get("id") == lid), None)
+    if not line:
+        raise HTTPException(404, "Linje finnes ikke")
+    qr = int(line.get("quantity_requested") or 0)
+    totals = {
+        "immediate": max(0, int(data.quantity_immediate or 0)),
+        "to_order": max(0, int(data.quantity_to_order or 0)),
+        "loaned": max(0, int(data.quantity_loaned or 0)),
+        "rejected": max(0, int(data.quantity_rejected or 0)),
+        "discontinued": max(0, int(data.quantity_discontinued or 0)),
+    }
+    s = sum(totals.values())
+    if s > qr:
+        raise HTTPException(400, f"Summen av behandlingen ({s}) kan ikke overstige bestilt antall ({qr}).")
+    approved = totals["immediate"] + totals["to_order"] + totals["loaned"]
+    line_status = _compute_line_status(totals, qr)
+    now_s = now_iso()
+    set_doc = {
+        "lines.$.quantity_immediate": totals["immediate"],
+        "lines.$.quantity_to_order": totals["to_order"],
+        "lines.$.quantity_loaned": totals["loaned"],
+        "lines.$.quantity_rejected": totals["rejected"],
+        "lines.$.quantity_discontinued": totals["discontinued"],
+        "lines.$.quantity_approved": approved,
+        "lines.$.line_status": line_status,
+        "lines.$.line_updated_at": now_s,
+        "lines.$.line_updated_by": user.get("name") or user.get("email"),
+        "last_update_at": now_s,
+    }
+    if data.admin_note is not None:
+        set_doc["lines.$.admin_note"] = data.admin_note.strip()
+    await db.needs_requests.update_one(
+        {"id": nid, "tenant_id": tid, "lines.id": lid},
+        {"$set": set_doc},
+    )
+    # Beregn og evt. oppdater overordnet status basert på alle linjer
+    refreshed = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    new_status = _compute_overall_needs_status(refreshed)
+    if new_status != refreshed.get("status"):
+        await db.needs_requests.update_one(
+            {"id": nid, "tenant_id": tid},
+            {
+                "$set": {"status": new_status, "last_update_at": now_s},
+                "$push": {"status_history": {"status": new_status, "at": now_s, "by": user.get("email"), "by_type": "club", "auto": True}},
+            },
+        )
+    await _log_activity(tid, user, "needs_line_updated",
+                         f"Oppdaterte linje i {refreshed.get('number')}", {"needs_id": nid, "line_id": lid, "totals": totals})
+    out = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    out["status_label"] = _needs_status_label(out.get("status"))
+    return out
+
+
+@api.post("/needs-requests/{nid}/close")
+async def close_needs_request(nid: str, request: Request, user=Depends(require_perm("teams", "write"))):
+    """Avslutter manuell behandling av en behovsmelding."""
+    tid = await require_tenant(request, user)
+    n = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Behovsmelding finnes ikke")
+    if n.get("status") == "avsluttet":
+        raise HTTPException(400, "Behovsmeldingen er allerede avsluttet.")
+    if n.get("status") in ("sendt", "trukket_tilbake"):
+        raise HTTPException(400, "Kan ikke avslutte en melding som ikke er under behandling.")
+    now_s = now_iso()
+    await db.needs_requests.update_one(
+        {"id": nid, "tenant_id": tid},
+        {
+            "$set": {"status": "avsluttet", "closed_at": now_s, "closed_by": user.get("id"), "closed_by_name": user.get("name") or user.get("email"), "last_update_at": now_s},
+            "$push": {"status_history": {"status": "avsluttet", "at": now_s, "by": user.get("email"), "by_type": "club"}},
+        },
+    )
+    await _log_activity(tid, user, "needs_closed", f"Avsluttet {n.get('number')}", {"needs_id": nid})
+    out = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    out["status_label"] = _needs_status_label(out.get("status"))
+    return out
+
+
+@api.post("/needs-requests/{nid}/reopen")
+async def reopen_needs_request(nid: str, request: Request, user=Depends(require_perm("teams", "write"))):
+    """Åpner en avsluttet melding igjen for videre behandling."""
+    tid = await require_tenant(request, user)
+    n = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Behovsmelding finnes ikke")
+    if n.get("status") != "avsluttet":
+        raise HTTPException(400, "Kun avsluttede meldinger kan åpnes igjen.")
+    now_s = now_iso()
+    new_status = _compute_overall_needs_status(n)
+    if new_status == "avsluttet":
+        new_status = "under_behandling"
+    await db.needs_requests.update_one(
+        {"id": nid, "tenant_id": tid},
+        {
+            "$set": {"status": new_status, "closed_at": None, "closed_by": None, "closed_by_name": None, "last_update_at": now_s},
+            "$push": {"status_history": {"status": new_status, "at": now_s, "by": user.get("email"), "by_type": "club", "reopened": True}},
+        },
+    )
+    await _log_activity(tid, user, "needs_reopened", f"Åpnet {n.get('number')} igjen", {"needs_id": nid})
+    out = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    out["status_label"] = _needs_status_label(out.get("status"))
+    return out
 
 
 # -------------- Klubbside: er lagsportalen aktiv (brukes av UI) --------------

@@ -22,7 +22,12 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
-### 2026-10-12 – Lagsportal fanetittel + domene-separasjon
+### 2026-10-12 – GET /items/{item_id} + Skann QR-fiks
+- Lagt til `GET /api/items/{item_id}` i server.py (etter `/items/taxonomy` og `/items/import/template` for å unngå shadowing). Beskyttet med `require_perm("inventory","read")`, tenant-scopet lookup.
+- Fikser Skann QR-siden (`Scan.jsx:67`) som tidligere feilet med «Ukjent QR-kode – vare ikke funnet» pga. 405.
+- Verifisert: ny ruten 200 ved gyldig id, 404 ved ukjent, 401 uten auth. Taxonomy og open-orders uendret.
+
+### 2026-10-12 – Lagsportal Fase 2: E-postvarsel + Klubbside linjebehandling
 - `PortalApp.jsx` setter `document.title = "Portal Utstyrsrommet"` via useEffect ved mount; gjenopprettes ved unmount (nullrisiko for klubbappens egen tittel).
 - Verifisert: Lagsportal viser «Portal Utstyrsrommet», klubbappen viser fortsatt «UTSTYRSROMMET».
 - Domene: `App.js` sin `isPortalHost()` håndterer allerede `portal.*`-hostnames – ingen kodeendring nødvendig for `portal.utstyrsrommet.no`. Krever kun CNAME + custom-domain i Emergent deploy etter deploy.
