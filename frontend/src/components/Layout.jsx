@@ -4,11 +4,12 @@ import {
   LayoutDashboard, Users as UsersIcon, UserCircle, Package, ArrowLeftRight,
   ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2, QrCode,
   ChevronDown, ChevronRight, SlidersHorizontal, PackagePlus, Truck, ShoppingCart, ClipboardList,
-  HelpCircle,
+  HelpCircle, Info,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import NotificationCenter from "@/components/NotificationCenter";
 import TrialBanner from "@/components/TrialBanner";
 
@@ -49,6 +50,7 @@ export default function Layout() {
   const nav = useNavigate();
   const loc = useLocation();
   const [open, setOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const handleLogout = async () => { await logout(); nav("/innlogging"); };
   const stop = async () => { await stopImpersonate(); nav("/app"); };
@@ -97,6 +99,16 @@ export default function Layout() {
                     <div className="text-[11px] text-slate-500 truncate" data-testid="sidebar-user-role-title">{user.role_title}</div>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  data-testid="logout-btn"
+                  title="Logg ut"
+                  aria-label="Logg ut"
+                  className="shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-slate-500 hover:text-red-800 hover:bg-red-50 transition-colors"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
               </div>
             )}
             <div className="flex items-center gap-2 mt-2">
@@ -169,26 +181,48 @@ export default function Layout() {
           )}
         </nav>
         <div className="border-t border-slate-200 bg-white">
-          <div className="p-3">
-            <div className="text-xs text-slate-500 mb-2 px-2">
-              <div className="font-semibold text-slate-800 truncate">{user?.name}</div>
-              <div className="truncate">{user?.email}</div>
-            </div>
-            <Button variant="outline" size="sm" className="w-full" onClick={handleLogout} data-testid="logout-btn">
-              <LogOut className="h-4 w-4 mr-2" />Logg ut
-            </Button>
-          </div>
-          <div className="px-4 py-3 text-[10px] leading-relaxed text-slate-500 border-t border-slate-100 bg-slate-50 space-y-0.5">
-            <div className="font-semibold text-slate-700">Hansen Logistikk</div>
-            <div>Designet og utviklet av Raymond Dalgård Hansen</div>
-            <div>Versjon 1.00 · 2026</div>
-            <div><a href="mailto:kontakt@utstyrsrommet.no" className="hover:text-red-800">kontakt@utstyrsrommet.no</a></div>
-            <div><a href="mailto:support@utstyrsrommet.no" className="hover:text-red-800">support@utstyrsrommet.no</a></div>
-            <div>Tlf. 90 96 70 88</div>
-            <div className="pt-1 text-slate-400">© 2026 - 2036 Hansen Logistikk</div>
-          </div>
+          <button
+            type="button"
+            onClick={() => setAboutOpen(true)}
+            data-testid="about-app-btn"
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] text-slate-500 hover:text-red-800 hover:bg-red-50 transition-colors"
+          >
+            <Info className="h-3 w-3" />
+            <span>Om appen</span>
+          </button>
         </div>
       </aside>
+
+      <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Info className="h-5 w-5 text-red-900" />
+              Om appen
+            </DialogTitle>
+            <DialogDescription>UTSTYRSROMMET – klubbforvaltning</DialogDescription>
+          </DialogHeader>
+          <div className="text-sm space-y-2 pt-1" data-testid="about-app-content">
+            <div>
+              <div className="font-semibold text-slate-800">Hansen Logistikk</div>
+              <div className="text-xs text-slate-500">Designet og utviklet av Raymond Dalgård Hansen</div>
+              <div className="text-xs text-slate-500">Versjon 1.00 · 2026</div>
+            </div>
+            <div className="pt-2 border-t border-slate-100 space-y-1 text-xs">
+              <div>
+                <a href="mailto:kontakt@utstyrsrommet.no" className="text-red-800 hover:underline">kontakt@utstyrsrommet.no</a>
+              </div>
+              <div>
+                <a href="mailto:support@utstyrsrommet.no" className="text-red-800 hover:underline">support@utstyrsrommet.no</a>
+              </div>
+              <div className="text-slate-600">Tlf. 90 96 70 88</div>
+            </div>
+            <div className="pt-2 border-t border-slate-100 text-[10px] text-slate-400">
+              © 2026 - 2036 Hansen Logistikk
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <main className="flex-1 min-w-0">
         <div className="h-12 border-b border-white/5 brand-gradient text-white flex items-center justify-end px-4 gap-3">
