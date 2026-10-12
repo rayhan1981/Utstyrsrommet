@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Users as UsersIcon, UserCircle, Package, ArrowLeftRight,
   ClipboardCheck, ShieldCheck, Settings, LogOut, Menu, X, CreditCard, Crown, Eye, Building2, QrCode,
   ChevronDown, ChevronRight, SlidersHorizontal, PackagePlus, Truck, ShoppingCart, ClipboardList,
+  HelpCircle,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
@@ -21,6 +22,7 @@ const PRIMARY_NAV = [
   { to: "/app/utlan", label: "Utlån & Retur", icon: ArrowLeftRight, module: "loans", feature: null },
   { to: "/app/skann", label: "Skann QR", icon: QrCode, module: "loans", feature: "qr_codes" },
   { to: "/app/varetelling", label: "Varetelling", icon: ClipboardCheck, module: "stock_audit", feature: "stock_audit" },
+  { to: "/app/hjelpesenter", label: "Hjelpesenter", icon: HelpCircle, module: null, feature: null },
 ];
 
 // Grouped under "Klubbinnstillinger"

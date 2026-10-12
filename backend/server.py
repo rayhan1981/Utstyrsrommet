@@ -1434,10 +1434,17 @@ async def subscription_checkout(data: CheckoutIn, request: Request, user=Depends
     except Exception:
         pass
 
+    YEARLY_FIRST_COUPONS = {
+        "basic": "UTR_YEARLY_20_FIRST",
+        "pro": "UTR_YEARLY_35_FIRST",
+        "deluxe": "UTR_YEARLY_50_FIRST",
+    }
     discounts = []
     if cycle == "yearly":
-        discounts = [{"coupon": "UTR_YEARLY_50_FIRST"}]
-        sub_data["metadata"]["yearly_loyalty"] = "pending"
+        coupon_id = YEARLY_FIRST_COUPONS.get(data.plan)
+        if coupon_id:
+            discounts = [{"coupon": coupon_id}]
+            sub_data["metadata"]["yearly_loyalty"] = "pending"
 
     kwargs = dict(
         line_items=[{"price": price.id, "quantity": 1}],
@@ -3563,6 +3570,189 @@ async def send_invoice_email(invoice_id: str, data: InvoiceSendIn, request: Requ
         raise HTTPException(500, f"Kunne ikke sende faktura: {e}")
     await db.invoices.update_one({"id": invoice_id, "tenant_id": tid}, {"$set": {"sent_at": now_iso(), "status": "sent"}})
     return {"ok": True}
+
+
+# ---------------- QR Labels ----------------
+# ---------------- Hjelpesenter / brukermanual (PDF) ----------------
+HELP_MANUAL_SECTIONS = [
+    ("Kom i gang", [
+        "Velkommen til UTSTYRSROMMET – klubbens komplette system for utstyr, lager og lagstyring.",
+        "Første gang du logger inn blir du bedt om å fullføre klubbinformasjonen under «Klubbinnstillinger → Klubb (logo/info)». Last opp klubblogo, kontaktinformasjon og signaturdetaljer slik at e-poster og PDF-er får riktig avsender.",
+        "Legg deretter til lag under «Klubbinnstillinger → Lag», opprett varer under «Utstyr», og registrer støtteapparat (trenere, lagledere, foreldrekontakter) direkte på hvert lag.",
+        "Sidepanelet grupperer funksjoner i tre bolker: driftsmoduler (Dashboard, Utstyr, Utlån osv.), Klubbinnstillinger (Lag, Personer, Klubb-info) og admin (Brukere, Abonnement).",
+    ]),
+    ("Utstyr og lagerstyring", [
+        "Alle varer forvaltes under «Utstyr». Hver vare har et hovedvarenummer (f.eks. HJEM100) og auto-genererte varianter som får varenummer sammensatt av hovednummer + størrelse + eventuelt draktnummer (f.eks. HJEM100-M-10).",
+        "Taksonomien er tre-delt: Kategori → Hovedgruppe → Undergruppe. Treffer du «Vis alle varer» får du et foldet hierarkisk tre; klikk på en kategoriknapp for å få en flat produktliste for den kategorien.",
+        "For klær og baller legges hver størrelse som egen varelinje med egen lokasjon og eget lager. Draktnummer kan knyttes per linje for sporing på enkeltspiller.",
+        "Lav-lager-advarsel vises automatisk når antall faller til 3 eller lavere.",
+    ]),
+    ("Lån ut og returner", [
+        "Trykk «Nytt utlån» (fra lag-detalj eller fra «Utlån & Retur») for å registrere utlevering. Velg lag, person (fra lagets støtteapparat eller egne personer), vare og størrelse.",
+        "Størrelsesvelgeren er søkbar: skriv f.eks. «M 10» for å finne M-størrelse med draktnummer 10. Lokasjon vises også i hver rad.",
+        "Modus kan være «Lån» (med skyldig beløp hvis ikke returnert) eller «Utlevering» (forbruksvare uten returkrav).",
+        "Ved retur: Åpne utlånet og trykk «Returner». Angi antall returnert, eventuell skade og om det skal faktureres eller avskrives.",
+        "Lag-utstyrs-PDF kan sendes til lagleder/hovedtrener med ett klikk fra lag-detaljer – inkluderer varenummer, størrelse, pris og frist.",
+    ]),
+    ("Lag", [
+        "Opprett lag under «Klubbinnstillinger → Lag». Bruk «Nytt lag»-knappen og velg lagsnavn + aldersklasse fra forhåndsdefinerte alternativer.",
+        "Legg til støtteapparat med knappen «+ Legg til støtteapparat». Velg rolle (Hovedtrener, Lagleder, Trener, Dugnadsansvarlig, Foreldrekontakt, Kasserer, Annet), fyll ut navn, kontaktinformasjon og eventuelle notater.",
+        "Postnummer gir automatisk oppslag av stedsnavn via Kartverket.",
+        "En person kan tilhøre flere lag med ulik rolle i hvert lag. I personinformasjons-dialogen kan du trykke «+ Legg til i annet lag» for å knytte samme kontaktinformasjon til et nytt lag med egen rolle.",
+        "På lag-detaljvisning vises hver person med rolle (øverst i mindre font), navn og telefon på neste linje, og fire kompakte knapper: Vis info, Rediger, Send e-post og Slett (eller Fjern fra lag dersom personen er på flere lag).",
+    ]),
+    ("QR-koder", [
+        "QR-koder genereres per varenummer / varelinje – aldri én QR per enhet. Dette gjelder uavhengig av beholdningen.",
+        "«Generer QR» på rad-nivå aktiverer QR-kode for den varelinjen. «Generer QR for alle» aktiverer alle manglende QR-koder i hele lageret.",
+        "«Vis QR» på en varelinje åpner QR-dialogen med nøyaktig én QR-kode. Her kan du velge: 1 kopi, antall = beholdning, eller antall = beholdning + 2 hyllemerker. Deretter kan du skrive ut, laste ned PDF med flere kopier, eller laste ned enkelt PNG.",
+        "Utskriftsstørrelsen kan være Liten (2 cm), Medium (6 cm) eller Stor (10 cm). Varenummer står i fete typer under hver QR, med varenavn/størrelse som sekundærlinje.",
+        "Slett QR-kode per linje med «Slett QR»-knappen, eller nullstill alle QR-koder i klubben med «Slett alle QR» (admin). Alle sletteoperasjoner bekreftes med popup.",
+    ]),
+    ("Varemottak", [
+        "Når bestilte varer kommer inn registreres de under «Varemottak». Skann QR-koden fra pakkseddelen (hvis tilgjengelig) eller velg vare + størrelse manuelt.",
+        "Oppgi antall mottatt, eventuell bestillingsreferanse (PO-nummer) og kommentar. Lageret oppdateres umiddelbart.",
+        "«Åpne bestillinger»-tabellen viser hva som er bestilt men ikke mottatt ennå, med varenummer som første kolonne.",
+        "«Siste varemottak» viser en logg over alle registrerte mottak. Du kan filtrere på dato og laste ned en Varemottak-PDF (med varenummer som første kolonne) direkte fra UI-et.",
+    ]),
+    ("Excel import/eksport", [
+        "Last ned mal under «Utstyr → Last ned mal». Malen har varenummer som første kolonne, og egne rader per varelinje (størrelse + draktnummer).",
+        "Fyll ut malen i Excel / LibreOffice, og last opp igjen under «Importer Excel». Du får en forhåndsvisning som viser hva som vil bli opprettet, oppdatert eller hoppet over – ingen endringer før du bekrefter.",
+        "«Eksporter Excel» laster ned hele dagens lager som en ferdig fil – nyttig for backup, revisjon eller å dele med regnskap.",
+        "Både import og eksport bruker samme kolonnerekkefølge: Varenummer, Varenavn, Kategori, Hovedgruppe, Undergruppe, Type, Størrelse, Draktnr, Antall, Pris, Lokasjon, m.m.",
+    ]),
+    ("Abonnement", [
+        "UTSTYRSROMMET tilbys i tre nivåer: Basis, Pro og Deluxe. Alle planer har 14 dagers gratis prøveperiode der du får Deluxe-funksjoner.",
+        "Du finner din gjeldende plan under «Abonnement» i sidepanelet – kun admin og klubb-eier ser denne.",
+        "Oppgradering og nedgradering gjøres via Stripe. Faktura, betalingsinformasjon og historikk administreres i Stripe-kundeportalen – klikk «Administrer abonnement» for å åpne denne.",
+        "QR-koder og Varetelling er inkludert kun i Deluxe-planen. Alle andre moduler (Lag, Utstyr, Utlån, Varemottak, Behov, Bestillinger, Leverandører) er tilgjengelige på alle planer.",
+        "Spørsmål om fakturering eller plan? Kontakt support via «Hjelpesenter → Kontakt» eller send e-post til support-adressen i klubbinformasjonen.",
+    ]),
+]
+
+
+def _build_help_manual_pdf(club_name: str) -> bytes:
+    """Genererer bruker-manualen som PDF via ReportLab (frisk hver gang, ingen caching)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    LEFT = 20 * mm; RIGHT = w - 20 * mm
+    USABLE_W = RIGHT - LEFT
+    y = h - 20 * mm
+
+    def _ensure_space(needed_mm: float):
+        nonlocal y
+        if y - needed_mm < 20 * mm:
+            c.showPage()
+            y = h - 20 * mm
+
+    def _wrap(text: str, max_w: float, font: str, font_size: float) -> List[str]:
+        """Bryter en tekst i linjer slik at ingen linje er bredere enn max_w (i user units)."""
+        words = text.split()
+        lines: List[str] = []
+        cur = ""
+        for word in words:
+            trial = (cur + " " + word).strip()
+            if stringWidth(trial, font, font_size) <= max_w:
+                cur = trial
+            else:
+                if cur: lines.append(cur)
+                cur = word
+        if cur: lines.append(cur)
+        return lines
+
+    # ---- Forside / tittel ----
+    c.setFillColorRGB(0.52, 0.09, 0.11)  # red-900
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(LEFT, y, "HJELPESENTER")
+    c.setFillColorRGB(0, 0, 0)
+    y -= 8 * mm
+    c.setFont("Helvetica", 11)
+    c.drawString(LEFT, y, f"Brukermanual for {club_name}")
+    y -= 5 * mm
+    c.setFont("Helvetica-Oblique", 9)
+    c.setFillColorRGB(0.4, 0.4, 0.4)
+    c.drawString(LEFT, y, f"Generert {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')} – UTSTYRSROMMET")
+    c.setFillColorRGB(0, 0, 0)
+    y -= 8 * mm
+    c.line(LEFT, y, RIGHT, y)
+    y -= 10 * mm
+
+    # ---- Innholdsfortegnelse ----
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(LEFT, y, "Innhold")
+    y -= 7 * mm
+    c.setFont("Helvetica", 10)
+    for i, (title, _) in enumerate(HELP_MANUAL_SECTIONS, 1):
+        _ensure_space(6 * mm)
+        c.drawString(LEFT + 4 * mm, y, f"{i}. {title}")
+        y -= 5 * mm
+    y -= 5 * mm
+
+    # ---- Seksjoner ----
+    for i, (title, paragraphs) in enumerate(HELP_MANUAL_SECTIONS, 1):
+        _ensure_space(18 * mm)
+        c.setFont("Helvetica-Bold", 15)
+        c.setFillColorRGB(0.52, 0.09, 0.11)
+        c.drawString(LEFT, y, f"{i}. {title}")
+        c.setFillColorRGB(0, 0, 0)
+        y -= 3 * mm
+        c.setStrokeColorRGB(0.85, 0.85, 0.85)
+        c.line(LEFT, y, RIGHT, y)
+        c.setStrokeColorRGB(0, 0, 0)
+        y -= 6 * mm
+
+        c.setFont("Helvetica", 10)
+        for para in paragraphs:
+            lines = _wrap(para, USABLE_W - 4 * mm, "Helvetica", 10)
+            # Beregn høyde og bytt side om nødvendig
+            needed = (len(lines) * 5 + 3) * mm
+            _ensure_space(needed)
+            # Punkt-bullet
+            c.setFillColorRGB(0.52, 0.09, 0.11)
+            c.drawString(LEFT, y, "\u2022")
+            c.setFillColorRGB(0, 0, 0)
+            for ln in lines:
+                c.drawString(LEFT + 4 * mm, y, ln)
+                y -= 5 * mm
+            y -= 2 * mm  # avstand mellom punkter
+
+        y -= 4 * mm  # avstand før neste seksjon
+
+    # ---- Bunntekst ----
+    _ensure_space(16 * mm)
+    c.setStrokeColorRGB(0.85, 0.85, 0.85)
+    c.line(LEFT, y, RIGHT, y)
+    y -= 5 * mm
+    c.setFont("Helvetica-Oblique", 8)
+    c.setFillColorRGB(0.4, 0.4, 0.4)
+    c.drawString(LEFT, y, "Trenger du hjelp? Kontakt administrator i klubben eller send en e-post til support.")
+    c.drawRightString(RIGHT, y, f"© {datetime.now(timezone.utc).year} UTSTYRSROMMET")
+
+    c.save()
+    return buf.getvalue()
+
+
+@api.get("/help/manual-pdf")
+async def download_help_manual_pdf(request: Request, user=Depends(get_current_user)):
+    """Generer hjelpemanualen som PDF – ingen caching, bygges fra scratch hver gang."""
+    tid = await resolve_tenant_id(request, user)
+    club_name = "Klubben"
+    if tid:
+        club = await db.clubs.find_one({"tenant_id": tid}, {"_id": 0, "name": 1})
+        cust = await db.customers.find_one({"id": tid}, {"_id": 0, "club_name": 1})
+        club_name = (club or {}).get("name") or (cust or {}).get("club_name") or "Klubben"
+    pdf_bytes = await asyncio.to_thread(_build_help_manual_pdf, club_name)
+    date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="hjelpesenter_{date_tag}.pdf"'},
+    )
 
 
 # ---------------- QR Labels ----------------

@@ -16,6 +16,7 @@ import Loans from "@/pages/Loans";
 import StockAudit from "@/pages/StockAudit";
 import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
+import HelpCenter from "@/pages/HelpCenter";
 import Subscription from "@/pages/Subscription";
 import SubscriptionSuccess from "@/pages/SubscriptionSuccess";
 import OwnerPanel from "@/pages/OwnerPanel";
@@ -54,6 +55,7 @@ function App() {
             <Route path="leverandorer" element={<ProtectedRoute module="inventory"><Leverandorer /></ProtectedRoute>} />
             <Route path="bestillinger" element={<ProtectedRoute module="teams"><Bestillinger /></ProtectedRoute>} />
             <Route path="behov" element={<ProtectedRoute module="teams"><Behov /></ProtectedRoute>} />
+            <Route path="hjelpesenter" element={<HelpCenter />} />
           </Route>
           <Route path="/eier" element={<Navigate to="/app/kunder" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />

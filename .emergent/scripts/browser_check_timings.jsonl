@@ -1,0 +1,1 @@
+{"ts": "2026-10-12T06:25:45", "name": "check-owner-panel-route", "mode": "ran-inline", "url": "https://klub-utstyr-admin.preview.emergentagent.com", "passed": false, "total_ms": 898, "pw_import_ms": 413, "launch_ms": null, "first_goto_ms": null, "body_ms": null, "body_gotos": []}

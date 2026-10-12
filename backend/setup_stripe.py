@@ -45,8 +45,8 @@ CATALOG = [
 COUPONS = [
     {"id": "UTR_YEARLY_50_FIRST", "percent_off": 50, "duration": "once",
      "name": "Første år 50% rabatt (årlig)"},
-    {"id": "UTR_YEARLY_10_LOYAL", "percent_off": 10, "duration": "forever",
-     "name": "Lojalitet 10% rabatt (årlig)"},
+    {"id": "UTR_YEARLY_10_LOYAL", "percent_off": 16.67, "duration": "forever",
+     "name": "Lojalitet 16.67% rabatt (årlig)"},
 ]
 
 
