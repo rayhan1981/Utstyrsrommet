@@ -22,6 +22,11 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-12 – Lagsportal fanetittel + domene-separasjon
+- `PortalApp.jsx` setter `document.title = "Portal Utstyrsrommet"` via useEffect ved mount; gjenopprettes ved unmount (nullrisiko for klubbappens egen tittel).
+- Verifisert: Lagsportal viser «Portal Utstyrsrommet», klubbappen viser fortsatt «UTSTYRSROMMET».
+- Domene: `App.js` sin `isPortalHost()` håndterer allerede `portal.*`-hostnames – ingen kodeendring nødvendig for `portal.utstyrsrommet.no`. Krever kun CNAME + custom-domain i Emergent deploy etter deploy.
+
 ### 2026-10-12 – Lagspålogginger: Rediger, Slett og Admin-Sett-Passord
 - Backend: `TeamPortalAccountUpdateIn` utvidet med `email` + `team_id`. PUT håndterer unikhets-sjekk + bytter `team_name` ved laglytting.
 - Nytt endepunkt `DELETE /api/team-portal/accounts/{aid}` – permanent sletting, aktivitetslogg.

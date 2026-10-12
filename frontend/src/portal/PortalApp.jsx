@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import PortalLogin from "./PortalLogin";
@@ -13,8 +13,17 @@ import PortalNeedsList from "./PortalNeedsList";
  * Egen rutetre for lagsportal.utstyrsrommet.no.
  * Serveres samme bygg som klubbappen, men hovednivået detekterer hostname
  * (`portal.*`) eller path-prefix `/portal` og rendrer dette komponenten.
+ *
+ * Så lenge Lagsportalen er montert settes dokumenttittelen til «Portal Utstyrsrommet»
+ * (uavhengig av om vi er på portal.utstyrsrommet.no eller preview-fallbacken).
  */
 export default function PortalApp() {
+  useEffect(() => {
+    const prev = document.title;
+    document.title = "Portal Utstyrsrommet";
+    return () => { document.title = prev; };
+  }, []);
+
   return (
     <>
       <Routes>
