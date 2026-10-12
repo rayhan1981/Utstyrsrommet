@@ -6435,6 +6435,12 @@ class TeamPortalAccountUpdateIn(BaseModel):
     active: Optional[bool] = None
     display_name: Optional[str] = None
     phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    team_id: Optional[str] = None
+
+
+class TeamPortalAdminSetPasswordIn(BaseModel):
+    password: str
 
 
 def _redact_portal_account(acc: dict) -> dict:
@@ -6525,12 +6531,62 @@ async def update_team_portal_account(aid: str, data: TeamPortalAccountUpdateIn, 
     if data.active is not None: patch["active"] = bool(data.active)
     if data.display_name is not None: patch["display_name"] = data.display_name.strip()
     if data.phone is not None: patch["phone"] = data.phone.strip()
+    if data.email is not None:
+        new_email = data.email.strip().lower()
+        if new_email != acc["email"]:
+            # Unikhet innenfor klubben
+            dupe = await db.team_portal_accounts.find_one(
+                {"tenant_id": tid, "email": new_email, "id": {"$ne": aid}}
+            )
+            if dupe:
+                raise HTTPException(400, "En annen lagspålogging bruker allerede denne e-postadressen i klubben")
+            patch["email"] = new_email
+    if data.team_id is not None and data.team_id != acc["team_id"]:
+        team = await db.teams.find_one({"id": data.team_id, "tenant_id": tid}, {"_id": 0, "id": 1, "team_name": 1})
+        if not team:
+            raise HTTPException(404, "Laget finnes ikke i din klubb")
+        patch["team_id"] = data.team_id
+        patch["team_name"] = team.get("team_name")
     if patch:
         await db.team_portal_accounts.update_one({"id": aid, "tenant_id": tid}, {"$set": patch})
     updated = await db.team_portal_accounts.find_one({"id": aid, "tenant_id": tid}, {"_id": 0})
     await _log_activity(tid, user, "team_portal_account_updated",
                          f"Oppdaterte lagspålogging {updated.get('email')}", {"account_id": aid, "patch": patch})
     return _redact_portal_account(updated)
+
+
+@api.delete("/team-portal/accounts/{aid}")
+async def delete_team_portal_account(aid: str, request: Request, user=Depends(require_perm("teams", "admin"))):
+    tid = await require_tenant(request, user)
+    await _require_tenant_deluxe_portal(tid)
+    acc = await db.team_portal_accounts.find_one({"id": aid, "tenant_id": tid}, {"_id": 0})
+    if not acc:
+        raise HTTPException(404, "Kontoen finnes ikke")
+    await db.team_portal_accounts.delete_one({"id": aid, "tenant_id": tid})
+    await _log_activity(tid, user, "team_portal_account_deleted",
+                         f"Slettet lagspålogging {acc.get('email')}",
+                         {"account_id": aid, "team_id": acc.get("team_id"), "email": acc.get("email")})
+    return {"ok": True}
+
+
+@api.post("/team-portal/accounts/{aid}/set-password")
+async def admin_set_portal_password(aid: str, data: TeamPortalAdminSetPasswordIn, request: Request, user=Depends(require_perm("teams", "admin"))):
+    """Admin setter manuelt et nytt passord på en lagspålogging. Fjerner samtidig evt. åpen invitasjons-token."""
+    tid = await require_tenant(request, user)
+    await _require_tenant_deluxe_portal(tid)
+    acc = await db.team_portal_accounts.find_one({"id": aid, "tenant_id": tid}, {"_id": 0})
+    if not acc:
+        raise HTTPException(404, "Kontoen finnes ikke")
+    if len(data.password) < 8:
+        raise HTTPException(400, "Passord må være minst 8 tegn")
+    await db.team_portal_accounts.update_one(
+        {"id": aid, "tenant_id": tid},
+        {"$set": {"password_hash": hash_password(data.password), "reset_token": None, "reset_token_expires": None}},
+    )
+    await _log_activity(tid, user, "team_portal_account_password_set",
+                         f"Satte nytt passord manuelt for {acc.get('email')}",
+                         {"account_id": aid})
+    return {"ok": True}
 
 
 @api.post("/team-portal/accounts/{aid}/resend-invite")

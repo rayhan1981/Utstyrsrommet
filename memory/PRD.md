@@ -22,6 +22,13 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-12 – Lagspålogginger: Rediger, Slett og Admin-Sett-Passord
+- Backend: `TeamPortalAccountUpdateIn` utvidet med `email` + `team_id`. PUT håndterer unikhets-sjekk + bytter `team_name` ved laglytting.
+- Nytt endepunkt `DELETE /api/team-portal/accounts/{aid}` – permanent sletting, aktivitetslogg.
+- Nytt endepunkt `POST /api/team-portal/accounts/{aid}/set-password` – admin setter manuelt passord (min 8 tegn), fjerner evt. åpen invitasjon.
+- Frontend `TeamPortalAccounts.jsx`: Blyant (Rediger), Nøkkel (Sett passord), Søppelbøtte (Slett) – alle krever `teams.admin`.
+- Verifisert: edit basic/email/team_id, duplicate-email → 400, admin-set-password → login med nytt passord virker, delete → login 401, idempotent delete → 404.
+
 ### 2026-10-12 – Lagsportal klubb-branding
 - `GET /api/portal/auth/me` returnerer nå `club.logo_url` i tillegg til `club.name`.
 - Nytt public endpoint `GET /api/portal/branding?token=<invite>` lar «sett passord»-siden vise klubbens logo+navn før konto er aktiv.

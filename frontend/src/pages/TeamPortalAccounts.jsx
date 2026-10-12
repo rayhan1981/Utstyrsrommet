@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Send, UserX, CheckCircle2, Clock, AlertCircle, Copy, Link as LinkIcon } from "lucide-react";
+import { Plus, Send, UserX, CheckCircle2, Clock, AlertCircle, Copy, Link as LinkIcon, Pencil, Trash2, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 
@@ -23,6 +23,20 @@ export default function TeamPortalAccounts() {
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [inviteDialog, setInviteDialog] = useState(null); // {link, email}
+
+  // Redigering + sett-passord + slett
+  const [editAcc, setEditAcc] = useState(null); // acc currently being edited
+  const [editForm, setEditForm] = useState(EMPTY);
+  const [editSaving, setEditSaving] = useState(false);
+
+  const [pwAcc, setPwAcc] = useState(null); // acc whose password admin is setting
+  const [pwForm, setPwForm] = useState({ password: "", password2: "" });
+  const [pwSaving, setPwSaving] = useState(false);
+
+  const [deleteAcc, setDeleteAcc] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const canAdmin = hasPerm("teams", "admin");
 
   const load = async () => {
     try {
@@ -79,6 +93,58 @@ export default function TeamPortalAccounts() {
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
+  // --- Rediger ---
+  const openEdit = (acc) => {
+    setEditAcc(acc);
+    setEditForm({ team_id: acc.team_id, email: acc.email, display_name: acc.display_name || "", phone: acc.phone || "" });
+  };
+  const saveEdit = async () => {
+    if (!editForm.team_id || !editForm.email.trim()) {
+      toast.error("Lag og e-post er påkrevd"); return;
+    }
+    setEditSaving(true);
+    try {
+      await api.put(`/team-portal/accounts/${editAcc.id}`, editForm);
+      toast.success("Lagret");
+      setEditAcc(null);
+      load();
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail));
+    } finally { setEditSaving(false); }
+  };
+
+  // --- Sett passord ---
+  const openSetPassword = (acc) => {
+    setPwAcc(acc);
+    setPwForm({ password: "", password2: "" });
+  };
+  const saveSetPassword = async () => {
+    if (pwForm.password.length < 8) { toast.error("Passord må være minst 8 tegn"); return; }
+    if (pwForm.password !== pwForm.password2) { toast.error("Passordene er ikke like"); return; }
+    setPwSaving(true);
+    try {
+      await api.post(`/team-portal/accounts/${pwAcc.id}/set-password`, { password: pwForm.password });
+      toast.success(`Nytt passord satt for ${pwAcc.email}`);
+      setPwAcc(null);
+      load();
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail));
+    } finally { setPwSaving(false); }
+  };
+
+  // --- Slett ---
+  const confirmDelete = async () => {
+    setDeleting(true);
+    try {
+      await api.delete(`/team-portal/accounts/${deleteAcc.id}`);
+      toast.success(`${deleteAcc.email} slettet`);
+      setDeleteAcc(null);
+      load();
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail));
+    } finally { setDeleting(false); }
+  };
+
   const teamName = (tid) => teams.find((t) => t.id === tid)?.team_name || "(ukjent lag)";
 
   if (!portalStatus.active) {
@@ -110,7 +176,7 @@ export default function TeamPortalAccounts() {
             Administrer tilganger til lagsportalen (portal.utstyrsrommet.no). En konto er bundet til ett spesifikt lag.
           </p>
         </div>
-        {hasPerm("teams", "admin") && (
+        {canAdmin && (
           <Button onClick={openNew} className="bg-red-900 hover:bg-red-800" data-testid="new-portal-account-btn">
             <Plus className="h-4 w-4 mr-2" />Ny lagspålogging
           </Button>
@@ -160,10 +226,25 @@ export default function TeamPortalAccounts() {
                 <TableCell className="text-xs text-slate-500">{a.last_login_at ? new Date(a.last_login_at).toLocaleString("nb-NO") : "–"}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end items-center gap-1">
+                    {canAdmin && (
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(a)} title="Rediger informasjon" data-testid={`edit-${a.id}`}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {canAdmin && (
+                      <Button variant="ghost" size="sm" onClick={() => openSetPassword(a)} title="Sett nytt passord manuelt" data-testid={`setpw-${a.id}`}>
+                        <KeyRound className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" onClick={() => resendInvite(a)} title="Send ny invitasjon" data-testid={`resend-${a.id}`}>
                       <Send className="h-3.5 w-3.5" />
                     </Button>
                     <Switch checked={a.active} onCheckedChange={() => toggleActive(a)} data-testid={`toggle-${a.id}`} />
+                    {canAdmin && (
+                      <Button variant="ghost" size="sm" onClick={() => setDeleteAcc(a)} title="Slett lagspålogging" className="text-red-700 hover:text-red-900 hover:bg-red-50" data-testid={`delete-${a.id}`}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>
@@ -172,6 +253,7 @@ export default function TeamPortalAccounts() {
         </Table>
       </Card>
 
+      {/* Ny lagspålogging */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -210,6 +292,98 @@ export default function TeamPortalAccounts() {
         </DialogContent>
       </Dialog>
 
+      {/* Rediger lagspålogging */}
+      <Dialog open={!!editAcc} onOpenChange={(o) => !o && setEditAcc(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rediger lagspålogging</DialogTitle>
+            <DialogDescription>Endre lag, e-post, navn eller telefon. Endringene gjelder umiddelbart.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Lag *</Label>
+              <Select value={editForm.team_id} onValueChange={(v) => setEditForm({ ...editForm, team_id: v })}>
+                <SelectTrigger data-testid="edit-portal-team"><SelectValue placeholder="Velg lag" /></SelectTrigger>
+                <SelectContent>
+                  {teams.map((t) => <SelectItem key={t.id} value={t.id}>{t.team_name}{t.age_class ? ` (${t.age_class})` : ""}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>E-postadresse *</Label>
+              <Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} data-testid="edit-portal-email" />
+              <p className="text-xs text-slate-500 mt-1">Lagleder bruker denne e-posten for å logge inn på lagsportalen.</p>
+            </div>
+            <div>
+              <Label>Visningsnavn</Label>
+              <Input value={editForm.display_name} onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })} data-testid="edit-portal-name" />
+            </div>
+            <div>
+              <Label>Telefon</Label>
+              <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} data-testid="edit-portal-phone" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditAcc(null)}>Avbryt</Button>
+            <Button onClick={saveEdit} disabled={editSaving} className="bg-red-900 hover:bg-red-800" data-testid="save-edit-portal-account">
+              {editSaving ? "Lagrer…" : "Lagre endringer"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sett passord manuelt */}
+      <Dialog open={!!pwAcc} onOpenChange={(o) => !o && setPwAcc(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5" />Sett nytt passord</DialogTitle>
+            <DialogDescription>
+              Setter manuelt et nytt passord for <strong>{pwAcc?.email}</strong>. Lagleder vil kunne logge inn med dette passordet
+              umiddelbart. Eventuell åpen invitasjonslenke blir ugyldig.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Nytt passord (minst 8 tegn)</Label>
+              <Input type="password" value={pwForm.password} onChange={(e) => setPwForm({ ...pwForm, password: e.target.value })} data-testid="admin-setpw-input" />
+            </div>
+            <div>
+              <Label>Gjenta passord</Label>
+              <Input type="password" value={pwForm.password2} onChange={(e) => setPwForm({ ...pwForm, password2: e.target.value })} data-testid="admin-setpw-input2" />
+            </div>
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-2">
+              Husk å dele det nye passordet trygt med lagleder (f.eks. SMS). Vi lagrer kun hash – vi kan ikke vise passordet senere.
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPwAcc(null)}>Avbryt</Button>
+            <Button onClick={saveSetPassword} disabled={pwSaving} className="bg-red-900 hover:bg-red-800" data-testid="save-admin-setpw">
+              {pwSaving ? "Lagrer…" : "Lagre passord"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Slett lagspålogging */}
+      <Dialog open={!!deleteAcc} onOpenChange={(o) => !o && setDeleteAcc(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-800"><Trash2 className="h-5 w-5" />Slett lagspålogging</DialogTitle>
+            <DialogDescription>
+              Dette fjerner tilgangen for <strong>{deleteAcc?.email}</strong> permanent. Behovsmeldinger som allerede er sendt
+              inn forblir hos klubben. Denne handlingen kan ikke angres.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteAcc(null)}>Avbryt</Button>
+            <Button onClick={confirmDelete} disabled={deleting} className="bg-red-700 hover:bg-red-800" data-testid="confirm-delete-portal-account">
+              {deleting ? "Sletter…" : "Slett permanent"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invitasjonslenke-dialog */}
       <Dialog open={!!inviteDialog} onOpenChange={(o) => !o && setInviteDialog(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
