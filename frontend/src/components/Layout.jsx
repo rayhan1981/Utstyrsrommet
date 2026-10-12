@@ -30,6 +30,8 @@ const PRIMARY_NAV = [
 const CLUB_NAV = [
   { to: "/app/lag", label: "Lag", icon: UsersIcon, module: "teams", feature: null },
   { to: "/app/personer", label: "Personer", icon: UserCircle, module: "people", feature: null },
+  { to: "/app/lagspalogginger", label: "Lagspålogginger", icon: ShieldCheck, module: "teams", feature: null },
+  { to: "/app/innmeldte-behov", label: "Innmeldte behov", icon: ClipboardList, module: "teams", feature: null },
   { to: "/app/innstillinger", label: "Klubb (logo/info)", icon: Settings, module: "settings", feature: "settings" },
 ];
 

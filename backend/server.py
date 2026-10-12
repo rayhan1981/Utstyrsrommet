@@ -90,7 +90,8 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "stock_audit": True, "excel_export": True, "excel_import": True,
         "logo_upload": True, "settings": True, "allow_user_addon": True,
         "qr_codes": True, "product_images": True,
-        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "Produktbilder", "QR-koder for utstyr", "Prioritert support"],
+        "team_portal": True,  # Lagsportal (portal.utstyrsrommet.no) kun for Deluxe
+        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "Produktbilder", "QR-koder for utstyr", "Lagsportal (portal.utstyrsrommet.no)", "Prioritert support"],
     },
 }
 
@@ -6296,8 +6297,6 @@ async def team_purchase_history(team_id: str, request: Request, user=Depends(req
 # Må være etter at `api` er definert, før `app.include_router(api)`.
 from routers import taxonomy_admin  # noqa: F401 (import for side effect: registers routes)
 
-app.include_router(api)
-
 app.add_middleware(
     CORSMiddleware, allow_credentials=True, allow_origins=["*"],
     allow_methods=["*"], allow_headers=["*"], expose_headers=["*"],
@@ -6344,3 +6343,653 @@ async def migrate_full_numbers_on_startup():
             logger.info(f"Backfilled main_item_number + full_number på {updated} varer")
     except Exception as e:
         logger.exception(f"Full-number migrering feilet: {e}")
+
+
+# =====================================================================
+# LAGSPORTAL (TEAM PORTAL) - portal.utstyrsrommet.no
+# =====================================================================
+# Fase 1: Admin-opprettede lagspålogginger, portal auth, dashboard, behovsmelding-innsending
+# Deluxe-plan gatet serverside. Egen JWT-token-type (claim: typ=portal).
+
+PORTAL_JWT_TYP = "portal"
+PORTAL_TOKEN_TTL_HOURS = 12
+
+
+def _create_portal_token(account_id: str, tenant_id: str, team_id: str) -> str:
+    payload = {
+        "sub": account_id,
+        "typ": PORTAL_JWT_TYP,
+        "tid": tenant_id,
+        "team": team_id,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=PORTAL_TOKEN_TTL_HOURS),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def _tenant_has_team_portal(tenant_id: str) -> bool:
+    """Serverside Deluxe-gate for lagsportalen. True hvis klubbens plan (inkl. aktiv prøveperiode) har team_portal."""
+    if not tenant_id:
+        return False
+    try:
+        plan = await get_tenant_plan(tenant_id)
+        return bool(plan.get("team_portal"))
+    except Exception:
+        return False
+
+
+async def _require_tenant_deluxe_portal(tenant_id: str):
+    """Kaster 402 hvis klubbens aktive plan ikke inkluderer lagsportalen."""
+    if not await _tenant_has_team_portal(tenant_id):
+        raise HTTPException(status_code=402, detail="Lagsportalen krever et aktivt Deluxe-abonnement.")
+
+
+async def get_portal_account(request: Request) -> dict:
+    """Dependency – autentiser lagsportal-konto via egen JWT. Verifiserer Deluxe hver forespørsel."""
+    token = request.cookies.get("portal_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Ikke innlogget til lagsportalen")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Lagsportal-token utløpt")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Ugyldig lagsportal-token")
+    if payload.get("typ") != PORTAL_JWT_TYP:
+        raise HTTPException(status_code=401, detail="Ikke en lagsportal-sesjon")
+    acc = await db.team_portal_accounts.find_one(
+        {"id": payload["sub"], "tenant_id": payload["tid"], "team_id": payload["team"]},
+        {"_id": 0, "password_hash": 0, "reset_token": 0, "reset_token_expires": 0},
+    )
+    if not acc:
+        raise HTTPException(status_code=401, detail="Konto ikke funnet")
+    if not acc.get("active"):
+        raise HTTPException(status_code=403, detail="Kontoen er deaktivert av klubben")
+    # Håndhev Deluxe hver gang: hvis klubbens plan er nedgradert, blokker umiddelbart.
+    if not await _tenant_has_team_portal(acc["tenant_id"]):
+        raise HTTPException(status_code=402, detail="Klubbens portaltilgang er ikke aktiv. Kontakt klubbens administrator.")
+    # Verifiser kundens overordnede status
+    cust = await db.customers.find_one({"id": acc["tenant_id"]}, {"status": 1, "deleted_at": 1})
+    if not cust or cust.get("deleted_at") or cust.get("status") == "inactive":
+        raise HTTPException(status_code=403, detail="Klubbens konto er ikke aktiv")
+    # Verifiser laget eksisterer
+    team = await db.teams.find_one({"id": acc["team_id"], "tenant_id": acc["tenant_id"]}, {"_id": 0, "id": 1, "team_name": 1, "age_class": 1})
+    if not team:
+        raise HTTPException(status_code=403, detail="Laget er fjernet")
+    acc["_team"] = team
+    return acc
+
+
+# -------------- Admin-opprettelse av lagspålogginger --------------
+class TeamPortalAccountIn(BaseModel):
+    team_id: str
+    email: EmailStr
+    display_name: Optional[str] = ""
+    phone: Optional[str] = ""
+
+
+class TeamPortalAccountUpdateIn(BaseModel):
+    active: Optional[bool] = None
+    display_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+def _redact_portal_account(acc: dict) -> dict:
+    return {
+        "id": acc["id"],
+        "tenant_id": acc["tenant_id"],
+        "team_id": acc["team_id"],
+        "email": acc["email"],
+        "display_name": acc.get("display_name") or "",
+        "phone": acc.get("phone") or "",
+        "active": bool(acc.get("active", True)),
+        "created_at": acc.get("created_at"),
+        "last_login_at": acc.get("last_login_at"),
+        "has_set_password": bool(acc.get("password_hash")),
+        "pending_invite": bool(acc.get("reset_token") and not acc.get("password_hash")),
+    }
+
+
+@api.get("/team-portal/accounts")
+async def list_team_portal_accounts(request: Request, user=Depends(require_perm("teams", "read"))):
+    tid = await require_tenant(request, user)
+    await _require_tenant_deluxe_portal(tid)
+    accs = await db.team_portal_accounts.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [_redact_portal_account(a) for a in accs]
+
+
+@api.post("/team-portal/accounts")
+async def create_team_portal_account(data: TeamPortalAccountIn, request: Request, user=Depends(require_perm("teams", "admin"))):
+    tid = await require_tenant(request, user)
+    await _require_tenant_deluxe_portal(tid)
+    team = await db.teams.find_one({"id": data.team_id, "tenant_id": tid}, {"_id": 0, "id": 1, "team_name": 1})
+    if not team:
+        raise HTTPException(404, "Laget finnes ikke i din klubb")
+    email = data.email.strip().lower()
+    # Unik på tvers av egen klubb; samme e-post kan brukes i andre klubber uten konflikt (men ikke 2 aktive for samme bruker-mail i samme klubb)
+    existing = await db.team_portal_accounts.find_one({"tenant_id": tid, "email": email})
+    if existing:
+        raise HTTPException(400, "En lagspålogging med denne e-postadressen finnes allerede i klubben")
+    # Et lag kan ha flere kontoer koblet til seg (trener + lagleder), men ikke to AKTIVE kontoer med samme e-post.
+    reset_token = pysecrets.token_urlsafe(32)
+    doc = {
+        "id": new_id(),
+        "tenant_id": tid,
+        "team_id": data.team_id,
+        "team_name": team.get("team_name"),
+        "email": email,
+        "display_name": (data.display_name or "").strip(),
+        "phone": (data.phone or "").strip(),
+        "password_hash": None,
+        "active": True,
+        "reset_token": reset_token,
+        "reset_token_expires": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+        "last_login_at": None,
+    }
+    await db.team_portal_accounts.insert_one(doc)
+    await _log_activity(tid, user, "team_portal_account_created",
+                         f"Opprettet lagspålogging for {team.get('team_name')} ({email})",
+                         {"account_id": doc["id"], "team_id": data.team_id})
+    # Send invitasjon
+    portal_url = os.environ.get("PORTAL_URL", "https://portal.utstyrsrommet.no")
+    invite_link = f"{portal_url}/sett-passord?token={reset_token}"
+    club = await db.customers.find_one({"id": tid}, {"_id": 0, "club_name": 1}) or {}
+    club_name = club.get("club_name") or "klubben"
+    html = (
+        f"<p>Hei {doc['display_name'] or email},</p>"
+        f"<p>Du er invitert til lagsportalen for <strong>{club_name}</strong> som kontakt for laget <strong>{team.get('team_name')}</strong>.</p>"
+        f"<p>Klikk under for å sette et passord og logge inn (lenken er gyldig i 7 dager):</p>"
+        f"<p><a href=\"{invite_link}\">{invite_link}</a></p>"
+        f"<p>Mvh<br/>{club_name}</p>"
+    )
+    try:
+        await send_tenant_email(tid, email, f"Velkommen til lagsportalen – {club_name}", html, sender_user=user)
+    except Exception:
+        logger.exception("Kunne ikke sende lagsportal-invitasjon")
+    return _redact_portal_account(doc) | {"invite_link": invite_link}
+
+
+@api.put("/team-portal/accounts/{aid}")
+async def update_team_portal_account(aid: str, data: TeamPortalAccountUpdateIn, request: Request, user=Depends(require_perm("teams", "admin"))):
+    tid = await require_tenant(request, user)
+    await _require_tenant_deluxe_portal(tid)
+    acc = await db.team_portal_accounts.find_one({"id": aid, "tenant_id": tid}, {"_id": 0})
+    if not acc:
+        raise HTTPException(404, "Kontoen finnes ikke")
+    patch: Dict[str, Any] = {}
+    if data.active is not None: patch["active"] = bool(data.active)
+    if data.display_name is not None: patch["display_name"] = data.display_name.strip()
+    if data.phone is not None: patch["phone"] = data.phone.strip()
+    if patch:
+        await db.team_portal_accounts.update_one({"id": aid, "tenant_id": tid}, {"$set": patch})
+    updated = await db.team_portal_accounts.find_one({"id": aid, "tenant_id": tid}, {"_id": 0})
+    await _log_activity(tid, user, "team_portal_account_updated",
+                         f"Oppdaterte lagspålogging {updated.get('email')}", {"account_id": aid, "patch": patch})
+    return _redact_portal_account(updated)
+
+
+@api.post("/team-portal/accounts/{aid}/resend-invite")
+async def resend_portal_invite(aid: str, request: Request, user=Depends(require_perm("teams", "admin"))):
+    tid = await require_tenant(request, user)
+    await _require_tenant_deluxe_portal(tid)
+    acc = await db.team_portal_accounts.find_one({"id": aid, "tenant_id": tid}, {"_id": 0})
+    if not acc:
+        raise HTTPException(404, "Kontoen finnes ikke")
+    reset_token = pysecrets.token_urlsafe(32)
+    await db.team_portal_accounts.update_one(
+        {"id": aid, "tenant_id": tid},
+        {"$set": {"reset_token": reset_token, "reset_token_expires": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(), "password_hash": None}},
+    )
+    portal_url = os.environ.get("PORTAL_URL", "https://portal.utstyrsrommet.no")
+    invite_link = f"{portal_url}/sett-passord?token={reset_token}"
+    club = await db.customers.find_one({"id": tid}, {"_id": 0, "club_name": 1}) or {}
+    club_name = club.get("club_name") or "klubben"
+    html = (
+        f"<p>Hei {acc.get('display_name') or acc.get('email')},</p>"
+        f"<p>Her er en ny invitasjon til lagsportalen for <strong>{club_name}</strong>.</p>"
+        f"<p>Klikk under for å sette et passord og logge inn (gyldig i 7 dager):</p>"
+        f"<p><a href=\"{invite_link}\">{invite_link}</a></p>"
+    )
+    try:
+        await send_tenant_email(tid, acc["email"], f"Lagsportal – ny invitasjon ({club_name})", html, sender_user=user)
+    except Exception:
+        logger.exception("Kunne ikke sende ny invitasjon")
+    return {"ok": True, "invite_link": invite_link}
+
+
+# -------------- Portal auth --------------
+class PortalLoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class PortalSetPasswordIn(BaseModel):
+    token: str
+    password: str
+
+
+@api.post("/portal/auth/set-password")
+async def portal_set_password(data: PortalSetPasswordIn, response: Response):
+    """Førstegangs-passordsetting (eller tilbakestilling) basert på engangs-token sendt per epost."""
+    if len(data.password) < 8:
+        raise HTTPException(400, "Passord må være minst 8 tegn")
+    acc = await db.team_portal_accounts.find_one({"reset_token": data.token}, {"_id": 0})
+    if not acc:
+        raise HTTPException(400, "Ugyldig eller brukt invitasjon")
+    exp = acc.get("reset_token_expires")
+    if not exp or datetime.fromisoformat(exp) < datetime.now(timezone.utc):
+        raise HTTPException(400, "Invitasjonen er utløpt. Be klubben om en ny.")
+    if not acc.get("active"):
+        raise HTTPException(403, "Kontoen er deaktivert")
+    # Verifiser at klubben har Deluxe
+    await _require_tenant_deluxe_portal(acc["tenant_id"])
+    await db.team_portal_accounts.update_one(
+        {"id": acc["id"]},
+        {"$set": {"password_hash": hash_password(data.password), "reset_token": None, "reset_token_expires": None}},
+    )
+    token = _create_portal_token(acc["id"], acc["tenant_id"], acc["team_id"])
+    response.set_cookie("portal_token", token, httponly=True, samesite="lax", secure=True,
+                        max_age=PORTAL_TOKEN_TTL_HOURS * 3600, path="/")
+    return {"ok": True, "token": token}
+
+
+@api.post("/portal/auth/login")
+async def portal_login(data: PortalLoginIn, response: Response):
+    email = data.email.strip().lower()
+    acc = await db.team_portal_accounts.find_one({"email": email}, {"_id": 0})
+    if not acc or not acc.get("password_hash") or not verify_password(data.password, acc["password_hash"]):
+        raise HTTPException(401, "Feil e-post eller passord")
+    if not acc.get("active"):
+        raise HTTPException(403, "Kontoen er deaktivert av klubben. Kontakt klubbens administrator.")
+    await _require_tenant_deluxe_portal(acc["tenant_id"])
+    await db.team_portal_accounts.update_one({"id": acc["id"]}, {"$set": {"last_login_at": now_iso()}})
+    token = _create_portal_token(acc["id"], acc["tenant_id"], acc["team_id"])
+    response.set_cookie("portal_token", token, httponly=True, samesite="lax", secure=True,
+                        max_age=PORTAL_TOKEN_TTL_HOURS * 3600, path="/")
+    return {"ok": True, "token": token}
+
+
+@api.post("/portal/auth/logout")
+async def portal_logout(response: Response):
+    response.delete_cookie("portal_token", path="/")
+    return {"ok": True}
+
+
+@api.get("/portal/auth/me")
+async def portal_me(acc=Depends(get_portal_account)):
+    club = await db.customers.find_one({"id": acc["tenant_id"]}, {"_id": 0, "club_name": 1}) or {}
+    team = acc["_team"]
+    return {
+        "account": _redact_portal_account(acc),
+        "team": {"id": team["id"], "name": team.get("team_name"), "age_class": team.get("age_class")},
+        "club": {"name": club.get("club_name") or "Klubben"},
+    }
+
+
+# -------------- Portal: dashboard-data --------------
+@api.get("/portal/dashboard")
+async def portal_dashboard(acc=Depends(get_portal_account)):
+    tid = acc["tenant_id"]
+    team_id = acc["team_id"]
+    # Lån og utleveringer tilhørende dette laget
+    loans = await db.loans.find({"tenant_id": tid, "team_id": team_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # Debt-beregning: aktive lån med returned_at = None
+    now = datetime.now(timezone.utc)
+    today_iso = now.date().isoformat()
+    debt = 0.0
+    overdue_lines = []
+    active_loans = []
+    handouts = []
+    for l in loans:
+        mode = (l.get("mode") or "loan").lower()
+        qty = int(l.get("quantity") or 0)
+        returned = int(l.get("returned_quantity") or 0)
+        outstanding = max(0, qty - returned)
+        if mode == "loan":
+            if outstanding > 0:
+                active_loans.append(l)
+                debt += float(l.get("amount_owed") or 0)
+                due = l.get("due_date") or ""
+                if due and due[:10] < today_iso:
+                    overdue_lines.append({"loan_id": l["id"], "item_name": l.get("item_name"), "size": l.get("size"),
+                                           "quantity": outstanding, "due_date": due})
+        else:
+            handouts.append(l)
+    # Needs tilhørende laget
+    needs = await db.needs_requests.find({"tenant_id": tid, "team_id": team_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {
+        "team": {"id": team_id, "name": acc["_team"].get("team_name"), "age_class": acc["_team"].get("age_class")},
+        "active_loans": [
+            {"id": l["id"], "item_name": l.get("item_name"), "size": l.get("size"),
+             "jersey_number": l.get("jersey_number"), "full_number": l.get("full_number"),
+             "quantity": int(l.get("quantity") or 0) - int(l.get("returned_quantity") or 0),
+             "unit_price": l.get("unit_price"), "amount_owed": l.get("amount_owed"),
+             "due_date": l.get("due_date"), "loan_date": l.get("loan_date") or l.get("created_at")}
+            for l in active_loans
+        ],
+        "handouts": [
+            {"id": l["id"], "item_name": l.get("item_name"), "size": l.get("size"),
+             "full_number": l.get("full_number"),
+             "quantity": int(l.get("quantity") or 0),
+             "handout_date": l.get("loan_date") or l.get("created_at")}
+            for l in handouts
+        ],
+        "overdue": overdue_lines,
+        "debt": round(debt, 2),
+        "needs": [_portal_needs_summary(n) for n in needs],
+    }
+
+
+def _portal_needs_summary(n: dict) -> dict:
+    return {
+        "id": n["id"],
+        "number": n.get("number"),
+        "status": n.get("status"),
+        "status_label": _needs_status_label(n.get("status")),
+        "wanted_date": n.get("wanted_date"),
+        "contact_name": n.get("contact_name"),
+        "created_at": n.get("created_at"),
+        "last_update_at": n.get("last_update_at") or n.get("created_at"),
+        "lines_count": len(n.get("lines") or []),
+    }
+
+
+def _needs_status_label(status: str) -> str:
+    return {
+        "sendt": "Sendt",
+        "under_behandling": "Under behandling",
+        "behandlet_ma_bestilles": "Behandlet – må bestilles",
+        "behandlet_dellevering": "Behandlet – Dellevering",
+        "kan_leveres_omgaende": "Kan leveres omgående",
+        "avsluttet": "Avsluttet",
+        "trukket_tilbake": "Trukket tilbake",
+    }.get(status or "", "Ukjent")
+
+
+# -------------- Portal: varesøk uten lagerdata --------------
+@api.get("/portal/items")
+async def portal_items(acc=Depends(get_portal_account), q: Optional[str] = None):
+    tid = acc["tenant_id"]
+    filt: Dict[str, Any] = {"tenant_id": tid}
+    if q:
+        filt["$or"] = [
+            {"name": {"$regex": re.escape(q), "$options": "i"}},
+            {"main_item_number": {"$regex": re.escape(q), "$options": "i"}},
+            {"category": {"$regex": re.escape(q), "$options": "i"}},
+            {"main_group": {"$regex": re.escape(q), "$options": "i"}},
+            {"sub_group": {"$regex": re.escape(q), "$options": "i"}},
+        ]
+    items = await db.items.find(filt, {
+        "_id": 0, "id": 1, "name": 1, "main_item_number": 1,
+        "category": 1, "main_group": 1, "sub_group": 1,
+        "is_clothing": 1, "is_ball": 1,
+        # NB: ingen quantity/lagerfelter! Vi lekker aldri beholdning til portalen.
+        "sizes": 1,
+    }).sort([("category", 1), ("main_group", 1), ("sub_group", 1), ("name", 1)]).to_list(2000)
+    # Fjern quantity fra sizes før vi returnerer
+    for it in items:
+        safe_sizes = []
+        for s in (it.get("sizes") or []):
+            safe_sizes.append({
+                "size": s.get("size"),
+                "jersey_number": s.get("jersey_number"),
+                "full_number": s.get("full_number"),
+                # BEVISST utelatt: quantity, location, has_qr
+            })
+        it["sizes"] = safe_sizes
+    return items
+
+
+# -------------- Portal: behovsmeldinger --------------
+class PortalNeedLineIn(BaseModel):
+    item_id: str
+    size: Optional[str] = ""
+    jersey_number: Optional[str] = ""
+    quantity_requested: int
+    note: Optional[str] = ""
+
+
+class PortalNeedCreateIn(BaseModel):
+    contact_name: str
+    contact_phone: str
+    contact_email: EmailStr
+    wanted_date: str  # ISO date (YYYY-MM-DD) i Europe/Oslo
+    lines: List[PortalNeedLineIn]
+    comment: Optional[str] = ""
+
+
+async def _next_needs_request_number(tid: str) -> str:
+    """BM<klubbkundenr><5-sifret-sekvens>-YY. Bruker atomic counter for å unngå kollisjoner."""
+    yr = datetime.now(timezone.utc).strftime("%y")
+    key = f"needs_{tid}_{yr}"
+    doc = await db.counters.find_one_and_update(
+        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True
+    )
+    seq = doc.get("seq", 1) if doc else 1
+    return f"BM{seq:05d}-{yr}"
+
+
+@api.get("/portal/needs")
+async def portal_list_needs(acc=Depends(get_portal_account)):
+    needs = await db.needs_requests.find(
+        {"tenant_id": acc["tenant_id"], "team_id": acc["team_id"]},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(300)
+    return [_portal_needs_summary(n) for n in needs]
+
+
+@api.get("/portal/needs/{nid}")
+async def portal_get_need(nid: str, acc=Depends(get_portal_account)):
+    n = await db.needs_requests.find_one(
+        {"id": nid, "tenant_id": acc["tenant_id"], "team_id": acc["team_id"]},
+        {"_id": 0, "internal_notes": 0, "assigned_to": 0, "assigned_to_name": 0},
+    )
+    if not n:
+        raise HTTPException(404, "Behovsmelding finnes ikke")
+    n["status_label"] = _needs_status_label(n.get("status"))
+    return n
+
+
+@api.post("/portal/needs")
+async def portal_create_need(data: PortalNeedCreateIn, request: Request, acc=Depends(get_portal_account)):
+    tid = acc["tenant_id"]; team_id = acc["team_id"]
+    # 3-dagers-regel: ønsket dato må være minst 3 kalenderdager etter innsending (Europe/Oslo)
+    try:
+        wanted = datetime.strptime(data.wanted_date, "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(400, "Ugyldig ønsket dato. Bruk formatet ÅÅÅÅ-MM-DD.")
+    # Europe/Oslo dato "nå"
+    try:
+        import zoneinfo
+        oslo = zoneinfo.ZoneInfo("Europe/Oslo")
+        today_oslo = datetime.now(oslo).date()
+    except Exception:
+        today_oslo = datetime.now(timezone.utc).date()
+    min_date = today_oslo + timedelta(days=3)
+    if wanted < min_date:
+        raise HTTPException(400, f"Ønsket dato må være minst {min_date.isoformat()} (tre kalenderdager etter innsending).")
+    if not data.lines or len(data.lines) == 0:
+        raise HTTPException(400, "Legg til minst én varelinje.")
+    # Verifiser at alle varer finnes i klubben + bygg linje-snapshot
+    item_ids = list({ln.item_id for ln in data.lines if ln.item_id})
+    items = await db.items.find({"tenant_id": tid, "id": {"$in": item_ids}}, {"_id": 0}).to_list(500)
+    by_id = {it["id"]: it for it in items}
+    lines = []
+    for ln in data.lines:
+        it = by_id.get(ln.item_id)
+        if not it:
+            raise HTTPException(400, f"Ukjent vare ({ln.item_id})")
+        if not isinstance(ln.quantity_requested, int) or ln.quantity_requested <= 0:
+            raise HTTPException(400, f"Antall må være et positivt heltall for {it.get('name')}")
+        # Finn full_number for valgt variant
+        full_number = it.get("main_item_number") or it.get("full_number") or ""
+        if ln.size:
+            s_entry = next((s for s in (it.get("sizes") or []) if s.get("size") == ln.size), None)
+            if s_entry:
+                full_number = s_entry.get("full_number") or _compute_full_number(full_number, ln.size, s_entry.get("jersey_number"))
+        lines.append({
+            "id": new_id(),
+            "item_id": ln.item_id,
+            "item_name": it.get("name"),
+            "size": ln.size or "",
+            "jersey_number": ln.jersey_number or "",
+            "full_number": full_number,
+            "category": it.get("category") or "",
+            "main_group": it.get("main_group") or "",
+            "sub_group": it.get("sub_group") or "",
+            "note": (ln.note or "").strip(),
+            "quantity_requested": int(ln.quantity_requested),
+            # Behandlede antall – fylles inn senere i Fase 2
+            "quantity_approved": 0,
+            "quantity_immediate": 0,
+            "quantity_to_order": 0,
+            "quantity_handed_out": 0,
+            "quantity_loaned": 0,
+            "quantity_rejected": 0,
+            "quantity_discontinued": 0,
+            "line_status": "sendt",
+            "line_status_history": [],
+        })
+    number = await _next_needs_request_number(tid)
+    team_doc = await db.teams.find_one({"id": team_id, "tenant_id": tid}, {"_id": 0, "team_name": 1, "age_class": 1}) or {}
+    now_s = now_iso()
+    doc = {
+        "id": new_id(),
+        "number": number,
+        "tenant_id": tid,
+        "team_id": team_id,
+        "team_name": team_doc.get("team_name") or acc["_team"].get("team_name"),
+        "age_class": team_doc.get("age_class") or acc["_team"].get("age_class"),
+        "contact_name": data.contact_name.strip(),
+        "contact_phone": data.contact_phone.strip(),
+        "contact_email": data.contact_email.strip().lower(),
+        "wanted_date": data.wanted_date,
+        "comment": (data.comment or "").strip(),
+        "lines": lines,
+        "status": "sendt",
+        "source": "portal",
+        "submitted_by_account_id": acc["id"],
+        "created_at": now_s,
+        "last_update_at": now_s,
+        "started_processing_at": None,
+        "started_processing_by": None,
+        "started_processing_by_name": None,
+        "closed_at": None,
+        "closed_by": None,
+        "status_history": [{"status": "sendt", "at": now_s, "by": acc.get("email"), "by_type": "portal"}],
+        "notifications": {"new_need_email_sent": False, "new_need_email_error": None},
+    }
+    await db.needs_requests.insert_one(doc)
+    # Opprett in-app-varsel til klubbens brukere (ulest i sidemenyen)
+    try:
+        club_users = await db.users.find({"tenant_id": tid, "active": True}, {"_id": 0, "id": 1}).to_list(100)
+        for u in club_users:
+            await db.notifications.insert_one({
+                "id": new_id(),
+                "tenant_id": tid,
+                "user_id": u["id"],
+                "kind": "needs_request_new",
+                "title": f"Ny behovsmelding fra {doc['team_name']}",
+                "message": f"{data.contact_name} meldte inn {len(lines)} varelinjer med ønsket dato {data.wanted_date} ({number}).",
+                "link": f"/app/innmeldte-behov/{doc['id']}",
+                "read": False,
+                "created_at": now_s,
+            })
+    except Exception:
+        logger.exception("Kunne ikke opprette in-app varsler for ny behovsmelding")
+    # Fase 2 TODO: Send e-post til aktive brukere i klubben.
+    doc.pop("_id", None)
+    doc["status_label"] = _needs_status_label(doc["status"])
+    return doc
+
+
+@api.post("/portal/needs/{nid}/withdraw")
+async def portal_withdraw_need(nid: str, acc=Depends(get_portal_account)):
+    n = await db.needs_requests.find_one({"id": nid, "tenant_id": acc["tenant_id"], "team_id": acc["team_id"]}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Behovsmelding finnes ikke")
+    if n.get("status") != "sendt":
+        raise HTTPException(400, "Behovsmeldingen kan ikke trekkes tilbake etter at klubben har startet behandlingen. Kontakt klubben.")
+    now_s = now_iso()
+    await db.needs_requests.update_one(
+        {"id": nid, "tenant_id": acc["tenant_id"]},
+        {
+            "$set": {"status": "trukket_tilbake", "last_update_at": now_s, "withdrawn_at": now_s},
+            "$push": {"status_history": {"status": "trukket_tilbake", "at": now_s, "by": acc.get("email"), "by_type": "portal"}},
+        },
+    )
+    return {"ok": True}
+
+
+# -------------- Klubbside: innmeldte behov (ren liste + start behandling) --------------
+@api.get("/needs-requests")
+async def list_needs_requests(request: Request, user=Depends(require_perm("teams", "read")), team_id: Optional[str] = None, status: Optional[str] = None):
+    tid = await require_tenant(request, user)
+    q: Dict[str, Any] = {"tenant_id": tid}
+    if team_id: q["team_id"] = team_id
+    if status: q["status"] = status
+    rows = await db.needs_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for r in rows:
+        r["status_label"] = _needs_status_label(r.get("status"))
+    return rows
+
+
+@api.get("/needs-requests/{nid}")
+async def get_needs_request(nid: str, request: Request, user=Depends(require_perm("teams", "read"))):
+    tid = await require_tenant(request, user)
+    n = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Behovsmelding finnes ikke")
+    n["status_label"] = _needs_status_label(n.get("status"))
+    return n
+
+
+@api.post("/needs-requests/{nid}/start-processing")
+async def start_processing_need(nid: str, request: Request, user=Depends(require_perm("teams", "write"))):
+    """Klubbside «Start Behandling»-knapp. Idempotent: andre klikk gir 400 med klar beskjed."""
+    tid = await require_tenant(request, user)
+    n = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Behovsmelding finnes ikke")
+    if n.get("status") != "sendt":
+        raise HTTPException(400, f"Behandlingen er allerede startet av {n.get('started_processing_by_name') or 'en annen bruker'} ({_needs_status_label(n.get('status'))}).")
+    now_s = now_iso()
+    await db.needs_requests.update_one(
+        {"id": nid, "tenant_id": tid, "status": "sendt"},  # optimistisk lås på status
+        {
+            "$set": {
+                "status": "under_behandling",
+                "started_processing_at": now_s,
+                "started_processing_by": user.get("id"),
+                "started_processing_by_name": user.get("name") or user.get("email"),
+                "last_update_at": now_s,
+            },
+            "$push": {"status_history": {"status": "under_behandling", "at": now_s, "by": user.get("email"), "by_type": "club"}},
+        },
+    )
+    await _log_activity(tid, user, "needs_start_processing", f"Startet behandling av {n.get('number')}", {"needs_id": nid})
+    updated = await db.needs_requests.find_one({"id": nid, "tenant_id": tid}, {"_id": 0})
+    updated["status_label"] = _needs_status_label(updated.get("status"))
+    return updated
+
+
+# -------------- Klubbside: er lagsportalen aktiv (brukes av UI) --------------
+@api.get("/team-portal/status")
+async def team_portal_status(request: Request, user=Depends(get_current_user)):
+    tid = await resolve_tenant_id(request, user)
+    if not tid:
+        return {"active": False, "plan": None}
+    plan = await get_tenant_plan(tid)
+    return {"active": bool(plan.get("team_portal")), "plan": plan.get("key")}
+
+
+
+# IMPORTANT: `app.include_router(api)` MUST be the last line in this file.
+# FastAPI registrerer kun ruter som er dekoretert PÅ api-routeren FØR include_router kalles.
+# Hvis denne flyttes opp, blir alle endepunkter definert under den (som Lagsportal) 404.
+app.include_router(api)

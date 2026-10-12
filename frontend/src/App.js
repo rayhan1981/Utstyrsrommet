@@ -26,13 +26,36 @@ import Leverandorer from "@/pages/Leverandorer";
 import Bestillinger from "@/pages/Bestillinger";
 import Behov from "@/pages/Behov";
 import Terms from "@/pages/Terms";
+import TeamPortalAccounts from "@/pages/TeamPortalAccounts";
+import NeedsRequests from "@/pages/NeedsRequests";
+import PortalApp from "@/portal/PortalApp";
 import { Toaster } from "sonner";
 
+// Hostname-basert routing: portal.utstyrsrommet.no (prod) eller /portal/* (preview) rendrer lagsportalen.
+function isPortalHost() {
+  if (typeof window === "undefined") return false;
+  const h = (window.location.hostname || "").toLowerCase();
+  if (h.startsWith("portal.")) return true;
+  // Preview-fallback: tillat ?portal=1 for lokal testing
+  if (window.location.search.includes("portal=1")) return true;
+  return false;
+}
+
 function App() {
+  // På portal-hostname rendrer vi KUN portal-rutetreet (ingen klubbapp)
+  if (isPortalHost()) {
+    return (
+      <BrowserRouter>
+        <PortalApp />
+      </BrowserRouter>
+    );
+  }
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* Preview-tilgjengelig portal under /portal/* (prod bruker eget subdomene) */}
+          <Route path="/portal/*" element={<PortalApp />} />
           <Route path="/" element={<Landing />} />
           <Route path="/innlogging" element={<Login />} />
           <Route path="/registrer" element={<Signup />} />
@@ -55,6 +78,9 @@ function App() {
             <Route path="leverandorer" element={<ProtectedRoute module="inventory"><Leverandorer /></ProtectedRoute>} />
             <Route path="bestillinger" element={<ProtectedRoute module="teams"><Bestillinger /></ProtectedRoute>} />
             <Route path="behov" element={<ProtectedRoute module="teams"><Behov /></ProtectedRoute>} />
+            <Route path="innmeldte-behov" element={<ProtectedRoute module="teams"><NeedsRequests /></ProtectedRoute>} />
+            <Route path="innmeldte-behov/:id" element={<ProtectedRoute module="teams"><NeedsRequests /></ProtectedRoute>} />
+            <Route path="lagspalogginger" element={<ProtectedRoute module="teams"><TeamPortalAccounts /></ProtectedRoute>} />
             <Route path="hjelpesenter" element={<HelpCenter />} />
           </Route>
           <Route path="/eier" element={<Navigate to="/app/kunder" replace />} />
