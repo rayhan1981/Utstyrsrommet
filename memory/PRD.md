@@ -22,6 +22,13 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-12 – Produksjonsdeploy + custom domains (support-håndtert)
+- Deploy sendt via emergent__send_to_deployer. Build grønn.
+- Custom domains håndteres manuelt av Emergent support (UI-flyten støtter kun ett domene per deploy):
+  - `www.utstyrsrommet.no` → Klubbappen
+  - `portal.utstyrsrommet.no` → Lagsportalen (hostname-detektert i App.js via `isPortalHost()`)
+- Begge domener peker til samme deploy / samme build. Ingen kodeendring kreves – `isPortalHost()` i `frontend/src/App.js` splitter trafikken basert på hostnavn.
+
 ### 2026-10-12 – GET /items/{item_id} + Skann QR-fiks
 - Lagt til `GET /api/items/{item_id}` i server.py (etter `/items/taxonomy` og `/items/import/template` for å unngå shadowing). Beskyttet med `require_perm("inventory","read")`, tenant-scopet lookup.
 - Fikser Skann QR-siden (`Scan.jsx:67`) som tidligere feilet med «Ukjent QR-kode – vare ikke funnet» pga. 405.
