@@ -352,7 +352,7 @@ export default function NeedsRequests() {
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-bold">Innmeldte behov (lagsportal)</h1>
-      <p className="text-sm text-slate-500">Behovsmeldinger innsendt via portal.utstyrsrommet.no.</p>
+      <p className="text-sm text-slate-500">Behovsmeldinger innsendt via utstyrsrommet.no/portal.</p>
       <Card className="p-0 overflow-hidden">
         {list.length === 0 ? (
           <div className="text-center text-slate-500 py-8">Ingen innmeldte behov.</div>

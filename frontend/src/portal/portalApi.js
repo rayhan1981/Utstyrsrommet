@@ -2,7 +2,7 @@ import axios from "axios";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 
-// Egen axios-instans for portal.utstyrsrommet.no – isolert fra klubbappens api.
+// Egen axios-instans for lagsportalen (utstyrsrommet.no/portal) – isolert fra klubbappens api.
 export const portalApi = axios.create({
   baseURL: `${BASE}/api/portal`,
   withCredentials: true,

@@ -90,8 +90,8 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "stock_audit": True, "excel_export": True, "excel_import": True,
         "logo_upload": True, "settings": True, "allow_user_addon": True,
         "qr_codes": True, "product_images": True,
-        "team_portal": True,  # Lagsportal (portal.utstyrsrommet.no) kun for Deluxe
-        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "Produktbilder", "QR-koder for utstyr", "Lagsportal (portal.utstyrsrommet.no)", "Prioritert support"],
+        "team_portal": True,  # Lagsportal (utstyrsrommet.no/portal) kun for Deluxe
+        "features": ["Alt i Pro", "Ubegrenset lag", "5 ekstra brukere inkludert", "Kjøp flere brukere for 199,-/mnd", "Excel-import m/mal", "Klubbinnstillinger + logo", "Produktbilder", "QR-koder for utstyr", "Lagsportal (utstyrsrommet.no/portal)", "Prioritert support"],
     },
 }
 
@@ -6357,7 +6357,7 @@ async def migrate_full_numbers_on_startup():
 
 
 # =====================================================================
-# LAGSPORTAL (TEAM PORTAL) - portal.utstyrsrommet.no
+# LAGSPORTAL (TEAM PORTAL) - utstyrsrommet.no/portal
 # =====================================================================
 # Fase 1: Admin-opprettede lagspålogginger, portal auth, dashboard, behovsmelding-innsending
 # Deluxe-plan gatet serverside. Egen JWT-token-type (claim: typ=portal).
@@ -6513,7 +6513,7 @@ async def create_team_portal_account(data: TeamPortalAccountIn, request: Request
                          f"Opprettet lagspålogging for {team.get('team_name')} ({email})",
                          {"account_id": doc["id"], "team_id": data.team_id})
     # Send invitasjon
-    portal_url = os.environ.get("PORTAL_URL", "https://portal.utstyrsrommet.no")
+    portal_url = os.environ.get("APP_URL", "https://utstyrsrommet.no").rstrip("/") + "/portal"
     invite_link = f"{portal_url}/sett-passord?token={reset_token}"
     club = await db.customers.find_one({"id": tid}, {"_id": 0, "club_name": 1}) or {}
     club_name = club.get("club_name") or "klubben"
@@ -6612,7 +6612,7 @@ async def resend_portal_invite(aid: str, request: Request, user=Depends(require_
         {"id": aid, "tenant_id": tid},
         {"$set": {"reset_token": reset_token, "reset_token_expires": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(), "password_hash": None}},
     )
-    portal_url = os.environ.get("PORTAL_URL", "https://portal.utstyrsrommet.no")
+    portal_url = os.environ.get("APP_URL", "https://utstyrsrommet.no").rstrip("/") + "/portal"
     invite_link = f"{portal_url}/sett-passord?token={reset_token}"
     club = await db.customers.find_one({"id": tid}, {"_id": 0, "club_name": 1}) or {}
     club_name = club.get("club_name") or "klubben"

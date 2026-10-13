@@ -22,6 +22,14 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-13 – Alternativ B: Path-basert Lagsportal (`/portal/*`)
+- Emergent plattform støtter kun ett custom domain per deploy – forkastet subdomene-planen.
+- `App.js` oppdatert med `detectPortalContext()` som gir `basename="/portal"` når path starter med `/portal`. Portalen monteres helt uten klubbappens AuthProvider og egen BrowserRouter.
+- Backend invite-URL endret fra `PORTAL_URL` env-var til `APP_URL + "/portal/sett-passord"` i to call sites. `PORTAL_URL` env-var brukes ikke lenger.
+- All UI-tekst og kommentarer oppdatert fra `portal.utstyrsrommet.no` → `utstyrsrommet.no/portal` (PortalLogin, portalApi, PortalApp, NeedsRequests, TeamPortalAccounts, server.py plan-features).
+- Verifisert: `/portal/innlogging` renderer portalen, login navigerer korrekt til `/portal`, fanetittel «Portal Utstyrsrommet» bevares, klubbapp uendret på `/` og `/app/*`.
+- `?portal=1` preview-fallback beholdt for bakoverkompatibilitet.
+
 ### 2026-10-12 – Produksjonsdeploy + custom domains (support-håndtert)
 - Deploy sendt via emergent__send_to_deployer. Build grønn.
 - Custom domains håndteres manuelt av Emergent support (UI-flyten støtter kun ett domene per deploy):

@@ -155,7 +155,7 @@ export default function TeamPortalAccounts() {
           <div>
             <h2 className="text-lg font-bold text-amber-900">Lagsportal krever Deluxe</h2>
             <p className="text-sm text-slate-700 mt-1">
-              Lagsportalen (portal.utstyrsrommet.no) er kun tilgjengelig for klubber med aktiv Deluxe-plan.
+              Lagsportalen (utstyrsrommet.no/portal) er kun tilgjengelig for klubber med aktiv Deluxe-plan.
               Oppgrader abonnementet under <strong>Abonnement</strong> for å opprette lagspålogginger.
             </p>
             <p className="text-xs text-slate-500 mt-2">
@@ -173,7 +173,7 @@ export default function TeamPortalAccounts() {
         <div>
           <h1 className="text-2xl font-bold">Lagspålogginger</h1>
           <p className="text-sm text-slate-500">
-            Administrer tilganger til lagsportalen (portal.utstyrsrommet.no). En konto er bundet til ett spesifikt lag.
+            Administrer tilganger til lagsportalen (utstyrsrommet.no/portal). En konto er bundet til ett spesifikt lag.
           </p>
         </div>
         {canAdmin && (

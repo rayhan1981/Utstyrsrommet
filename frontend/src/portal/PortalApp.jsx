@@ -10,12 +10,11 @@ import PortalNeedsDetail from "./PortalNeedsDetail";
 import PortalNeedsList from "./PortalNeedsList";
 
 /**
- * Egen rutetre for lagsportal.utstyrsrommet.no.
- * Serveres samme bygg som klubbappen, men hovednivået detekterer hostname
- * (`portal.*`) eller path-prefix `/portal` og rendrer dette komponenten.
+ * Egen rutetre for lagsportalen (utstyrsrommet.no/portal).
+ * Serveres samme bygg som klubbappen, men hovednivået detekterer path-prefix
+ * `/portal` og rendrer dette komponenten.
  *
- * Så lenge Lagsportalen er montert settes dokumenttittelen til «Portal Utstyrsrommet»
- * (uavhengig av om vi er på portal.utstyrsrommet.no eller preview-fallbacken).
+ * Så lenge Lagsportalen er montert settes dokumenttittelen til «Portal Utstyrsrommet».
  */
 export default function PortalApp() {
   useEffect(() => {

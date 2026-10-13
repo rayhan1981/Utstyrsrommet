@@ -44,7 +44,7 @@ export default function PortalLogin() {
             <ShieldAlert className="h-4 w-4 text-amber-300" />
             LAGSPORTAL
           </div>
-          <p className="text-xs text-slate-500 mt-2">UTSTYRSROMMET · portal.utstyrsrommet.no</p>
+          <p className="text-xs text-slate-500 mt-2">UTSTYRSROMMET · utstyrsrommet.no/portal</p>
           <p className="text-xs text-slate-400 mt-1 italic">Logg inn med e-posten klubben din har registrert.</p>
         </div>
         <form onSubmit={submit} className="space-y-4">

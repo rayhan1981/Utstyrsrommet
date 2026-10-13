@@ -31,21 +31,25 @@ import NeedsRequests from "@/pages/NeedsRequests";
 import PortalApp from "@/portal/PortalApp";
 import { Toaster } from "sonner";
 
-// Hostname-basert routing: portal.utstyrsrommet.no (prod) eller /portal/* (preview) rendrer lagsportalen.
-function isPortalHost() {
-  if (typeof window === "undefined") return false;
-  const h = (window.location.hostname || "").toLowerCase();
-  if (h.startsWith("portal.")) return true;
-  // Preview-fallback: tillat ?portal=1 for lokal testing
-  if (window.location.search.includes("portal=1")) return true;
-  return false;
+// Portal-kontekst: aktiveres av `/portal/*`-path (produksjon), `portal.*`-hostname
+// (hvis plattformen senere støtter flere domener), eller `?portal=1` (preview-fallback).
+function detectPortalContext() {
+  if (typeof window === "undefined") return { portal: false, basename: "" };
+  const host = (window.location.hostname || "").toLowerCase();
+  const path = window.location.pathname || "";
+  const search = window.location.search || "";
+  if (host.startsWith("portal.")) return { portal: true, basename: "" };
+  if (path === "/portal" || path.startsWith("/portal/")) return { portal: true, basename: "/portal" };
+  if (search.includes("portal=1")) return { portal: true, basename: "" };
+  return { portal: false, basename: "" };
 }
 
 function App() {
-  // På portal-hostname rendrer vi KUN portal-rutetreet (ingen klubbapp)
-  if (isPortalHost()) {
+  const ctx = detectPortalContext();
+  // Lagsportalen monteres helt uten klubbappens AuthProvider / routes.
+  if (ctx.portal) {
     return (
-      <BrowserRouter>
+      <BrowserRouter basename={ctx.basename}>
         <PortalApp />
       </BrowserRouter>
     );
@@ -54,8 +58,6 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Preview-tilgjengelig portal under /portal/* (prod bruker eget subdomene) */}
-          <Route path="/portal/*" element={<PortalApp />} />
           <Route path="/" element={<Landing />} />
           <Route path="/innlogging" element={<Login />} />
           <Route path="/registrer" element={<Signup />} />
