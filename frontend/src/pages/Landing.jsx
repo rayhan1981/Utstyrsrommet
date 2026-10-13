@@ -47,22 +47,35 @@ export default function Landing() {
             </div>
           </div>
           {user ? (
-            <Button
-              className="bg-transparent border border-red-500 text-red-500 hover:bg-red-500/10 hover:text-red-400"
-              onClick={() => nav("/app")}
-              data-testid="go-app-btn"
-            >
-              Åpne app
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                className="bg-transparent border border-red-500 text-red-500 hover:bg-red-500/10 hover:text-red-400"
+                onClick={() => nav("/app")}
+                data-testid="go-app-btn"
+              >
+                Åpne app
+              </Button>
+            </div>
           ) : (
-            <Button
-              variant="outline"
-              className="bg-transparent border border-red-500 text-red-500 hover:bg-red-500/10 hover:text-red-400"
-              onClick={() => nav("/innlogging")}
-              data-testid="header-login"
-            >
-              Logg inn
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap justify-center">
+              <Button
+                variant="outline"
+                className="bg-transparent border border-red-500 text-red-500 hover:bg-red-500/10 hover:text-red-400"
+                onClick={() => nav("/innlogging")}
+                data-testid="header-login"
+              >
+                Klubb-innlogging
+              </Button>
+              <Button
+                variant="outline"
+                className="bg-transparent border border-amber-400 text-amber-300 hover:bg-amber-500/10 hover:text-amber-200"
+                onClick={() => (window.location.href = "/portal/innlogging")}
+                data-testid="header-portal-login"
+                title="Kun for lag i klubber med Klubb Deluxe-abonnement"
+              >
+                Lagsportal (Lag)
+              </Button>
+            </div>
           )}
         </div>
       </header>

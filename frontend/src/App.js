@@ -64,7 +64,7 @@ function App() {
           <Route path="/sett-passord" element={<SetPassword />} />
           <Route path="/vilkar" element={<Terms />} />
           <Route path="/abonnement/suksess" element={<SubscriptionSuccess />} />
-          <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+          <Route path="/app" element={<ProtectedRoute needsTenant={false}><Layout /></ProtectedRoute>}>
             <Route index element={<Dashboard />} />
             <Route path="lag" element={<ProtectedRoute module="teams"><Teams /></ProtectedRoute>} />
             <Route path="personer" element={<ProtectedRoute module="people"><People /></ProtectedRoute>} />
@@ -74,7 +74,7 @@ function App() {
             <Route path="brukere" element={<ProtectedRoute module="users"><Users /></ProtectedRoute>} />
             <Route path="innstillinger" element={<ProtectedRoute module="settings" feature="settings"><Settings /></ProtectedRoute>} />
             <Route path="abonnement" element={<Subscription />} />
-            <Route path="kunder" element={<ProtectedRoute ownerOnly><OwnerPanel /></ProtectedRoute>} />
+            <Route path="kunder" element={<ProtectedRoute ownerOnly needsTenant={false}><OwnerPanel /></ProtectedRoute>} />
             <Route path="skann" element={<ProtectedRoute module="loans" feature="qr_codes"><Scan /></ProtectedRoute>} />
             <Route path="varemottak" element={<ProtectedRoute module="inventory"><Varemottak /></ProtectedRoute>} />
             <Route path="leverandorer" element={<ProtectedRoute module="inventory"><Leverandorer /></ProtectedRoute>} />

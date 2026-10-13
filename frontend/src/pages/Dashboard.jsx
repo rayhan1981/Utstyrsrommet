@@ -7,6 +7,7 @@ import { Package, ArrowLeftRight, Users as UsersIcon, UserCircle, TrendingUp, Al
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import TrialDashboardCard from "@/components/TrialDashboardCard";
+import OwnerStandaloneDashboard from "@/pages/OwnerStandaloneDashboard";
 
 function Stat({ icon: Icon, label, value, color = "emerald", testid }) {
   return (
@@ -41,20 +42,25 @@ function NavTile({ icon: Icon, title, subtitle, to, testid }) {
 }
 
 export default function Dashboard() {
-  const { customer, plan } = useAuth();
+  const { user, customer, plan, tenantId, impersonating } = useAuth();
   const [stats, setStats] = useState(null);
   const [activity, setActivity] = useState([]);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [clubLogo, setClubLogo] = useState("");
 
+  const isOwnerStandalone = user?.role === "platform_owner" && !impersonating && !tenantId;
+
   useEffect(() => {
+    if (isOwnerStandalone) return;  // skip tenant-scoped calls for standalone owner
     api.get("/dashboard/stats").then((r) => setStats(r.data)).catch(() => {});
     api.get("/activity-log", { params: { limit: 10 } }).then((r) => setActivity(r.data)).catch(() => {});
     api.get("/clubs").then((r) => {
       const first = (r.data || [])[0];
       if (first?.logo_url) setClubLogo(first.logo_url);
     }).catch(() => {});
-  }, []);
+  }, [isOwnerStandalone]);
+
+  if (isOwnerStandalone) return <OwnerStandaloneDashboard />;
 
   const loadAllActivity = async () => {
     try {

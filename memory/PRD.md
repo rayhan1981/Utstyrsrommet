@@ -22,6 +22,19 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-13 – Plattformeier: Standalone + Felt-overstyring + Hard delete + Landing-split
+- **Standalone owner**: `resolve_tenant_id` returnerer `None` for platform_owner uten `imp_cid`. `/clubs` returnerer `[]`. Dashboard-komponent viser ny **OwnerStandaloneDashboard** (crown-logo, kundestatistikk, siste 5 kunder, soft-delete-teller).
+- **Field override** (`POST /api/owner/field-override`): Krever platform_owner + aktiv impersonering. Allow-list for samlinger (customers, users, people, items, loans, teams, orders, invoices, needs_requests, varemottak, suppliers, clubs, team_portal_accounts, stock_counts, notifications, activity_log). Blokkerer `_id`, `password_hash`, `tenant_id`. Loggføres i activity_log med gammel/ny verdi. Cross-tenant endringer gir 403.
+- **Raw doc** (`GET /api/owner/raw/{coll}/{id}`): Henter rått dokument for inspeksjon.
+- **Hard delete** (`DELETE /api/owner/customers/{cid}/hard-delete`): Krever `confirm_name` matcher club_name eksakt. Blokkerer `is_owner_workspace`. Sletter 18 tenant-scopede samlinger pluss customer-record. Loggføres som WARNING.
+- **Frontend**:
+  - `App.js`: `/app` og `/app/kunder` → `needsTenant={false}` for å unngå redirect-loop.
+  - `Dashboard.jsx`: Early-return → OwnerStandaloneDashboard når owner har `!tenantId`.
+  - `Landing.jsx`: To tydelige login-knapper – «Klubb-innlogging» (rød) og «Lagsportal (Lag)» (gul). Tooltip opplyser at Lagsportal krever Klubb Deluxe.
+  - `OwnerPanel.jsx`: Ny **Avansert**-fane med 18 felt-overstyringer (customer_number, trial_ends_at, stripe_customer_id m.m.). Blyant kun synlig under impersonering. Ny **Permanent slett**-knapp med «skriv klubbnavn»-bekreftelse.
+  - `OwnerFieldOverride.jsx`: Reusable inline-edit med crown-ikon, kun synlig for owner+impersonering.
+- **E2E-testet**: 10+ sikkerhetsscenarier grønne (standalone, blokkerte felter, cross-tenant, forbudt collection, feil bekreftelsesnavn, dobbel-sletting idempotens, cascade-sletting av 4+ collections).
+
 ### 2026-10-13 – Alternativ B: Path-basert Lagsportal (`/portal/*`)
 - Emergent plattform støtter kun ett custom domain per deploy – forkastet subdomene-planen.
 - `App.js` oppdatert med `detectPortalContext()` som gir `basename="/portal"` når path starter med `/portal`. Portalen monteres helt uten klubbappens AuthProvider og egen BrowserRouter.

@@ -183,15 +183,19 @@ async def get_current_user(request: Request) -> dict:
 
 
 async def resolve_tenant_id(request: Request, user: dict) -> Optional[str]:
-    """Return current tenant_id based on user and impersonation cookie."""
+    """Return current tenant_id based on user and impersonation cookie.
+
+    Platform-eier er standalone og ikke knyttet til noen klubb. Når platform-eier
+    ikke impersonerer en kunde returneres None – da vises OwnerStandaloneDashboard
+    og alle tenant-scopede endepunkter må enten returnere tomt eller 400.
+    """
     if user.get("role") == "platform_owner":
         imp = request.cookies.get("imp_cid")
         if imp:
             cust = await db.customers.find_one({"id": imp})
             if cust:
                 return cust["id"]
-        # Fall back to owner's own workspace tenant
-        return user.get("tenant_id")
+        return None  # Platform-eier uten impersonering = ingen klubbkontekst
     return user.get("tenant_id")
 
 
@@ -1879,6 +1883,146 @@ async def owner_delete_tenant_item(customer_id: str, item_id: str, user=Depends(
     return {"ok": True}
 
 
+# ---------------- Platform Owner: Field-Level Override (impersonering kreves) ----------------
+# Allow-list of collections platform-eier kan overstyre felter i. Innenfor hver samling kan
+# alle felter overstyres UNNTATT de i FORBIDDEN_FIELDS (sikkerhet) OG tenant_id-feltet
+# (ville kunne lekke dokumentet til feil klubb).
+OWNER_OVERRIDE_COLLECTIONS = {
+    "customers",
+    "users", "people", "items", "loans", "teams",
+    "orders", "invoices", "needs_requests", "varemottak",
+    "suppliers", "clubs", "team_portal_accounts",
+    "stock_counts", "notifications", "activity_log",
+}
+OWNER_OVERRIDE_FORBIDDEN_FIELDS = {"_id", "password_hash", "tenant_id"}
+
+
+class OwnerFieldOverrideIn(BaseModel):
+    collection: str
+    document_id: str
+    field: str
+    # Verdi kan være null, string, number, bool. Nøstede objekter støttes IKKE for sikkerhets skyld.
+    value: Any = None
+
+
+class OwnerHardDeleteIn(BaseModel):
+    confirm_name: str
+
+
+async def _assert_impersonating(request: Request, user: dict) -> str:
+    """Krever at platform-eier impersonerer en kunde. Returnerer den impersonerte tenant_id-en."""
+    if user.get("role") != "platform_owner":
+        raise HTTPException(403, "Kun plattformeier")
+    imp = request.cookies.get("imp_cid")
+    if not imp:
+        raise HTTPException(400, "Felt-overstyring krever at du har 'logget inn som' en kunde først.")
+    cust = await db.customers.find_one({"id": imp}, {"_id": 0, "id": 1, "is_owner_workspace": 1})
+    if not cust:
+        raise HTTPException(404, "Impersonert kunde finnes ikke")
+    return imp
+
+
+@api.post("/owner/field-override")
+async def owner_field_override(data: OwnerFieldOverrideIn, request: Request, user=Depends(require_platform_owner)):
+    """Universell felt-editor: lar plattformeier overstyre ethvert felt på ethvert dokument
+    i den impersonerte kundens tenant. KAN KUN brukes mens impersonering er aktiv.
+    Alle endringer logges i activity_log for sporing."""
+    tid = await _assert_impersonating(request, user)
+    coll = data.collection.strip().lower()
+    if coll not in OWNER_OVERRIDE_COLLECTIONS:
+        raise HTTPException(400, f"Samlingen '{coll}' er ikke tillatt for overstyring.")
+    field = (data.field or "").strip()
+    if not field:
+        raise HTTPException(400, "Felt må være satt")
+    if field in OWNER_OVERRIDE_FORBIDDEN_FIELDS or field.startswith("$") or field.startswith("_"):
+        raise HTTPException(400, f"Feltet '{field}' kan ikke overstyres (reservert).")
+    # Finn eksisterende dokument. For 'customers'-samlingen er document_id == tenant_id.
+    if coll == "customers":
+        if data.document_id != tid:
+            raise HTTPException(403, "Du kan kun endre den impersonerte kundens egen record.")
+        existing = await db.customers.find_one({"id": data.document_id}, {"_id": 0})
+        if not existing:
+            raise HTTPException(404, "Kunden finnes ikke")
+        if existing.get("is_owner_workspace"):
+            raise HTTPException(400, "Kan ikke overstyre felter på plattformeiers eget arbeidsområde.")
+    else:
+        existing = await db[coll].find_one({"id": data.document_id, "tenant_id": tid}, {"_id": 0})
+        if not existing:
+            raise HTTPException(404, f"Dokument finnes ikke i den impersonerte kundens '{coll}'.")
+    old_val = existing.get(field)
+    # Spesialbehandling: tomme strenger → None for datoer, dette unngår feil fra ISO-parsing videre
+    new_val = data.value
+    if isinstance(new_val, str) and new_val.strip() == "":
+        new_val = None
+    # Oppdater
+    match = {"id": data.document_id} if coll == "customers" else {"id": data.document_id, "tenant_id": tid}
+    if new_val is None:
+        await db[coll].update_one(match, {"$unset": {field: ""}})
+    else:
+        await db[coll].update_one(match, {"$set": {field: new_val}})
+    # Logg
+    await _log_activity(tid, user, "owner_field_override",
+                        f"Overstyrte felt '{field}' i {coll}/{data.document_id}",
+                        {"collection": coll, "document_id": data.document_id, "field": field,
+                         "old_value": old_val, "new_value": new_val})
+    updated = await db[coll].find_one(match, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "document": updated, "field": field, "old_value": old_val, "new_value": new_val}
+
+
+@api.get("/owner/raw/{collection}/{document_id}")
+async def owner_raw_doc(collection: str, document_id: str, request: Request, user=Depends(require_platform_owner)):
+    """Henter rått dokument fra impersonert kundes tenant. Brukes av Avansert-fanen for å
+    vise ALLE felter (også de som normalt er skjult i UI)."""
+    tid = await _assert_impersonating(request, user)
+    coll = collection.strip().lower()
+    if coll not in OWNER_OVERRIDE_COLLECTIONS:
+        raise HTTPException(400, f"Samlingen '{coll}' er ikke tillatt.")
+    if coll == "customers":
+        if document_id != tid:
+            raise HTTPException(403, "Du kan kun lese den impersonerte kundens egen record.")
+        doc = await db.customers.find_one({"id": document_id}, {"_id": 0})
+    else:
+        doc = await db[coll].find_one({"id": document_id, "tenant_id": tid}, {"_id": 0, "password_hash": 0})
+    if not doc:
+        raise HTTPException(404, "Dokument finnes ikke")
+    return doc
+
+
+@api.delete("/owner/customers/{customer_id}/hard-delete")
+async def owner_hard_delete_customer(customer_id: str, data: OwnerHardDeleteIn, user=Depends(require_platform_owner)):
+    """IRREVERSIBEL sletting av kunde + alle tenant-scopede dokumenter.
+    Krever at `confirm_name` matcher kundens club_name eksakt.
+    Blokkeres på plattformeiers eget arbeidsområde."""
+    cust = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    if not cust:
+        raise HTTPException(404, "Kunde finnes ikke")
+    if cust.get("is_owner_workspace"):
+        raise HTTPException(400, "Kan ikke permanent-slette plattformeiers eget arbeidsområde.")
+    expected = (cust.get("club_name") or "").strip()
+    if (data.confirm_name or "").strip() != expected:
+        raise HTTPException(400, f"Bekreftelsesnavn stemmer ikke. Skriv eksakt: '{expected}'.")
+    # Samle alle collections å slette i. Alt som har tenant_id-indeks i startup pluss et par til.
+    tenant_scoped_collections = [
+        "users", "teams", "people", "items", "loans", "clubs", "stock_counts",
+        "orders", "invoices", "needs_requests", "varemottak", "suppliers",
+        "team_portal_accounts", "notifications", "activity_log", "invitations",
+        "login_history", "subscription_events", "stock_count_lines",
+    ]
+    report: Dict[str, int] = {}
+    for coll in tenant_scoped_collections:
+        try:
+            res = await db[coll].delete_many({"tenant_id": customer_id})
+            if res.deleted_count:
+                report[coll] = res.deleted_count
+        except Exception:
+            logger.exception(f"Hard delete {coll} feilet for tenant {customer_id}")
+    # Til slutt kundens egen record
+    await db.customers.delete_one({"id": customer_id})
+    report["customers"] = 1
+    logger.warning(f"HARD DELETE av kunde {customer_id} ({expected}) av {user.get('email')}: {report}")
+    return {"ok": True, "club_name": expected, "deleted": report}
+
+
 # ---------------- Invitations / Set password ----------------
 @api.get("/auth/invitation/{token}")
 async def check_invitation(token: str):
@@ -2171,7 +2315,9 @@ async def resend_invite(user_id: str, request: Request, admin=Depends(require_ad
 # ---------------- Clubs ----------------
 @api.get("/clubs")
 async def list_clubs(request: Request, user=Depends(get_current_user)):
-    tid = await require_tenant(request, user)
+    tid = await resolve_tenant_id(request, user)
+    if not tid:
+        return []  # Platform-eier uten impersonering har ingen klubb
     return await db.clubs.find({"tenant_id": tid}, {"_id": 0}).to_list(100)
 
 

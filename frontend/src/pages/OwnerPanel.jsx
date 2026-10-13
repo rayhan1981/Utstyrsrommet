@@ -11,8 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Search, LogIn, Pencil, Trash2, Settings, UserX, UserCheck, RotateCcw, CalendarPlus } from "lucide-react";
+import { Search, LogIn, Pencil, Trash2, Settings, UserX, UserCheck, RotateCcw, CalendarPlus, AlertTriangle, Crown } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import OwnerFieldOverride from "@/components/OwnerFieldOverride";
 
 const PLAN_OPTIONS = [
   { value: "free", label: "Gratis (manuell)" },
@@ -22,7 +23,7 @@ const PLAN_OPTIONS = [
 ];
 
 export default function OwnerPanel() {
-  const { user, impersonate } = useAuth();
+  const { user, impersonating, impersonate } = useAuth();
   const nav = useNavigate();
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
@@ -30,6 +31,7 @@ export default function OwnerPanel() {
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(null);
   const [cancelStripe, setCancelStripe] = useState(false);
+  const [hardDelete, setHardDelete] = useState(null); // {customer, typed}
 
   const refresh = () => api.get("/owner/customers").then((r) => setCustomers(r.data)).catch(() => {});
 
@@ -131,6 +133,34 @@ export default function OwnerPanel() {
     catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
+  // --- Impersonering for Avansert-fanen ---
+  const impersonateForAdvanced = async () => {
+    if (!detail?.customer) return;
+    try {
+      await impersonate(detail.customer.id);
+      toast.success(`Impersonerer ${detail.customer.club_name}. Avansert-overstyring er nå aktiv.`);
+      await reloadDetail();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
+  // --- Hard delete ---
+  const confirmHardDelete = async () => {
+    if (!hardDelete) return;
+    const expected = (hardDelete.customer.club_name || "").trim();
+    if ((hardDelete.typed || "").trim() !== expected) {
+      toast.error("Bekreftelsesnavn stemmer ikke");
+      return;
+    }
+    try {
+      const { data } = await api.delete(`/owner/customers/${hardDelete.customer.id}/hard-delete`, { data: { confirm_name: hardDelete.typed } });
+      const deleted = Object.entries(data.deleted || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
+      toast.success(`${hardDelete.customer.club_name} PERMANENT slettet (${deleted})`);
+      setHardDelete(null);
+      setDetail(null);
+      await refresh();
+    } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
+  };
+
   if (user?.role !== "platform_owner") return <div className="text-slate-500">Kun plattformeier</div>;
 
   const list = results.length ? results : customers;
@@ -194,6 +224,7 @@ export default function OwnerPanel() {
               <TabsList>
                 <TabsTrigger value="info" data-testid="tab-cust-info">Konto & Pakke</TabsTrigger>
                 <TabsTrigger value="users" data-testid="tab-cust-users">Brukere ({detail.counts.users})</TabsTrigger>
+                <TabsTrigger value="advanced" data-testid="tab-cust-advanced"><Crown className="h-3 w-3 mr-1 text-amber-600" />Avansert</TabsTrigger>
                 <TabsTrigger value="data" data-testid="tab-cust-data">Data & Sletting</TabsTrigger>
               </TabsList>
 
@@ -271,6 +302,52 @@ export default function OwnerPanel() {
                 </Table>
               </TabsContent>
 
+              <TabsContent value="advanced" className="pt-4 space-y-3">
+                <Card className="p-3 border-amber-200 bg-amber-50/40">
+                  <div className="flex items-start gap-3">
+                    <Crown className="h-5 w-5 text-amber-700 mt-0.5" />
+                    <div className="flex-1 text-sm">
+                      <strong className="text-amber-900">Felt-overstyring (kun plattformeier)</strong>
+                      <p className="text-slate-700 text-xs mt-1">
+                        Overstyr felter som er skjult eller låst i vanlig admin-UI. Krever at du først impersonerer kunden.
+                        {!impersonating && (
+                          <Button size="sm" variant="outline" className="ml-2 h-6 text-xs" onClick={impersonateForAdvanced} data-testid="advanced-impersonate-btn">
+                            <LogIn className="h-3 w-3 mr-1" />Start impersonering
+                          </Button>
+                        )}
+                      </p>
+                      {impersonating && (
+                        <p className="text-green-700 text-xs mt-1">✓ Impersonering aktiv – blyant-ikoner er låst opp under.</p>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="customer_number" value={detail.customer.customer_number} label="Kundenr" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="club_name" value={detail.customer.club_name} label="Klubbnavn" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="owner_name" value={detail.customer.owner_name} label="Eier (navn)" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="owner_email" value={detail.customer.owner_email} label="Eier-epost" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="plan" value={detail.customer.plan} label="Pakke" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="status" value={detail.customer.status} label="Status" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="subscription_status" value={detail.customer.subscription_status} label="Subscription-status" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="selected_plan" value={detail.customer.selected_plan} label="Valgt pakke (etter trial)" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="trial_ends_at" value={detail.customer.trial_ends_at} label="Trial slutter (ISO)" type="datetime" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="trial_end_date" value={detail.customer.trial_end_date} label="Trial sluttdato" type="datetime" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="subscription_start_date" value={detail.customer.subscription_start_date} label="Abonnement startet" type="datetime" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="created_at" value={detail.customer.created_at} label="Opprettet (ISO)" type="datetime" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="stripe_customer_id" value={detail.customer.stripe_customer_id} label="Stripe customer ID" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="stripe_subscription_id" value={detail.customer.stripe_subscription_id} label="Stripe subscription ID" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="extra_user_seats" value={detail.customer.extra_user_seats} label="Ekstra brukerseter" type="number" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="custom_price" value={detail.customer.custom_price} label="Manuell månedspris" type="number" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="deleted_at" value={detail.customer.deleted_at} label="Slettet (ISO)" type="datetime" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="purge_at" value={detail.customer.purge_at} label="Permanent purge (ISO)" type="datetime" onSaved={reloadDetail} />
+                </div>
+                <p className="text-xs text-slate-500 pt-3">
+                  Tomt felt lagret = fjerner feltet. Datoer må være ISO-format (eks. <code>2026-11-15T00:00:00+00:00</code>). Endringer logges i activity_log med gammel og ny verdi.
+                </p>
+              </TabsContent>
+
               <TabsContent value="data" className="pt-4 space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <Card className="p-3 text-center"><div className="text-xs text-slate-500">Lag</div><div className="font-display text-2xl font-bold">{detail.counts.teams}</div></Card>
@@ -284,10 +361,20 @@ export default function OwnerPanel() {
                   {detail.customer.deleted_at ? (
                     <div className="space-y-2">
                       <p className="text-sm text-slate-700">Slettet {new Date(detail.customer.deleted_at).toLocaleString("nb-NO")}. Permanent sletting: {new Date(detail.customer.purge_at).toLocaleDateString("nb-NO")}.</p>
-                      <Button variant="outline" onClick={restore} data-testid="restore-cust-btn"><RotateCcw className="h-4 w-4 mr-1" />Gjenopprett konto</Button>
+                      <div className="flex gap-2 flex-wrap">
+                        <Button variant="outline" onClick={restore} data-testid="restore-cust-btn"><RotateCcw className="h-4 w-4 mr-1" />Gjenopprett konto</Button>
+                        <Button variant="outline" className="text-rose-700 border-rose-500 bg-rose-50 hover:bg-rose-100" onClick={() => setHardDelete({ customer: detail.customer, typed: "" })} data-testid="hard-delete-cust-btn">
+                          <AlertTriangle className="h-4 w-4 mr-1" />Permanent slett
+                        </Button>
+                      </div>
                     </div>
                   ) : (
-                    <Button variant="outline" className="text-red-700 border-red-300" onClick={softDelete} data-testid="soft-delete-cust-btn"><Trash2 className="h-4 w-4 mr-1" />Slett kundekonto (soft delete)</Button>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button variant="outline" className="text-red-700 border-red-300" onClick={softDelete} data-testid="soft-delete-cust-btn"><Trash2 className="h-4 w-4 mr-1" />Slett kundekonto (soft delete)</Button>
+                      <Button variant="outline" className="text-rose-700 border-rose-500 bg-rose-50 hover:bg-rose-100" onClick={() => setHardDelete({ customer: detail.customer, typed: "" })} data-testid="hard-delete-cust-btn">
+                        <AlertTriangle className="h-4 w-4 mr-1" />Permanent slett (irreversibel)
+                      </Button>
+                    </div>
                   )}
                 </div>
               </TabsContent>
@@ -295,6 +382,49 @@ export default function OwnerPanel() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDetail(null)}>Lukk</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hard delete bekreftelses-dialog */}
+      <Dialog open={!!hardDelete} onOpenChange={(o) => !o && setHardDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-800">
+              <AlertTriangle className="h-5 w-5" />Permanent sletting
+            </DialogTitle>
+            <DialogDescription>
+              Dette er <strong>irreversibelt</strong>. Alle brukere, personer, lag, varer, utlån, bestillinger, fakturaer og lagsportal-kontoer for denne klubben slettes umiddelbart og kan ikke gjenopprettes.
+            </DialogDescription>
+          </DialogHeader>
+          {hardDelete && (
+            <div className="space-y-3">
+              <div className="text-sm">
+                Du er i ferd med å slette:
+                <div className="font-mono bg-slate-100 rounded p-2 mt-1">{hardDelete.customer.club_name} ({hardDelete.customer.customer_number})</div>
+              </div>
+              <div>
+                <Label>Skriv eksakt klubbnavn for å bekrefte</Label>
+                <Input
+                  autoFocus
+                  value={hardDelete.typed}
+                  onChange={(e) => setHardDelete({ ...hardDelete, typed: e.target.value })}
+                  placeholder={hardDelete.customer.club_name}
+                  data-testid="hard-delete-confirm-input"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHardDelete(null)}>Avbryt</Button>
+            <Button
+              onClick={confirmHardDelete}
+              disabled={(hardDelete?.typed || "").trim() !== (hardDelete?.customer?.club_name || "").trim()}
+              className="bg-rose-700 hover:bg-rose-800"
+              data-testid="hard-delete-confirm-btn"
+            >
+              <AlertTriangle className="h-4 w-4 mr-1" />Slett permanent
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
