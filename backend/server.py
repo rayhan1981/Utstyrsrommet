@@ -1960,11 +1960,20 @@ async def owner_field_override(data: OwnerFieldOverrideIn, request: Request, use
         await db[coll].update_one(match, {"$unset": {field: ""}})
     else:
         await db[coll].update_one(match, {"$set": {field: new_val}})
-    # Logg
-    await _log_activity(tid, user, "owner_field_override",
-                        f"Overstyrte felt '{field}' i {coll}/{data.document_id}",
-                        {"collection": coll, "document_id": data.document_id, "field": field,
-                         "old_value": old_val, "new_value": new_val})
+    # Logg (plattformeier-handling – alltid i audit-sporet, bypasser owner-skip i _log_activity)
+    try:
+        await db.activity_log.insert_one({
+            "id": new_id(), "tenant_id": tid, "at": now_iso(),
+            "action": "owner_field_override",
+            "description": f"Overstyrte felt '{field}' i {coll}/{data.document_id}",
+            "by": user.get("email"), "by_user_id": user.get("id"),
+            "by_name": f"[Plattformeier] {user.get('name') or ''}".strip(),
+            "is_owner_action": True,
+            "meta": {"collection": coll, "document_id": data.document_id, "field": field,
+                     "old_value": old_val, "new_value": new_val},
+        })
+    except Exception as e:
+        logger.warning(f"activity_log owner-override feilet: {e}")
     updated = await db[coll].find_one(match, {"_id": 0, "password_hash": 0})
     return {"ok": True, "document": updated, "field": field, "old_value": old_val, "new_value": new_val}
 
@@ -2019,6 +2028,19 @@ async def owner_hard_delete_customer(customer_id: str, data: OwnerHardDeleteIn, 
     # Til slutt kundens egen record
     await db.customers.delete_one({"id": customer_id})
     report["customers"] = 1
+    # Audit log entry (klubbens egen logg) – plattformeier handling
+    try:
+        await db.activity_log.insert_one({
+            "id": new_id(), "tenant_id": customer_id, "at": now_iso(),
+            "action": "hard_delete_customer",
+            "description": f"PERMANENT slettet kunde «{expected}» ({cust.get('customer_number')}) – {sum(report.values())} dokumenter",
+            "by": user.get("email"), "by_user_id": user.get("id"),
+            "by_name": f"[Plattformeier] {user.get('name') or ''}".strip(),
+            "is_owner_action": True,
+            "meta": {"deleted": report, "club_name": expected, "customer_number": cust.get("customer_number")},
+        })
+    except Exception:
+        pass  # Vi har allerede slettet, loggsvikt skal ikke føre til API-feil
     logger.warning(f"HARD DELETE av kunde {customer_id} ({expected}) av {user.get('email')}: {report}")
     return {"ok": True, "club_name": expected, "deleted": report}
 
@@ -2153,7 +2175,10 @@ async def delete_user(user_id: str, request: Request, admin=Depends(require_admi
 
 
 async def _log_activity(tid: str, user: dict, action: str, description: str, meta: Optional[dict] = None):
-    """Lagre en aktivitetsoppføring i activity_log. Platform-eier logges ikke."""
+    """Lagre en aktivitetsoppføring i activity_log. Platform-eier logges normalt ikke her
+    (de har ingen klubbkontekst), MEN sikkerhetssensitive handlinger (owner_field_override,
+    hard_delete_customer m.m.) logges inline direkte i de respektive endepunktene med
+    is_owner_action=True slik at de dukker opp i audit-visningen."""
     if not tid or (user and user.get("role") == "platform_owner"):
         return
     try:
@@ -2186,6 +2211,89 @@ async def get_activity_log(request: Request, limit: int = 10, user=Depends(get_c
                 "by": None, "by_name": None, "meta": {"loan_id": l["id"]},
             })
     return rows
+
+
+@api.get("/activity-log/search")
+async def search_activity_log(
+    request: Request,
+    q: Optional[str] = None,
+    action: Optional[str] = None,
+    user_id: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    limit: int = 100,
+    skip: int = 0,
+    user=Depends(require_admin),
+):
+    """Avansert aktivitetslogg for klubbadmin. Krever admin eller platform_owner."""
+    tid = await require_tenant(request, user)
+    limit = max(1, min(int(limit or 100), 500))
+    skip = max(0, int(skip or 0))
+    filt: Dict[str, Any] = {"tenant_id": tid}
+    if action: filt["action"] = action
+    if user_id: filt["by_user_id"] = user_id
+    if from_date or to_date:
+        rng: Dict[str, Any] = {}
+        if from_date: rng["$gte"] = from_date
+        if to_date: rng["$lte"] = to_date
+        filt["at"] = rng
+    if q:
+        rx = {"$regex": re.escape(q), "$options": "i"}
+        filt["$or"] = [{"description": rx}, {"action": rx}, {"by": rx}, {"by_name": rx}]
+    total = await db.activity_log.count_documents(filt)
+    rows = await db.activity_log.find(filt, {"_id": 0}).sort("at", -1).skip(skip).limit(limit).to_list(limit)
+    distinct_actions = await db.activity_log.distinct("action", {"tenant_id": tid})
+    distinct_users = await db.activity_log.aggregate([
+        {"$match": {"tenant_id": tid, "by_user_id": {"$ne": None}}},
+        {"$group": {"_id": "$by_user_id", "name": {"$first": "$by_name"}, "email": {"$first": "$by"}}},
+        {"$limit": 200},
+    ]).to_list(200)
+    return {
+        "total": total, "items": rows,
+        "distinct_actions": sorted([a for a in distinct_actions if a]),
+        "distinct_users": [{"id": u["_id"], "name": u.get("name"), "email": u.get("email")} for u in distinct_users],
+    }
+
+
+@api.get("/owner/activity-log/all")
+async def owner_cross_tenant_activity_log(
+    q: Optional[str] = None,
+    action: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    limit: int = 200,
+    skip: int = 0,
+    user=Depends(require_platform_owner),
+):
+    """Kryss-tenant aktivitetslogg KUN for plattformeier."""
+    limit = max(1, min(int(limit or 200), 1000))
+    skip = max(0, int(skip or 0))
+    filt: Dict[str, Any] = {}
+    if tenant_id: filt["tenant_id"] = tenant_id
+    if action: filt["action"] = action
+    if from_date or to_date:
+        rng: Dict[str, Any] = {}
+        if from_date: rng["$gte"] = from_date
+        if to_date: rng["$lte"] = to_date
+        filt["at"] = rng
+    if q:
+        rx = {"$regex": re.escape(q), "$options": "i"}
+        filt["$or"] = [{"description": rx}, {"action": rx}, {"by": rx}, {"by_name": rx}]
+    total = await db.activity_log.count_documents(filt)
+    rows = await db.activity_log.find(filt, {"_id": 0}).sort("at", -1).skip(skip).limit(limit).to_list(limit)
+    tenant_ids = list({r.get("tenant_id") for r in rows if r.get("tenant_id")})
+    customers = await db.customers.find({"id": {"$in": tenant_ids}}, {"_id": 0, "id": 1, "club_name": 1, "customer_number": 1}).to_list(len(tenant_ids))
+    cust_by_id = {c["id"]: c for c in customers}
+    for r in rows:
+        c = cust_by_id.get(r.get("tenant_id"))
+        r["club_name"] = c.get("club_name") if c else None
+        r["customer_number"] = c.get("customer_number") if c else None
+    distinct_actions = await db.activity_log.distinct("action")
+    return {
+        "total": total, "items": rows,
+        "distinct_actions": sorted([a for a in distinct_actions if a]),
+    }
 
 
 # ===================== Database reset (per seksjon) =====================

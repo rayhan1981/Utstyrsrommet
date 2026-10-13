@@ -37,6 +37,7 @@ const CLUB_NAV = [
 
 const ADMIN_NAV = [
   { to: "/app/brukere", label: "Brukere", icon: ShieldCheck, module: "users", adminOnly: true, feature: null },
+  { to: "/app/aktivitetslogg", label: "Aktivitetslogg", icon: ClipboardList, module: null, adminOnly: true, feature: null },
   { to: "/app/abonnement", label: "Abonnement", icon: CreditCard, module: null, adminOnly: true, feature: null },
 ];
 

@@ -22,6 +22,15 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-13 – Audit Log side (admin + plattformeier)
+- Nytt endepunkt `GET /api/activity-log/search` (krever admin): fritekst, action, user_id, dato-range, pagination (default 100/side). Returnerer også distinct_actions + distinct_users for filter-dropdowns.
+- Nytt endepunkt `GET /api/owner/activity-log/all` (kun platform_owner): kryss-tenant visning med klubbnavn+kundenr beriket på hver rad.
+- `_log_activity` oppdatert med klar dokumentasjon: platform_owner-handlinger logges inline i endepunktene med `is_owner_action: True` og `by_name="[Plattformeier] <navn>"` – ingen `_log_owner_action`-helper (unngår forward-ref lint).
+- `owner_field_override` og `hard_delete_customer` legger nå inn eksplisitt audit-entry i den impersonerte tenantens logg.
+- Ny side `/app/aktivitetslogg` med toggle «Klubbens egen / Alle kunder», fire filter-kolonner, pagination, expandable JSON-meta per rad.
+- Nav-link i Layout under Admin-seksjonen.
+- E2E-testet: owner_field_override gir 2+ logg-events, filtre virker, admin-search autoriserer, 401 uten token, platform_owner-handlinger synlige med crown-prefix i audit-UI.
+
 ### 2026-10-13 – Plattformeier: Standalone + Felt-overstyring + Hard delete + Landing-split
 - **Standalone owner**: `resolve_tenant_id` returnerer `None` for platform_owner uten `imp_cid`. `/clubs` returnerer `[]`. Dashboard-komponent viser ny **OwnerStandaloneDashboard** (crown-logo, kundestatistikk, siste 5 kunder, soft-delete-teller).
 - **Field override** (`POST /api/owner/field-override`): Krever platform_owner + aktiv impersonering. Allow-list for samlinger (customers, users, people, items, loans, teams, orders, invoices, needs_requests, varemottak, suppliers, clubs, team_portal_accounts, stock_counts, notifications, activity_log). Blokkerer `_id`, `password_hash`, `tenant_id`. Loggføres i activity_log med gammel/ny verdi. Cross-tenant endringer gir 403.

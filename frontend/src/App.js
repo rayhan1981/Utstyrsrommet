@@ -28,6 +28,7 @@ import Behov from "@/pages/Behov";
 import Terms from "@/pages/Terms";
 import TeamPortalAccounts from "@/pages/TeamPortalAccounts";
 import NeedsRequests from "@/pages/NeedsRequests";
+import AuditLog from "@/pages/AuditLog";
 import PortalApp from "@/portal/PortalApp";
 import { Toaster } from "sonner";
 
@@ -83,6 +84,7 @@ function App() {
             <Route path="innmeldte-behov" element={<ProtectedRoute module="teams"><NeedsRequests /></ProtectedRoute>} />
             <Route path="innmeldte-behov/:id" element={<ProtectedRoute module="teams"><NeedsRequests /></ProtectedRoute>} />
             <Route path="lagspalogginger" element={<ProtectedRoute module="teams"><TeamPortalAccounts /></ProtectedRoute>} />
+            <Route path="aktivitetslogg" element={<ProtectedRoute level="admin" needsTenant={false}><AuditLog /></ProtectedRoute>} />
             <Route path="hjelpesenter" element={<HelpCenter />} />
           </Route>
           <Route path="/eier" element={<Navigate to="/app/kunder" replace />} />
