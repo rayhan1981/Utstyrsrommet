@@ -22,6 +22,14 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-13 – Eier-panel: Forenklet kundeliste + Postnr/Sted i Signup
+- `SignupIn` + customer_doc utvidet med `postal_code` og `city` (lagres fra Signup-form).
+- `OwnerCustomerUpdateIn` + `PATCH /api/owner/customers/{id}` håndterer `postal_code` og `city`.
+- `Signup.jsx`: Nye felter for Postnummer (4 siffer) og Sted, med geonorge-oppslag som auto-fyller Sted når postnr har 4 sifre.
+- `OwnerPanel.jsx` tabell forenklet til 1 linje pr. kunde: **Klubbnavn (+ status-badge: aktiv/trial/inaktiv/slettet) → Postnr → Sted → Telefon → Administrer / Logg inn som**. Søk-feltet øverst beholdt uendret.
+- Administrer-dialogen fikk Postnr+Sted-input med geonorge-oppslag + egne OwnerFieldOverride-felt i Avansert-fanen.
+- Verifisert: PATCH lagrer `postal_code`/`city`, listen viser nye kolonner, "–" vises for eksisterende kunder uten verdi.
+
 ### 2026-10-13 – Introduksjonspris 2026: Nye priser + Deluxe→Premium
 - Backend `PLANS`: Basic 399→**249**, Pro 599→**449**, Deluxe 999→**849** med nytt visningsnavn **Klubb Premium**. Intern nøkkel `deluxe` beholdes for bakoverkompatibilitet med DB-records (ingen migrering nødvendig).
 - Alle brukervendte strenger oppdatert: Terms, Signup, Landing, Subscription, TrialBanner/Card, UpgradeCTA, HelpCenter, Inventory, TeamPortalAccounts, OwnerPanel, OwnerStandaloneDashboard.

@@ -641,6 +641,8 @@ class SignupIn(BaseModel):
     owner_name: str
     owner_email: EmailStr
     owner_phone: str = ""
+    postal_code: str = ""
+    city: str = ""
     password: str
     plan: Optional[str] = None  # Valgfritt – prøveperiode trenger ikke pakke
     accept_terms: bool = False
@@ -876,6 +878,8 @@ class OwnerCustomerUpdateIn(BaseModel):
     owner_name: Optional[str] = None
     owner_email: Optional[EmailStr] = None
     owner_phone: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
     plan: Optional[str] = None
     extra_user_seats: Optional[int] = None
     custom_price: Optional[float] = None
@@ -1371,6 +1375,8 @@ async def signup(data: SignupIn, response: Response):
         "owner_name": data.owner_name,
         "owner_email": email,
         "owner_phone": data.owner_phone,
+        "postal_code": (data.postal_code or "").strip(),
+        "city": (data.city or "").strip(),
         "plan": "deluxe",  # funksjonelt deluxe under trial
         "status": "trial",
         "subscription_status": "trial",
@@ -1802,6 +1808,10 @@ async def owner_patch_customer(customer_id: str, data: OwnerCustomerUpdateIn, us
         update["owner_name"] = data.owner_name
     if data.owner_phone is not None:
         update["owner_phone"] = data.owner_phone
+    if data.postal_code is not None:
+        update["postal_code"] = (data.postal_code or "").strip()
+    if data.city is not None:
+        update["city"] = (data.city or "").strip()
     if data.extra_user_seats is not None:
         update["extra_user_seats"] = max(0, int(data.extra_user_seats))
     if data.custom_price is not None:

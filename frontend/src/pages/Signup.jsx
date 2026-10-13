@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { formatError } from "@/lib/api";
@@ -16,7 +16,23 @@ export default function Signup() {
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [welcome, setWelcome] = useState(null);
-  const [form, setForm] = useState({ club_name: "", owner_name: "", owner_email: "", owner_phone: "", password: "" });
+  const [form, setForm] = useState({ club_name: "", owner_name: "", owner_email: "", owner_phone: "", postal_code: "", city: "", password: "" });
+
+  // Automatisk oppslag av poststed via Kartverket (geonorge) når 4-sifret postnr er fylt inn
+  useEffect(() => {
+    const zip = (form.postal_code || "").trim();
+    if (!/^\d{4}$/.test(zip)) return;
+    let cancelled = false;
+    fetch(`https://ws.geonorge.kartverket.no/adresser/v1/sok?postnummer=${zip}&treffPerSide=1`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const sted = data?.adresser?.[0]?.poststed || "";
+        if (sted) setForm((f) => ({ ...f, city: sted }));
+      })
+      .catch(() => { /* stille – brukeren kan taste manuelt */ });
+    return () => { cancelled = true; };
+  }, [form.postal_code]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -56,7 +72,11 @@ export default function Signup() {
               <div><Label className="text-zinc-300">Klubbnavn</Label><Input required value={form.club_name} onChange={(e) => setForm({ ...form, club_name: e.target.value })} data-testid="signup-club" className={inputCls} /></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div><Label className="text-zinc-300">Ditt fulle navn</Label><Input required value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} data-testid="signup-name" className={inputCls} /></div>
-                <div><Label className="text-zinc-300">Telefon</Label><Input value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} className={inputCls} /></div>
+                <div><Label className="text-zinc-300">Telefon</Label><Input value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} data-testid="signup-phone" className={inputCls} /></div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div><Label className="text-zinc-300">Postnummer</Label><Input inputMode="numeric" maxLength={4} value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value.replace(/\D/g, "").slice(0, 4) })} data-testid="signup-postal-code" className={inputCls} /></div>
+                <div className="sm:col-span-2"><Label className="text-zinc-300">Sted</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} data-testid="signup-city" className={inputCls} /></div>
               </div>
               <div><Label className="text-zinc-300">E-post</Label><Input type="email" required value={form.owner_email} onChange={(e) => setForm({ ...form, owner_email: e.target.value })} data-testid="signup-email" className={inputCls} /></div>
               <div><Label className="text-zinc-300">Passord (min 6 tegn)</Label><Input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} data-testid="signup-password" className={inputCls} /></div>

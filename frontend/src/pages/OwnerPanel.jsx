@@ -22,6 +22,14 @@ const PLAN_OPTIONS = [
   { value: "deluxe", label: "Klubb Premium (849/mnd)" },
 ];
 
+function StatusBadge({ c }) {
+  if (c.deleted_at) return <span className="inline-block ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-rose-200 text-rose-900 uppercase">slettet</span>;
+  const s = c.status;
+  if (s === "inactive") return <span className="inline-block ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 uppercase">inaktiv</span>;
+  if (s === "trial") return <span className="inline-block ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 uppercase">trial</span>;
+  return <span className="inline-block ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase">aktiv</span>;
+}
+
 export default function OwnerPanel() {
   const { user, impersonating, impersonate } = useAuth();
   const nav = useNavigate();
@@ -36,6 +44,23 @@ export default function OwnerPanel() {
   const refresh = () => api.get("/owner/customers").then((r) => setCustomers(r.data)).catch(() => {});
 
   useEffect(() => { if (user?.role === "platform_owner") refresh(); }, [user]);
+
+  // Automatisk oppslag av poststed via Kartverket (geonorge) når 4-sifret postnr er fylt inn i Administrer-dialogen
+  useEffect(() => {
+    const zip = (form?.postal_code || "").trim();
+    if (!/^\d{4}$/.test(zip)) return;
+    let cancelled = false;
+    fetch(`https://ws.geonorge.kartverket.no/adresser/v1/sok?postnummer=${zip}&treffPerSide=1`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const sted = data?.adresser?.[0]?.poststed || "";
+        if (sted) setForm((f) => f ? { ...f, city: sted } : f);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form?.postal_code]);
 
   const search = async (e) => {
     e?.preventDefault();
@@ -58,6 +83,8 @@ export default function OwnerPanel() {
         owner_name: data.customer.owner_name || "",
         owner_email: data.customer.owner_email || "",
         owner_phone: data.customer.owner_phone || "",
+        postal_code: data.customer.postal_code || "",
+        city: data.customer.city || "",
         plan: data.customer.plan || "basic",
         extra_user_seats: data.customer.extra_user_seats || 0,
         custom_price: data.customer.custom_price ?? "",
@@ -186,24 +213,24 @@ export default function OwnerPanel() {
       <Card>
         <Table>
           <TableHeader><TableRow>
-            <TableHead>Kundenr</TableHead><TableHead>Klubb</TableHead><TableHead>Eier</TableHead><TableHead>E-post</TableHead>
-            <TableHead>Pakke</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Handling</TableHead>
+            <TableHead>Klubbnavn</TableHead>
+            <TableHead className="w-28">Postnr</TableHead>
+            <TableHead>Sted</TableHead>
+            <TableHead className="w-40">Telefon</TableHead>
+            <TableHead className="text-right">Handling</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {list.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-slate-500 py-6">Ingen kunder.</TableCell></TableRow>}
+            {list.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-slate-500 py-6">Ingen kunder.</TableCell></TableRow>}
             {list.map((c) => (
               <TableRow key={c.id} data-testid={`customer-row-${c.customer_number}`} className={c.deleted_at ? "opacity-50" : ""}>
-                <TableCell className="font-mono font-semibold">{c.customer_number}</TableCell>
-                <TableCell className="font-semibold">{c.club_name}{c.deleted_at && <span className="ml-2 text-xs text-red-700">(slettet)</span>}</TableCell>
-                <TableCell>{c.owner_name}</TableCell>
-                <TableCell className="text-sm">{c.owner_email}</TableCell>
-                <TableCell><span className="text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-800 uppercase">{c.plan}</span></TableCell>
-                <TableCell>
-                  <span className={`text-xs font-semibold px-2 py-1 rounded ${c.status === "inactive" ? "bg-red-100 text-red-800" : c.status === "trial" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>
-                    {c.status}
-                  </span>
+                <TableCell className="font-semibold">
+                  <span>{c.club_name || <span className="text-slate-400 italic">(uten navn)</span>}</span>
+                  <StatusBadge c={c} />
                 </TableCell>
-                <TableCell className="text-right space-x-1">
+                <TableCell className="font-mono text-sm">{c.postal_code || <span className="text-slate-400">–</span>}</TableCell>
+                <TableCell className="text-sm">{c.city || <span className="text-slate-400">–</span>}</TableCell>
+                <TableCell className="text-sm">{c.owner_phone || <span className="text-slate-400">–</span>}</TableCell>
+                <TableCell className="text-right space-x-1 whitespace-nowrap">
                   <Button size="sm" variant="outline" onClick={() => openDetail(c)} data-testid={`manage-${c.customer_number}`}><Settings className="h-3 w-3 mr-1" />Administrer</Button>
                   <Button size="sm" className="bg-red-900 hover:bg-red-800" onClick={() => doImpersonate(c)} data-testid={`impersonate-${c.customer_number}`}><LogIn className="h-3 w-3 mr-1" />Logg inn som</Button>
                 </TableCell>
@@ -233,7 +260,9 @@ export default function OwnerPanel() {
                   <div><Label>Klubbnavn</Label><Input value={form.club_name} onChange={(e) => setForm({ ...form, club_name: e.target.value })} /></div>
                   <div><Label>Eier (navn)</Label><Input value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} /></div>
                   <div><Label>E-post</Label><Input type="email" value={form.owner_email} onChange={(e) => setForm({ ...form, owner_email: e.target.value })} data-testid="cust-email-input" /></div>
-                  <div><Label>Telefon</Label><Input value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} /></div>
+                  <div><Label>Telefon</Label><Input value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} data-testid="cust-phone-input" /></div>
+                  <div><Label>Postnummer</Label><Input inputMode="numeric" maxLength={4} value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value.replace(/\D/g, "").slice(0, 4) })} data-testid="cust-postal-input" /></div>
+                  <div><Label>Sted</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} data-testid="cust-city-input" /></div>
                   <div>
                     <Label>Pakke</Label>
                     <Select value={form.plan} onValueChange={(v) => setForm({ ...form, plan: v })}>
@@ -328,6 +357,9 @@ export default function OwnerPanel() {
                   <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="club_name" value={detail.customer.club_name} label="Klubbnavn" onSaved={reloadDetail} />
                   <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="owner_name" value={detail.customer.owner_name} label="Eier (navn)" onSaved={reloadDetail} />
                   <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="owner_email" value={detail.customer.owner_email} label="Eier-epost" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="owner_phone" value={detail.customer.owner_phone} label="Telefon" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="postal_code" value={detail.customer.postal_code} label="Postnummer" onSaved={reloadDetail} />
+                  <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="city" value={detail.customer.city} label="Sted" onSaved={reloadDetail} />
                   <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="plan" value={detail.customer.plan} label="Pakke" onSaved={reloadDetail} />
                   <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="status" value={detail.customer.status} label="Status" onSaved={reloadDetail} />
                   <OwnerFieldOverride collection="customers" documentId={detail.customer.id} field="subscription_status" value={detail.customer.subscription_status} label="Subscription-status" onSaved={reloadDetail} />
