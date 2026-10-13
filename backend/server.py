@@ -887,6 +887,18 @@ class OwnerCustomerUpdateIn(BaseModel):
     cancel_stripe: Optional[bool] = False
 
 
+class OwnerCreateCustomerIn(BaseModel):
+    club_name: str
+    owner_name: str
+    owner_email: EmailStr
+    owner_phone: str = ""
+    postal_code: str = ""
+    city: str = ""
+    plan: str = "free"  # "free" | "basic" | "pro" | "deluxe"
+    password: Optional[str] = None  # None → generer sterkt passord automatisk
+    billing_mode: str = "manual"  # "manual" (fakturere utenfor) | "stripe" (opprett Stripe-kunde)
+
+
 # ---------------- Startup ----------------
 async def _generate_customer_number() -> str:
     for _ in range(10):
@@ -1764,6 +1776,184 @@ async def owner_stop(response: Response, user=Depends(require_platform_owner)):
 @api.get("/owner/customers")
 async def owner_list_customers(user=Depends(require_platform_owner)):
     return await db.customers.find({"is_owner_workspace": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+
+@api.post("/owner/customers", status_code=201)
+async def owner_create_customer(data: OwnerCreateCustomerIn, user=Depends(require_platform_owner)):
+    """Plattformeier oppretter kunde manuelt. Status settes 'active' direkte (ingen trial)."""
+    email = data.owner_email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "E-post finnes allerede")
+    if data.plan not in PLANS:
+        raise HTTPException(400, "Ugyldig pakke")
+    if data.billing_mode not in ("manual", "stripe"):
+        raise HTTPException(400, "Ugyldig faktureringsvalg (manual|stripe)")
+
+    # Passord: enten gitt eller auto-generert
+    generated_password: Optional[str] = None
+    if data.password and data.password.strip():
+        if len(data.password.strip()) < 6:
+            raise HTTPException(400, "Passord må være minst 6 tegn")
+        password_plain = data.password.strip()
+    else:
+        password_plain = pysecrets.token_urlsafe(10)
+        generated_password = password_plain
+
+    customer_number = await _generate_customer_number()
+    tenant_id = new_id()
+    now = datetime.now(timezone.utc)
+
+    stripe_customer_id = None
+    if data.billing_mode == "stripe":
+        try:
+            s = stripe.Customer.create(
+                email=email,
+                name=data.club_name,
+                phone=data.owner_phone or None,
+                metadata={"customer_number": customer_number, "manually_created_by_owner": user.get("id") or ""},
+            )
+            stripe_customer_id = s.id
+        except Exception as e:
+            logger.error(f"Stripe customer create feilet: {e}")
+            raise HTTPException(400, f"Kunne ikke opprette Stripe-kunde: {str(e)[:200]}")
+
+    customer_doc = {
+        "id": tenant_id,
+        "customer_number": customer_number,
+        "club_name": data.club_name,
+        "owner_name": data.owner_name,
+        "owner_email": email,
+        "owner_phone": data.owner_phone or "",
+        "postal_code": (data.postal_code or "").strip(),
+        "city": (data.city or "").strip(),
+        "plan": data.plan,
+        "status": "active",
+        "subscription_status": "manual" if data.billing_mode == "manual" else "active",
+        "selected_plan": data.plan,
+        "subscription_start_date": now.isoformat(),
+        "trial_start_date": None,
+        "trial_end_date": None,
+        "trial_ends_at": None,
+        "stripe_customer_id": stripe_customer_id,
+        "stripe_subscription_id": None,
+        "extra_user_seats": 0,
+        "accept_terms": True,
+        "terms_accepted_at": now_iso(),
+        "created_by_owner": user.get("id"),
+        "billing_mode": data.billing_mode,
+        "created_at": now_iso(),
+    }
+    await db.customers.insert_one(customer_doc)
+
+    user_id = new_id()
+    await db.users.insert_one({
+        "id": user_id,
+        "email": email,
+        "name": data.owner_name,
+        "phone": data.owner_phone or "",
+        "address": "",
+        "role": "admin",
+        "role_title": "",
+        "permissions": admin_perms(),
+        "active": True,
+        "tenant_id": tenant_id,
+        "is_super_admin": False,
+        "password_hash": hash_password(password_plain),
+        "created_at": now_iso(),
+    })
+
+    # Logg i activity_log for sporing
+    await db.activity_log.insert_one({
+        "id": new_id(),
+        "tenant_id": tenant_id,
+        "action": "owner_create_customer",
+        "by_user_id": user.get("id"),
+        "by_name": f"[Plattformeier] {user.get('name', '')}",
+        "is_owner_action": True,
+        "at": now_iso(),
+        "meta": {
+            "customer_number": customer_number,
+            "club_name": data.club_name,
+            "plan": data.plan,
+            "billing_mode": data.billing_mode,
+            "stripe_customer_id": stripe_customer_id,
+        },
+    })
+
+    return {
+        "customer": _clean(customer_doc),
+        "user_id": user_id,
+        "generated_password": generated_password,  # None hvis admin satte passord selv
+    }
+
+
+@api.post("/owner/customers/{customer_id}/send-welcome")
+async def owner_send_welcome(customer_id: str, user=Depends(require_platform_owner)):
+    """Send velkomst-e-post med Sett-passord-lenke til kundens admin-bruker."""
+    cust = await db.customers.find_one({"id": customer_id})
+    if not cust:
+        raise HTTPException(404, "Kunde ikke funnet")
+    if cust.get("is_owner_workspace"):
+        raise HTTPException(400, "Kan ikke sende velkomst til plattformeiers arbeidsområde")
+
+    admin_user = await db.users.find_one({"tenant_id": customer_id, "email": (cust.get("owner_email") or "").lower()})
+    if not admin_user:
+        # Fallback: første admin-bruker på tenant
+        admin_user = await db.users.find_one({"tenant_id": customer_id, "role": "admin"})
+    if not admin_user:
+        raise HTTPException(404, "Fant ingen admin-bruker å sende velkomst til")
+
+    inv_token = pysecrets.token_urlsafe(32)
+    await db.invitations.insert_one({"token": inv_token, "user_id": admin_user["id"], "created_at": now_iso(), "used": False})
+
+    link = f"{FRONTEND_URL}/sett-passord?token={inv_token}"
+    login_link = f"{FRONTEND_URL}/innlogging"
+    club_name = cust.get("club_name", "")
+    customer_number = cust.get("customer_number", "")
+    recipient_name = admin_user.get("name") or club_name
+
+    html = (
+        f'<table width="100%" style="background:#f8fafc;padding:24px;font-family:Arial,sans-serif">'
+        f'<tr><td align="center"><table width="560" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:32px">'
+        f'<tr><td><h1 style="color:#991b1b;margin:0 0 16px 0">Velkommen til {EMAIL_FROM_NAME}!</h1>'
+        f'<p>Hei {recipient_name},</p>'
+        f'<p>Du har fått en klubbkonto hos <strong>{EMAIL_FROM_NAME}</strong> klar til bruk.</p>'
+        f'<table width="100%" style="background:#f1f5f9;border-radius:6px;padding:16px;margin:16px 0">'
+        f'<tr><td><p style="margin:4px 0"><strong>Klubb:</strong> {club_name}</p>'
+        f'<p style="margin:4px 0"><strong>Kundenummer:</strong> {customer_number}</p>'
+        f'<p style="margin:4px 0"><strong>E-post:</strong> {admin_user.get("email")}</p>'
+        f'</td></tr></table>'
+        f'<p style="text-align:center;margin:28px 0"><a href="{link}" style="background:#991b1b;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:600">Sett passord og logg inn</a></p>'
+        f'<p style="color:#475569;font-size:13px">Lenken er gyldig i 7 dager. Har du allerede passord? <a href="{login_link}" style="color:#991b1b">Logg inn her</a>.</p>'
+        f'<p style="color:#94a3b8;font-size:12px;margin-top:24px">Sendt av {EMAIL_FROM_NAME}. Spørsmål? Svar på denne e-posten.</p>'
+        f'</td></tr></table></td></tr></table>'
+    )
+
+    sent_id = None
+    if EMAIL_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                                 headers={"X-Email-Key": EMAIL_KEY},
+                                 json={"to": [admin_user["email"]], "subject": f"Velkommen til {EMAIL_FROM_NAME} – {club_name}", "html": html, "from_name": EMAIL_FROM_NAME})
+            r.raise_for_status()
+            sent_id = r.json().get("id")
+        except Exception as e:
+            logger.error(f"Welcome email feilet: {e}")
+            raise HTTPException(502, f"Kunne ikke sende e-post: {str(e)[:200]}")
+
+    await db.activity_log.insert_one({
+        "id": new_id(),
+        "tenant_id": customer_id,
+        "action": "owner_send_welcome",
+        "by_user_id": user.get("id"),
+        "by_name": f"[Plattformeier] {user.get('name', '')}",
+        "is_owner_action": True,
+        "at": now_iso(),
+        "meta": {"to": admin_user["email"], "email_id": sent_id},
+    })
+
+    return {"ok": True, "email_id": sent_id, "invitation_link": link, "sent_to": admin_user["email"]}
 
 
 @api.put("/owner/customers/{customer_id}")

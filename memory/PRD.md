@@ -22,6 +22,15 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-13 – Eier-panel: Manuell oppretting av kunde (plattformeier)
+- Nytt endepunkt `POST /api/owner/customers`: Oppretter kunde + admin-bruker på én gang. Status settes direkte `active` (ingen trial). Logg i activity_log med `owner_create_customer`.
+- Model `OwnerCreateCustomerIn`: club_name, owner_name, owner_email, owner_phone, postal_code, city, plan, password (optional – auto hvis null), billing_mode (`manual` | `stripe`).
+- Passord: Hvis admin lar være blankt → genereres via `pysecrets.token_urlsafe(10)` og returneres i responsen under `generated_password` (vises én gang i UI).
+- Fakturering: `manual` = ingen Stripe-kobling (status `manual`). `stripe` = kaller `stripe.Customer.create()` og lagrer `stripe_customer_id` (ingen abonnement enda).
+- Nytt endepunkt `POST /api/owner/customers/{id}/send-welcome`: Oppretter engangs-invitasjonstoken, sender e-post via Emergent Email med «Sett passord og logg inn»-knapp. Loggføres som `owner_send_welcome`.
+- `OwnerPanel.jsx`: «+ Opprett ny kunde»-knapp øverst. Dialog med alle felt + geonorge-oppslag + Radio for passord-mode (auto/manual) + Radio for billing-mode med forklaringer. Resultat-dialog viser kundenr, Stripe-ID (hvis valgt), og passord med Kopier-knapp. «Send velkomstmelding»-knapp både i resultat-dialog og i Administrer-dialogen.
+- E2E-testet: opprett + login med gen. passord + send welcome (email_id returnert) + duplikat gir 400 + hard-delete rydder opp.
+
 ### 2026-10-13 – Eier-panel: Forenklet kundeliste + Postnr/Sted i Signup
 - `SignupIn` + customer_doc utvidet med `postal_code` og `city` (lagres fra Signup-form).
 - `OwnerCustomerUpdateIn` + `PATCH /api/owner/customers/{id}` håndterer `postal_code` og `city`.

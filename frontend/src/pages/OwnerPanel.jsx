@@ -11,7 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Search, LogIn, Pencil, Trash2, Settings, UserX, UserCheck, RotateCcw, CalendarPlus, AlertTriangle, Crown } from "lucide-react";
+import { Search, LogIn, Pencil, Trash2, Settings, UserX, UserCheck, RotateCcw, CalendarPlus, AlertTriangle, Crown, Plus, Mail, Copy, CheckCircle2, Loader2 } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useNavigate } from "react-router-dom";
 import OwnerFieldOverride from "@/components/OwnerFieldOverride";
 
@@ -41,6 +42,21 @@ export default function OwnerPanel() {
   const [cancelStripe, setCancelStripe] = useState(false);
   const [hardDelete, setHardDelete] = useState(null); // {customer, typed}
 
+  // --- Opprett ny kunde ---
+  const EMPTY_CREATE = {
+    club_name: "", owner_name: "", owner_email: "", owner_phone: "",
+    postal_code: "", city: "",
+    plan: "free",
+    password_mode: "auto",   // "auto" | "manual"
+    password: "",
+    billing_mode: "manual",  // "manual" | "stripe"
+  };
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState(EMPTY_CREATE);
+  const [creating, setCreating] = useState(false);
+  const [createResult, setCreateResult] = useState(null); // {customer, generated_password}
+  const [sendingWelcome, setSendingWelcome] = useState(false);
+
   const refresh = () => api.get("/owner/customers").then((r) => setCustomers(r.data)).catch(() => {});
 
   useEffect(() => { if (user?.role === "platform_owner") refresh(); }, [user]);
@@ -61,6 +77,22 @@ export default function OwnerPanel() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form?.postal_code]);
+
+  // Samme geonorge-oppslag for Opprett-dialogen
+  useEffect(() => {
+    const zip = (createForm.postal_code || "").trim();
+    if (!/^\d{4}$/.test(zip)) return;
+    let cancelled = false;
+    fetch(`https://ws.geonorge.kartverket.no/adresser/v1/sok?postnummer=${zip}&treffPerSide=1`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const sted = data?.adresser?.[0]?.poststed || "";
+        if (sted) setCreateForm((f) => ({ ...f, city: sted }));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [createForm.postal_code]);
 
   const search = async (e) => {
     e?.preventDefault();
@@ -170,6 +202,64 @@ export default function OwnerPanel() {
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };
 
+  // --- Opprett ny kunde ---
+  const submitCreate = async () => {
+    if (!createForm.club_name.trim() || !createForm.owner_name.trim() || !createForm.owner_email.trim()) {
+      toast.error("Klubbnavn, eier-navn og e-post er påkrevd");
+      return;
+    }
+    if (createForm.password_mode === "manual" && createForm.password.trim().length < 6) {
+      toast.error("Passord må være minst 6 tegn");
+      return;
+    }
+    setCreating(true);
+    try {
+      const payload = {
+        club_name: createForm.club_name.trim(),
+        owner_name: createForm.owner_name.trim(),
+        owner_email: createForm.owner_email.trim().toLowerCase(),
+        owner_phone: createForm.owner_phone.trim(),
+        postal_code: createForm.postal_code.trim(),
+        city: createForm.city.trim(),
+        plan: createForm.plan,
+        billing_mode: createForm.billing_mode,
+        password: createForm.password_mode === "manual" ? createForm.password : null,
+      };
+      const { data } = await api.post("/owner/customers", payload);
+      toast.success(`Kunde opprettet: ${data.customer.club_name}`);
+      setCreateResult(data);
+      setCreateOpen(false);
+      setCreateForm(EMPTY_CREATE);
+      await refresh();
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const sendWelcome = async (customerId, clubName) => {
+    if (!window.confirm(`Sende velkomst-e-post til ${clubName}?`)) return;
+    setSendingWelcome(true);
+    try {
+      const { data } = await api.post(`/owner/customers/${customerId}/send-welcome`);
+      toast.success(`Velkomst-e-post sendt til ${data.sent_to}`);
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail));
+    } finally {
+      setSendingWelcome(false);
+    }
+  };
+
+  const copyToClipboard = async (text, label = "Kopiert") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(label);
+    } catch {
+      toast.error("Kunne ikke kopiere");
+    }
+  };
+
   // --- Hard delete ---
   const confirmHardDelete = async () => {
     if (!hardDelete) return;
@@ -194,9 +284,14 @@ export default function OwnerPanel() {
 
   return (
     <div className="space-y-6" data-testid="owner-panel">
-      <div>
-        <h1 className="font-display text-3xl font-extrabold">Eier-panel</h1>
-        <p className="text-slate-600 text-sm mt-1">Søk, åpne eller endre kundekontoer</p>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="font-display text-3xl font-extrabold">Eier-panel</h1>
+          <p className="text-slate-600 text-sm mt-1">Søk, åpne eller endre kundekontoer</p>
+        </div>
+        <Button onClick={() => { setCreateForm(EMPTY_CREATE); setCreateOpen(true); }} className="bg-red-900 hover:bg-red-800" data-testid="open-create-customer-btn">
+          <Plus className="h-4 w-4 mr-1" />Opprett ny kunde
+        </Button>
       </div>
 
       <Card className="p-5">
@@ -303,6 +398,9 @@ export default function OwnerPanel() {
 
                 <div className="flex gap-2 pt-2 flex-wrap">
                   <Button onClick={saveForm} className="bg-red-900 hover:bg-red-800" data-testid="save-cust-btn"><Pencil className="h-4 w-4 mr-1" />Lagre endringer</Button>
+                  <Button variant="outline" onClick={() => sendWelcome(detail.customer.id, detail.customer.club_name)} disabled={sendingWelcome} data-testid="send-welcome-btn">
+                    {sendingWelcome ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}Send velkomstmelding
+                  </Button>
                   {detail.customer.status === "inactive" ? (
                     <Button variant="outline" onClick={() => setStatus("active")} data-testid="activate-cust-btn"><UserCheck className="h-4 w-4 mr-1" />Aktiver konto</Button>
                   ) : (
@@ -418,9 +516,139 @@ export default function OwnerPanel() {
         </DialogContent>
       </Dialog>
 
+      {/* Opprett ny kunde-dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="create-customer-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Plus className="h-5 w-5 text-red-900" />Opprett ny kunde</DialogTitle>
+            <DialogDescription>Kontoen aktiveres umiddelbart – ingen prøveperiode. Du kan sende velkomstmelding etter oppretting.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2"><Label>Klubbnavn *</Label><Input value={createForm.club_name} onChange={(e) => setCreateForm({ ...createForm, club_name: e.target.value })} data-testid="create-club-name" /></div>
+              <div><Label>Eier (fullt navn) *</Label><Input value={createForm.owner_name} onChange={(e) => setCreateForm({ ...createForm, owner_name: e.target.value })} data-testid="create-owner-name" /></div>
+              <div><Label>Telefon</Label><Input value={createForm.owner_phone} onChange={(e) => setCreateForm({ ...createForm, owner_phone: e.target.value })} data-testid="create-owner-phone" /></div>
+              <div className="sm:col-span-2"><Label>E-post *</Label><Input type="email" value={createForm.owner_email} onChange={(e) => setCreateForm({ ...createForm, owner_email: e.target.value })} data-testid="create-owner-email" /></div>
+              <div><Label>Postnummer</Label><Input inputMode="numeric" maxLength={4} value={createForm.postal_code} onChange={(e) => setCreateForm({ ...createForm, postal_code: e.target.value.replace(/\D/g, "").slice(0, 4) })} data-testid="create-postal-code" /></div>
+              <div><Label>Sted</Label><Input value={createForm.city} onChange={(e) => setCreateForm({ ...createForm, city: e.target.value })} data-testid="create-city" /></div>
+              <div className="sm:col-span-2">
+                <Label>Pakke</Label>
+                <Select value={createForm.plan} onValueChange={(v) => setCreateForm({ ...createForm, plan: v })}>
+                  <SelectTrigger data-testid="create-plan-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>{PLAN_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Passord-valg */}
+            <div className="border border-slate-200 rounded-md p-3 space-y-2">
+              <Label className="font-semibold">Passord for eier</Label>
+              <RadioGroup value={createForm.password_mode} onValueChange={(v) => setCreateForm({ ...createForm, password_mode: v, password: "" })} className="space-y-1">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="auto" id="pw-auto" data-testid="create-pw-mode-auto" />
+                  <span>Generer sterkt passord automatisk <span className="text-slate-500 text-xs">(vises én gang etter oppretting)</span></span>
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="manual" id="pw-manual" data-testid="create-pw-mode-manual" />
+                  <span>Angi passord selv</span>
+                </label>
+              </RadioGroup>
+              {createForm.password_mode === "manual" && (
+                <Input
+                  type="text"
+                  placeholder="Minst 6 tegn"
+                  value={createForm.password}
+                  onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                  data-testid="create-password-input"
+                />
+              )}
+            </div>
+
+            {/* Fakturering-valg */}
+            <div className="border border-slate-200 rounded-md p-3 space-y-2">
+              <Label className="font-semibold">Fakturering</Label>
+              <RadioGroup value={createForm.billing_mode} onValueChange={(v) => setCreateForm({ ...createForm, billing_mode: v })} className="space-y-2">
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="manual" id="bm-manual" className="mt-0.5" data-testid="create-billing-manual" />
+                  <div>
+                    <div className="font-semibold">Fakturere utenfor</div>
+                    <div className="text-xs text-slate-600">Ingen Stripe-kobling. Du sender faktura selv (Visma, Tripletex, PDF e.l.). Enkel – velg dette hvis du vil fakturere via egen regnskapsløsning.</div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="stripe" id="bm-stripe" className="mt-0.5" data-testid="create-billing-stripe" />
+                  <div>
+                    <div className="font-semibold">Opprett Stripe-kunde</div>
+                    <div className="text-xs text-slate-600">Systemet oppretter kunden hos Stripe nå (ingen abonnement enda). Du kan senere sende Stripe-faktura eller koble på abonnement. Krever at e-posten er gyldig.</div>
+                  </div>
+                </label>
+              </RadioGroup>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>Avbryt</Button>
+            <Button onClick={submitCreate} disabled={creating} className="bg-red-900 hover:bg-red-800" data-testid="create-customer-submit-btn">
+              {creating ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Oppretter…</> : <><Plus className="h-4 w-4 mr-1" />Opprett kunde</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Resultat-dialog (vises etter oppretting) */}
+      <Dialog open={!!createResult} onOpenChange={(o) => !o && setCreateResult(null)}>
+        <DialogContent className="max-w-md" data-testid="create-result-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-800"><CheckCircle2 className="h-5 w-5" />Kunde opprettet</DialogTitle>
+            <DialogDescription>
+              {createResult?.customer?.club_name} ({createResult?.customer?.customer_number}) er aktiv med pakken <strong>{createResult?.customer?.plan}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          {createResult && (
+            <div className="space-y-3">
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-sm space-y-1.5">
+                <div><span className="text-slate-500">E-post:</span> <span className="font-mono">{createResult.customer.owner_email}</span></div>
+                <div><span className="text-slate-500">Kundenr:</span> <span className="font-mono font-bold">{createResult.customer.customer_number}</span></div>
+                {createResult.customer.stripe_customer_id && (
+                  <div><span className="text-slate-500">Stripe-ID:</span> <span className="font-mono text-xs">{createResult.customer.stripe_customer_id}</span></div>
+                )}
+              </div>
+
+              {createResult.generated_password ? (
+                <div className="bg-amber-50 border border-amber-300 rounded-md p-3 space-y-2">
+                  <div className="text-xs font-semibold text-amber-900 uppercase">Midlertidig passord – vises kun én gang</div>
+                  <div className="flex items-center gap-2">
+                    <Input readOnly value={createResult.generated_password} className="font-mono bg-white" data-testid="generated-password" />
+                    <Button size="sm" variant="outline" onClick={() => copyToClipboard(createResult.generated_password, "Passord kopiert")} data-testid="copy-password-btn">
+                      <Copy className="h-3 w-3 mr-1" />Kopier
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-600">Lagre dette passordet nå, eller send velkomstmelding slik at eieren kan sette sitt eget passord.</p>
+                </div>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-xs text-slate-600">
+                  Passord er satt manuelt. Del det med eieren på en sikker måte.
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCreateResult(null)}>Lukk</Button>
+            {createResult?.customer?.id && (
+              <Button
+                onClick={() => sendWelcome(createResult.customer.id, createResult.customer.club_name)}
+                disabled={sendingWelcome}
+                className="bg-red-900 hover:bg-red-800"
+                data-testid="result-send-welcome-btn"
+              >
+                {sendingWelcome ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}Send velkomstmelding
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Hard delete bekreftelses-dialog */}
-      <Dialog open={!!hardDelete} onOpenChange={(o) => !o && setHardDelete(null)}>
-        <DialogContent className="max-w-md">
+      <Dialog open={!!hardDelete} onOpenChange={(o) => !o && setHardDelete(null)}>        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-rose-800">
               <AlertTriangle className="h-5 w-5" />Permanent sletting
