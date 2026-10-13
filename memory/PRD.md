@@ -22,6 +22,11 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-13 – Lagsportal: Tom-linje-flyt for behovsmelding
+- `PortalNeedsNew.jsx` omskrevet med draft-pattern: start med én tom placeholder-linje + søkefelt. Når bruker velger vare → draft fylles ut med antall+kommentar+«Legg til vare»-knapp. Ved bekreftelse → draft blir en grønn bekreftet linje øverst, ny tom draft-linje + søkefelt dukker opp under, med autofokus på søkefeltet via useRef + useEffect.
+- Scroll-into-view (behavior: smooth) sørger for at nytt søkefelt er sentrert i viewporten.
+- Testet: alle 3 state-overganger grønne (initial tom, picking → draft-row, bekreftelse → ny tom + autofokus).
+
 ### 2026-10-13 – Audit Log side (admin + plattformeier)
 - Nytt endepunkt `GET /api/activity-log/search` (krever admin): fritekst, action, user_id, dato-range, pagination (default 100/side). Returnerer også distinct_actions + distinct_users for filter-dropdowns.
 - Nytt endepunkt `GET /api/owner/activity-log/all` (kun platform_owner): kryss-tenant visning med klubbnavn+kundenr beriket på hver rad.
