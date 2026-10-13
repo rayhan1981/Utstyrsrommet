@@ -80,10 +80,10 @@ const SECTIONS = [
   {
     id: "abonnement", icon: CreditCard, title: "Abonnement",
     paragraphs: [
-      "UTSTYRSROMMET tilbys i tre nivåer: Basis, Pro og Deluxe. Alle planer har 14 dagers gratis prøveperiode der du får Deluxe-funksjoner.",
+      "UTSTYRSROMMET tilbys i tre nivåer: Basis, Pro og Premium. Alle planer har 14 dagers gratis prøveperiode der du får Premium-funksjoner.",
       "Du finner din gjeldende plan under «Abonnement» i sidepanelet – kun admin og klubb-eier ser denne.",
       "Oppgradering og nedgradering gjøres via Stripe. Faktura, betalingsinformasjon og historikk administreres i Stripe-kundeportalen – klikk «Administrer abonnement» for å åpne denne.",
-      "QR-koder og Varetelling er inkludert kun i Deluxe-planen. Alle andre moduler (Lag, Utstyr, Utlån, Varemottak, Behov, Bestillinger, Leverandører) er tilgjengelige på alle planer.",
+      "QR-koder og Varetelling er inkludert kun i Premium-planen. Alle andre moduler (Lag, Utstyr, Utlån, Varemottak, Behov, Bestillinger, Leverandører) er tilgjengelige på alle planer.",
       "Spørsmål om fakturering eller plan? Kontakt support via «Hjelpesenter → Kontakt» eller send e-post til support-adressen i klubbinformasjonen.",
     ],
   },

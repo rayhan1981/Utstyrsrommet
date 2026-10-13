@@ -14,7 +14,7 @@ export default function TrialBanner() {
     }
     if (status === "trial") {
       if (daysLeft <= 1) return { label: "Prøveperioden avsluttes i morgen", tone: "amber", icon: Clock };
-      return { label: `Deluxe prøveperiode • ${daysLeft} dag${daysLeft === 1 ? "" : "er"} igjen`, tone: "emerald", icon: Sparkles };
+      return { label: `Premium prøveperiode • ${daysLeft} dag${daysLeft === 1 ? "" : "er"} igjen`, tone: "emerald", icon: Sparkles };
     }
     return null;
   }, [status, daysLeft]);

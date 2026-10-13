@@ -153,9 +153,9 @@ export default function TeamPortalAccounts() {
         <div className="flex items-start gap-3">
           <AlertCircle className="h-6 w-6 text-amber-600 shrink-0 mt-0.5" />
           <div>
-            <h2 className="text-lg font-bold text-amber-900">Lagsportal krever Deluxe</h2>
+            <h2 className="text-lg font-bold text-amber-900">Lagsportal krever Premium</h2>
             <p className="text-sm text-slate-700 mt-1">
-              Lagsportalen (utstyrsrommet.no/portal) er kun tilgjengelig for klubber med aktiv Deluxe-plan.
+              Lagsportalen (utstyrsrommet.no/portal) er kun tilgjengelig for klubber med aktiv Premium-plan.
               Oppgrader abonnementet under <strong>Abonnement</strong> for å opprette lagspålogginger.
             </p>
             <p className="text-xs text-slate-500 mt-2">

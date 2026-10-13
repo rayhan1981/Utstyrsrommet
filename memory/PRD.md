@@ -22,6 +22,13 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Implementation Status
 
+### 2026-10-13 – Introduksjonspris 2026: Nye priser + Deluxe→Premium
+- Backend `PLANS`: Basic 399→**249**, Pro 599→**449**, Deluxe 999→**849** med nytt visningsnavn **Klubb Premium**. Intern nøkkel `deluxe` beholdes for bakoverkompatibilitet med DB-records (ingen migrering nødvendig).
+- Alle brukervendte strenger oppdatert: Terms, Signup, Landing, Subscription, TrialBanner/Card, UpgradeCTA, HelpCenter, Inventory, TeamPortalAccounts, OwnerPanel, OwnerStandaloneDashboard.
+- Email-maler (trial reminders): «Deluxe» → «Premium». «Priser: Basic 399/mnd...» → «Introduksjonspris 2026: Basic 249/mnd, Pro 449/mnd, Premium 849/mnd».
+- Lagsportal 402-feilmelding: «krever et aktivt Deluxe-abonnement» → «krever et aktivt Premium-abonnement».
+- Verifisert: `GET /api/plans` returnerer nye priser og nytt navn.
+
 ### 2026-10-13 – Lagsportal: Tom-linje-flyt for behovsmelding
 - `PortalNeedsNew.jsx` omskrevet med draft-pattern: start med én tom placeholder-linje + søkefelt. Når bruker velger vare → draft fylles ut med antall+kommentar+«Legg til vare»-knapp. Ved bekreftelse → draft blir en grønn bekreftet linje øverst, ny tom draft-linje + søkefelt dukker opp under, med autofokus på søkefeltet via useRef + useEffect.
 - Scroll-into-view (behavior: smooth) sørger for at nytt søkefelt er sentrert i viewporten.

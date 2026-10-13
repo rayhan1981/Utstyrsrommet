@@ -20,7 +20,7 @@ export default function Landing() {
     priceLabel: "Gratis",
     duration: "7 dager",
     features: [
-      "Full Deluxe-tilgang i 7 dager",
+      "Full Premium-tilgang i 7 dager",
       "Ingen betalingskort kreves",
       "Ubegrenset antall lag og personer",
       "Varer, drakter, baller, QR, varetelling",
@@ -71,7 +71,7 @@ export default function Landing() {
                 className="bg-transparent border border-amber-400 text-amber-300 hover:bg-amber-500/10 hover:text-amber-200"
                 onClick={() => (window.location.href = "/portal/innlogging")}
                 data-testid="header-portal-login"
-                title="Kun for lag i klubber med Klubb Deluxe-abonnement"
+                title="Kun for lag i klubber med Klubb Premium-abonnement"
               >
                 Lagsportal (Lag)
               </Button>
@@ -131,7 +131,7 @@ export default function Landing() {
           <h2 className="font-display text-4xl sm:text-5xl font-black">
             <span className="chrome-text">Velg pakken </span><span className="red-gloss-text">som passer</span>
           </h2>
-          <p className="text-zinc-400 mt-3">Start gratis i 7 dager med full Deluxe. Oppgrader eller avbryt når som helst.</p>
+          <p className="text-zinc-400 mt-3">Start gratis i 7 dager med full Premium. Oppgrader eller avbryt når som helst.</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {all.map((p) => {

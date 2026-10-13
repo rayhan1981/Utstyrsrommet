@@ -34,9 +34,9 @@ export default function Terms() {
           <section>
             <h2 className="font-display text-xl font-bold">4. Abonnement og priser</h2>
             <ul className="list-disc pl-5 space-y-1">
-              <li>Tjenesten tilbys i tre pakker: Klubb Basic (kr 399/mnd), Klubb Pro (kr 599/mnd) og Klubb Deluxe (kr 999/mnd). Alle priser er oppgitt eks. mva.</li>
+              <li>Tjenesten tilbys i tre pakker med <strong>Introduksjonspris 2026</strong>: Klubb Basic (kr 249/mnd), Klubb Pro (kr 449/mnd) og Klubb Premium (kr 849/mnd). Alle priser er oppgitt eks. mva.</li>
               <li>Ved valg av årlig fakturering gis <strong>50 % rabatt det første året</strong> og deretter <strong>10 % lojalitetsrabatt</strong> så lenge Kunden fortsetter med årlig betaling.</li>
-              <li>Deluxe-pakken inkluderer 5 brukere i tillegg til administrator. Flere brukere kan kjøpes som tillegg til <strong>kr 199,- per bruker per måned</strong>.</li>
+              <li>Premium-pakken inkluderer 5 brukere i tillegg til administrator. Flere brukere kan kjøpes som tillegg til <strong>kr 199,- per bruker per måned</strong>.</li>
               <li>Alle nye kunder får 14 dagers gratis prøveperiode uten krav om betalingskort.</li>
             </ul>
           </section>

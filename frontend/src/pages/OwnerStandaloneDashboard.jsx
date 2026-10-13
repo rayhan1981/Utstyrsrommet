@@ -78,7 +78,7 @@ export default function OwnerStandaloneDashboard() {
         <Stat label="Aktive" value={active} color="green" testid="owner-stat-active" />
         <Stat label="Prøveperiode" value={trial} color="blue" testid="owner-stat-trial" />
         <Stat label="Deaktivert" value={inactive} color="rose" testid="owner-stat-inactive" />
-        <Stat label="Deluxe-kunder" value={deluxe} color="purple" testid="owner-stat-deluxe" />
+        <Stat label="Premium-kunder" value={deluxe} color="purple" testid="owner-stat-deluxe" />
       </div>
 
       <Card className="p-5">

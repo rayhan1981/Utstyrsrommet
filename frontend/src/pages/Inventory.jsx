@@ -547,8 +547,8 @@ export default function Inventory() {
               <div className="flex items-center gap-3 border border-amber-200 bg-amber-50 rounded-md p-3 text-sm">
                 <ImageIcon className="h-5 w-5 text-amber-700 shrink-0" />
                 <div className="flex-1">
-                  <div className="font-semibold text-amber-900">Produktbilder er med i Klubb Deluxe</div>
-                  <div className="text-xs text-amber-800 mt-0.5">Oppgrader til Deluxe for å legge bilde på vare og per størrelse.</div>
+                  <div className="font-semibold text-amber-900">Produktbilder er med i Klubb Premium</div>
+                  <div className="text-xs text-amber-800 mt-0.5">Oppgrader til Premium for å legge bilde på vare og per størrelse.</div>
                 </div>
               </div>
             )}

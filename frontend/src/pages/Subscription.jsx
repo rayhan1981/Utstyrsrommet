@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Check, CreditCard, UserPlus, FileText, Download, AlertTriangle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 
-const PLANS_LABEL = { basic: "Klubb Basic", pro: "Klubb Pro", deluxe: "Klubb Deluxe" };
+const PLANS_LABEL = { basic: "Klubb Basic", pro: "Klubb Pro", deluxe: "Klubb Premium" };
 
 export default function Subscription() {
   const { customer, plan: currentPlan, refresh } = useAuth();
@@ -95,7 +95,7 @@ export default function Subscription() {
   const selectDeferred = async (planKey) => {
     try {
       await api.post("/subscription/select-plan", { plan: planKey });
-      toast.success(`Du beholder Deluxe-tilgangen ut prøveperioden. ${planKey} starter etter at prøveperioden avsluttes.`);
+      toast.success(`Du beholder Premium-tilgangen ut prøveperioden. ${planKey} starter etter at prøveperioden avsluttes.`);
       await refresh();
     } catch (e) { toast.error(formatError(e.response?.data?.detail)); }
   };

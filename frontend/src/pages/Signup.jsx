@@ -48,10 +48,10 @@ export default function Signup() {
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           <div className="lg:col-span-3 lux-dark rounded-2xl p-7">
             <div className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-200 mb-3">
-              <Sparkles className="h-3 w-3" /> 7 dager gratis Deluxe
+              <Sparkles className="h-3 w-3" /> 7 dager gratis Premium
             </div>
             <h1 className="font-display text-3xl font-black">Opprett klubbkonto</h1>
-            <p className="text-zinc-400 text-sm mt-1">Få full tilgang til Utstyrsrommet Deluxe i 7 dager. Ingen betalingskort. Ingen bindingstid.</p>
+            <p className="text-zinc-400 text-sm mt-1">Få full tilgang til Utstyrsrommet Premium i 7 dager. Ingen betalingskort. Ingen bindingstid.</p>
             <form onSubmit={submit} className="space-y-3 mt-6">
               <div><Label className="text-zinc-300">Klubbnavn</Label><Input required value={form.club_name} onChange={(e) => setForm({ ...form, club_name: e.target.value })} data-testid="signup-club" className={inputCls} /></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -77,7 +77,7 @@ export default function Signup() {
             <h3 className="font-display text-xl font-black mb-3">Dette får du i prøveperioden</h3>
             <ul className="space-y-2 text-sm text-zinc-200">
               {[
-                "Full Deluxe-tilgang i 7 dager",
+                "Full Premium-tilgang i 7 dager",
                 "Ubegrenset antall lag og personer",
                 "Varer, drakter, baller med størrelse+lokasjon",
                 "Utlån, retur og automatisk skyldig beløp",
@@ -91,7 +91,7 @@ export default function Signup() {
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-zinc-500 mt-4">Når prøveperioden avsluttes velger du mellom Basic, Pro eller Deluxe – eller lar kontoen hvile i read-only.</p>
+            <p className="text-xs text-zinc-500 mt-4">Når prøveperioden avsluttes velger du mellom Basic, Pro eller Premium – eller lar kontoen hvile i read-only.</p>
           </div>
         </div>
       </div>
@@ -101,7 +101,7 @@ export default function Signup() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-red-500" />Velkommen til Utstyrsrommet!</DialogTitle>
             <DialogDescription>
-              Du har nå fått full tilgang til Utstyrsrommet Deluxe i 7 dager.
+              Du har nå fått full tilgang til Utstyrsrommet Premium i 7 dager.
             </DialogDescription>
           </DialogHeader>
           <div className="text-sm text-slate-600 space-y-2">

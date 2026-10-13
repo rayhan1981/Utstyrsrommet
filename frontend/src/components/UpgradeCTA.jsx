@@ -6,22 +6,22 @@ import { useAuth } from "@/context/AuthContext";
 import { Crown, Sparkles } from "lucide-react";
 
 /**
- * CTA-banner som peker brukere mot Deluxe når de møter en Deluxe-feature.
+ * CTA-banner som peker brukere mot Premium når de møter en Premium-feature.
  * Vis `inline` for liten banner midt i siden, eller full-page for route-level block.
  */
 export default function UpgradeCTA({ feature = "qr_codes", title, description, inline = false }) {
   const nav = useNavigate();
   const { user } = useAuth();
   const titles = {
-    qr_codes: "QR-koder er med i Klubb Deluxe",
-    product_images: "Produktbilder er med i Klubb Deluxe",
+    qr_codes: "QR-koder er med i Klubb Premium",
+    product_images: "Produktbilder er med i Klubb Premium",
   };
   const descs = {
     qr_codes: "Generer unike QR-koder for alle varer og størrelser, skann dem fra mobilen for å lyn-raskt registrere utlån, og skriv ut etiketter med klubblogo i senter.",
     product_images: "Legg til hovedbilde på hver vare samt eget bilde pr. størrelse eller draktnummer, slik at utstyret er lett å kjenne igjen både i varetabellen og ved utlån.",
   };
   const t = title || titles[feature] || "Krever oppgradering";
-  const d = description || descs[feature] || "Denne funksjonen er med i Klubb Deluxe-pakken.";
+  const d = description || descs[feature] || "Denne funksjonen er med i Klubb Premium-pakken.";
 
   const canUpgrade = user?.role === "admin";
 
@@ -39,7 +39,7 @@ export default function UpgradeCTA({ feature = "qr_codes", title, description, i
       </div>
       {canUpgrade ? (
         <Button onClick={() => nav("/app/abonnement")} className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold" data-testid="upgrade-cta-btn">
-          Oppgrader til Deluxe
+          Oppgrader til Premium
         </Button>
       ) : (
         <span className="text-xs text-slate-500 italic">Kontakt klubbens admin for å oppgradere</span>

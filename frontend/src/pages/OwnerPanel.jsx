@@ -19,7 +19,7 @@ const PLAN_OPTIONS = [
   { value: "free", label: "Gratis (manuell)" },
   { value: "basic", label: "Klubb Basic (399/mnd)" },
   { value: "pro", label: "Klubb Pro (599/mnd)" },
-  { value: "deluxe", label: "Klubb Deluxe (999/mnd)" },
+  { value: "deluxe", label: "Klubb Premium (849/mnd)" },
 ];
 
 export default function OwnerPanel() {
