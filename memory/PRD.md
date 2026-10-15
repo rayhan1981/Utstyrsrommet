@@ -151,14 +151,23 @@ Multi-tenant SaaS inventory- og administrasjonssystem for norske idrettsklubber.
 
 ## Backlog
 
-### P0 – Backend-refactoring (STOR, ikke blokkerende for Fase 2)
-- `server.py` er nå ~7000 linjer. Må deles opp i `/app/backend/routers/`:
-  - `routers/portal.py` (første kandidat – isolert kode nederst i server.py)
-  - `routers/items.py`, `routers/loans.py`, `routers/orders.py`, `routers/stock_audit.py`,
-    `routers/behovsskjema.py`, `routers/admin.py`.
-  - Delte helpers i `routers/_shared.py` (allerede startet).
-  - Hvorfor: Fil-størrelsen gir timeout i `mcp_search_replace` og øker LLM-kostnad.
+### P0 – Backend-refactoring — FULLFØRT
+- `server.py` er redusert fra ~7747 til 1937 linjer (75 % reduksjon). All forretningslogikk er flyttet til `routers/`.
+- **Router-moduler (alle verifisert, 179 ruter totalt, 0 duplikater):**
+  - `routers/portal.py` (925 linjer) – lagsportal/behovsmeldinger
+  - `routers/loans.py` (408 linjer) – utlån, retur, faktura, varslinger
+  - `routers/items.py` (736 linjer) – varer, QR, taksonomi, Excel import/eksport
+  - `routers/orders.py` (1643 linjer) – bestillinger, behovsskjema, leverandører, varemottak, lagerreservasjoner
+  - `routers/admin.py` (1250 linjer) – auth, brukere, aktivitetslogg, data-reset, klubber, dashboard, eksporter, QR-etiketter, hjelpesenter, e-postinnstillinger, cron
+  - `routers/owner.py` (543 linjer) – platform-owner impersonation, field-override, hard-delete
+  - `routers/subscription.py` (508 linjer) – signup, abonnement, stripe-webhook, prøveperiode
+  - `routers/stock_audit.py` (303 linjer) – varetelling, manuelle justeringer
+  - `routers/teams.py` (176 linjer) – lag + personer
+  - `routers/taxonomy_admin.py` (135 linjer) – taksonomi-admin
+  - `routers/_shared.py` (196 linjer) – bro-modul for delte symboler
+- Mønster: `_shared.py` importerer fra `server.py`, router-filer importerer fra `_shared.py`. `app.include_router(api)` MÅ være siste linje i server.py.
 - Beskyttende kommentar lagt til ved `app.include_router(api)` for å unngå regresjon.
+- Verifisert: `python3 -c "import server"` + OpenAPI-schema bygger (147 paths, 179 operations), og rutesettet er identisk med før refactoringen.
 
 ### P1 – Lagsportal Fase 2
 - E-postvarsel til klubbens aktive brukere når ny behovsmelding kommer inn.
