@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "preinstall": "test -d frontend/node_modules || (cd frontend && npm install --legacy-peer-deps && npm install ajv@8.20.0 --legacy-peer-deps)",
     "start": "cd frontend && node_modules/.bin/craco start",
     "build": "cd frontend && node_modules/.bin/craco build",
     "test": "cd frontend && node_modules/.bin/craco test",
