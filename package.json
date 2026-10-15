@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "cd frontend && npx craco start",
-    "build": "cd frontend && npx craco build",
-    "test": "cd frontend && npx craco test",
+    "start": "cd frontend && node_modules/.bin/craco start",
+    "build": "cd frontend && node_modules/.bin/craco build",
+    "test": "cd frontend && node_modules/.bin/craco test",
     "install:frontend": "cd frontend && npm install --legacy-peer-deps",
     "install:backend": "cd backend && pip install -r requirements.txt"
   }
